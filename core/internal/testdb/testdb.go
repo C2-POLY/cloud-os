@@ -5,6 +5,7 @@ package testdb
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"net/url"
 	"os"
@@ -32,7 +33,12 @@ func URL(t testing.TB) string {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	name := fmt.Sprintf("cloudos_test_%d", time.Now().UnixNano())
+	// Test packages run in parallel processes: the time alone can repeat.
+	suffix := make([]byte, 6)
+	if _, err := rand.Read(suffix); err != nil {
+		t.Fatal(err)
+	}
+	name := fmt.Sprintf("cloudos_test_%d_%x", time.Now().UnixNano(), suffix)
 	if _, err := conn.Exec(ctx, "CREATE DATABASE "+name); err != nil {
 		t.Fatalf("create database: %v", err)
 	}

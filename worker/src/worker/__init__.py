@@ -56,15 +56,38 @@ def run(url: str, worker_id: str, stop: threading.Event) -> None:
             stop.wait(RETRY_EVERY)
 
 
+def run_tasks(url: str, worker_id: str, stop: threading.Event) -> None:
+    """Run queued tasks until stopped, reconnecting whenever the database goes away."""
+    from worker import tasks
+
+    while not stop.is_set():
+        try:
+            with psycopg.connect(url, autocommit=True) as conn:
+                if not wait_for_table(conn, "tasks", stop):
+                    return
+                log.info("worker %s takes tasks: %s", worker_id, ", ".join(tasks.HANDLERS))
+                tasks.work(conn, worker_id, stop)
+        except psycopg.OperationalError as err:
+            log.warning("database unreachable for tasks, retrying in %ss: %s", RETRY_EVERY, err)
+            stop.wait(RETRY_EVERY)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     url = os.environ.get("DATABASE_URL")
     if not url:
         raise SystemExit("DATABASE_URL is not set")
-    worker_id = os.environ.get("WORKER_ID") or socket.gethostname()
+    # Unique per process: the queue tells workers apart by this id, so two
+    # workers sharing one would complete each other's tasks.
+    worker_id = f"{os.environ.get('WORKER_ID', 'worker')}@{socket.gethostname()}:{os.getpid()}"
 
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
-    run(url, worker_id, stop)
+    heartbeat = threading.Thread(
+        target=run, args=(url, worker_id, stop), name="heartbeat", daemon=True
+    )
+    heartbeat.start()
+    run_tasks(url, worker_id, stop)
+    heartbeat.join(timeout=5)
     log.info("worker %s stopped", worker_id)

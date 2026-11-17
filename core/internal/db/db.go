@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+
+	"github.com/C2-POLY/cloud-os/core/internal/tasks"
 )
 
 // Worker is a worker that wrote a heartbeat.
@@ -50,6 +52,11 @@ func (s *Store) Ping(ctx context.Context) error {
 // MigrationVersion returns the last applied migration.
 func (s *Store) MigrationVersion(ctx context.Context) (int64, error) {
 	return s.Migrations.GetDBVersion(ctx)
+}
+
+// TaskStats counts the queued, running and failed tasks.
+func (s *Store) TaskStats(ctx context.Context) (tasks.Stats, error) {
+	return (&tasks.Queue{Pool: s.Pool}).Stats(ctx)
 }
 
 // RecentWorkers returns the workers seen within the last window, newest first.

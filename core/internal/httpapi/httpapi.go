@@ -15,6 +15,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/davfs"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
+	"github.com/C2-POLY/cloud-os/core/internal/tasks"
 	"golang.org/x/net/webdav"
 )
 
@@ -26,14 +27,16 @@ type HealthStore interface {
 	Ping(ctx context.Context) error
 	MigrationVersion(ctx context.Context) (int64, error)
 	RecentWorkers(ctx context.Context, window time.Duration) ([]db.Worker, error)
+	TaskStats(ctx context.Context) (tasks.Stats, error)
 }
 
 // Health is the body of GET /api/health.
 type Health struct {
-	Version   string      `json:"version"`
-	DB        string      `json:"db"`
-	Migration *int64      `json:"migration,omitempty"`
-	Workers   []db.Worker `json:"workers,omitempty"`
+	Version   string       `json:"version"`
+	DB        string       `json:"db"`
+	Migration *int64       `json:"migration,omitempty"`
+	Workers   []db.Worker  `json:"workers,omitempty"`
+	Tasks     *tasks.Stats `json:"tasks,omitempty"`
 }
 
 // Config is what the core's routes need.
@@ -148,7 +151,13 @@ func healthHandler(version string, store HealthStore) http.HandlerFunc {
 			writeJSON(w, http.StatusServiceUnavailable, down)
 			return
 		}
-		writeJSON(w, http.StatusOK, Health{Version: version, DB: "ok", Migration: &migration, Workers: workers})
+		stats, err := store.TaskStats(ctx)
+		if err != nil {
+			slog.Warn("health: tasks", "err", err)
+			writeJSON(w, http.StatusServiceUnavailable, down)
+			return
+		}
+		writeJSON(w, http.StatusOK, Health{Version: version, DB: "ok", Migration: &migration, Workers: workers, Tasks: &stats})
 	}
 }
 

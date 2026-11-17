@@ -4,6 +4,7 @@
 //	core import OWNER DIR    copy DIR into OWNER's space; DIR is only read
 //	core verify              check every stored file against the index; exit 1 on any difference
 //	core reset-password NAME set a new password read from stdin and end the account's sessions
+//	core selftest [N]        queue N selftest tasks and wait for the workers to run them
 package main
 
 import (
@@ -29,6 +30,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/httpapi"
 	"github.com/C2-POLY/cloud-os/core/internal/migrate"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
+	"github.com/C2-POLY/cloud-os/core/internal/tasks"
 )
 
 // version is set at build time from the VERSION file (-ldflags "-X main.version=…").
@@ -66,6 +68,14 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		return withCore(ctx, func(c core) error { return importDir(ctx, c, args[0], args[1], out) })
 	case "verify":
 		return withCore(ctx, func(c core) error { return verify(ctx, c, out) })
+	case "selftest":
+		n := 10
+		if len(args) > 0 {
+			if v, err := strconv.Atoi(args[0]); err == nil && v > 0 {
+				n = v
+			}
+		}
+		return withCore(ctx, func(c core) error { return selftest(ctx, c, n, out) })
 	case "reset-password":
 		if len(args) != 1 {
 			return errors.New("usage: core reset-password NAME (the new password is read from stdin)")
@@ -127,6 +137,7 @@ func serve(ctx context.Context, c core) error {
 		slog.Info("removed expired or orphan uploads", "count", n)
 	}
 	go cleanUploadsEvery(ctx, c.files, time.Hour)
+	go reapTasksEvery(ctx, &tasks.Queue{Pool: c.pool}, 30*time.Second)
 	if n, err := c.files.PurgeExpired(ctx); err != nil {
 		return fmt.Errorf("purge the trash: %w", err)
 	} else if n > 0 {
@@ -212,6 +223,73 @@ func resetPassword(ctx context.Context, c core, name string, in io.Reader, out i
 	}
 	fmt.Fprintf(out, "password of %s changed, its sessions ended\n", name)
 	return nil
+}
+
+// reapTasksEvery gives back the tasks of dead workers and prunes old done tasks.
+func reapTasksEvery(ctx context.Context, q *tasks.Queue, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if n, err := q.Reap(ctx); err != nil {
+				slog.Error("reap tasks", "err", err)
+			} else if n > 0 {
+				slog.Warn("tasks of a stopped worker queued again", "count", n)
+			}
+			if _, err := q.Prune(ctx); err != nil {
+				slog.Error("prune tasks", "err", err)
+			}
+		}
+	}
+}
+
+// selftest queues n selftest tasks and waits until the workers have run them:
+// the end-to-end proof that the core and the workers share the queue.
+func selftest(ctx context.Context, c core, n int, out io.Writer) error {
+	q := &tasks.Queue{Pool: c.pool}
+	ids := make([]int64, 0, n)
+	for i := range n {
+		id, _, err := q.Enqueue(ctx, "selftest", map[string]any{"n": i}, tasks.EnqueueOptions{Priority: tasks.PriorityNew})
+		if err != nil {
+			return err
+		}
+		ids = append(ids, id)
+	}
+	fmt.Fprintf(out, "queued %d selftest tasks, waiting for the workers…\n", n)
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		done, failed := 0, 0
+		for _, id := range ids {
+			t, err := q.Get(ctx, id)
+			if err != nil {
+				return err
+			}
+			switch t.State {
+			case "done":
+				done++
+			case "failed":
+				failed++
+			}
+		}
+		if done+failed == n {
+			fmt.Fprintf(out, "done %d, failed %d\n", done, failed)
+			if failed > 0 {
+				return errors.New("some selftest tasks failed")
+			}
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out: %d of %d done", done, n)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
 
 // cleanUploadsEvery ends abandoned uploads and purges expired trash items until ctx is done.

@@ -41,7 +41,7 @@ services:
     build: worker
     environment:
       DATABASE_URL: *database-url
-      WORKER_ID: worker-1
+      WORKER_ID: python # role prefix; the id adds the container and process
     depends_on:
       db:
         condition: service_healthy

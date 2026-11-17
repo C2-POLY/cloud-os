@@ -20,12 +20,12 @@ flowchart LR
     W -- "HTTP /api, cookie de session" --> C
     M -. "HTTP /api, Bearer" .-> C
     C -- "migrations, index, sessions" --> DB
-    K -- "battement, plus tard file de tâches" --> DB
+    K -- "battement, file de tâches" --> DB
     C -- "seul à écrire" --> D
 ```
 
 - **Les clients ne parlent qu'au cœur.** Le cœur sert aussi le front compilé (`STATIC_DIR`). En développement, Vite le sert avec rechargement à chaud et renvoie `/api` vers le cœur.
-- **Le cœur et les workers ne se parlent que par Postgres** : battement aujourd'hui, file de tâches demain (#8). Un worker n'écrit jamais dans les fichiers des utilisateurs.
+- **Le cœur et les workers ne se parlent que par Postgres** : le battement, et la file de tâches (voir [tasks.md](tasks.md)). Un worker n'écrit jamais dans les fichiers des utilisateurs.
 - **Seul le cœur applique les migrations**, au démarrage, sous un verrou Postgres (goose). Un worker attend que les tables dont il a besoin existent.
 
 | Service | Image | Port hôte (défaut) |
@@ -48,6 +48,7 @@ sequenceDiagram
     C->>DB: goose up (verrou), migrations embarquées
     C->>FS: CleanTmp : écritures interrompues
     C->>DB: RecoverMoves : déplacements interrompus
+    C->>C: toutes les 30 s, Reap et Prune de la file de tâches
     C->>C: écoute sur :8080
 ```
 
