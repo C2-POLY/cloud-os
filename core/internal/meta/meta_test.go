@@ -21,6 +21,8 @@ import (
 const (
 	jpeg = "\xff\xd8\xff\xe0\x00\x10JFIF\x00 a photo"
 	png  = "\x89PNG\r\n\x1a\n a scan"
+	heic = "\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic an iPhone photo"
+	heif = "\x00\x00\x00\x18ftypmif1\x00\x00\x00\x00mif1heic a HEIF photo"
 )
 
 type env struct {
@@ -86,8 +88,10 @@ func TestStoringAnImageQueuesItsMetadataOnce(t *testing.T) {
 	e.put(t, "a.jpg", jpeg)
 	e.put(t, "notes.txt", "hello")
 	e.put(t, "scan", png)           // no extension: recognised by its content
+	e.put(t, "IMG_0001.HEIC", heic) // iPhone photo, by its extension
+	e.put(t, "photo", heif)         // HEIF without extension, by its brand
 	e.put(t, "copy of a.jpg", jpeg) // same content: same metadata
-	want := []string{hex.EncodeToString(sum(jpeg)) + "/10", hex.EncodeToString(sum(png)) + "/10"}
+	want := []string{hex.EncodeToString(sum(jpeg)) + "/10", hex.EncodeToString(sum(png)) + "/10", hex.EncodeToString(sum(heic)) + "/10", hex.EncodeToString(sum(heif)) + "/10"}
 	if got := e.queued(t); strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("queued %v, want %v", got, want)
 	}
@@ -95,7 +99,7 @@ func TestStoringAnImageQueuesItsMetadataOnce(t *testing.T) {
 	// A content that already has its metadata queues nothing.
 	e.addMeta(t, jpeg+"!")
 	e.put(t, "b.jpg", jpeg+"!")
-	if got := e.queued(t); len(got) != 2 {
+	if got := e.queued(t); len(got) != 4 {
 		t.Errorf("queued %v", got)
 	}
 }
@@ -105,6 +109,7 @@ func TestBackfillQueuesLiveImagesWithoutMetadata(t *testing.T) {
 	e.store.AfterStore = nil // files stored before metadata was read
 	e.put(t, "a.jpg", jpeg)
 	e.put(t, "b.png", png)
+	e.put(t, "iPhone/IMG_0001.HEIC", heic)
 	e.put(t, "done.jpg", jpeg+"done")
 	e.put(t, "gone.jpg", jpeg+"gone")
 	e.put(t, "notes.txt", "hello")
@@ -113,7 +118,7 @@ func TestBackfillQueuesLiveImagesWithoutMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	n, err := meta.Backfill(e.ctx, e.queue)
-	if err != nil || n != 2 {
+	if err != nil || n != 3 {
 		t.Fatalf("backfill = %d, %v", n, err)
 	}
 	for _, q := range e.queued(t) {

@@ -440,3 +440,29 @@ func equalSnapshots(a, b map[string]fileState) bool {
 	}
 	return true
 }
+
+func TestHEIFIsRecognisedByExtensionAndContent(t *testing.T) {
+	box := func(brand string) []byte { return []byte("\x00\x00\x00\x18ftyp" + brand + "\x00\x00\x00\x00mif1heic") }
+	for _, c := range []struct {
+		path string
+		head []byte
+		want string
+	}{
+		{"iPhone/IMG_0001.HEIC", nil, "image/heic"}, // upper case, as an iPhone names it
+		{"a.heif", nil, "image/heif"},
+		{"photo", box("heic"), "image/heic"},
+		{"photo", box("heix"), "image/heic"},
+		{"photo", box("mif1"), "image/heif"},
+		{"photo", box("msf1"), "image/heif"},
+		{"notes", []byte("hello"), "text/plain; charset=utf-8"},
+	} {
+		if got := detectMIME(c.path, c.head); got != c.want {
+			t.Errorf("detectMIME(%q, %q) = %q, want %q", c.path, c.head, got, c.want)
+		}
+	}
+	for _, head := range [][]byte{box("avif"), box("isom"), []byte("\x00\x00\x00\x18ftyphe")} {
+		if got := SniffMIME(head); got == "image/heic" || got == "image/heif" {
+			t.Errorf("SniffMIME(%q) = %q", head, got)
+		}
+	}
+}

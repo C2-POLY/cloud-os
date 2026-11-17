@@ -37,7 +37,7 @@ export function downloadURL(path: string): string {
 }
 
 // Image types the workers make thumbnails of (core/internal/thumbs).
-const thumbnailed = new Set(['image/jpeg', 'image/png', 'image/webp'])
+const thumbnailed = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'])
 
 /** The thumbnail URL of an image, keyed by its content so a new version is never stale; null for other files. */
 export function thumbURL(entry: Entry): string | null {

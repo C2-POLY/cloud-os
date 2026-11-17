@@ -19,11 +19,13 @@ describe('thumbURL', () => {
     expect(thumbURL(file('Été/a b.jpg', 'image/jpeg'))).toBe('/api/files/thumb?path=%C3%89t%C3%A9%2Fa%20b.jpg&v=abababababababab')
     expect(thumbURL(file('a.png', 'image/png'))).not.toBeNull()
     expect(thumbURL(file('a.webp', 'image/webp'))).not.toBeNull()
+    expect(thumbURL(file('IMG_0001.HEIC', 'image/heic'))).toBe('/api/files/thumb?path=IMG_0001.HEIC&v=abababababababab')
+    expect(thumbURL(file('a.heif', 'image/heif'))).not.toBeNull()
   })
 
-  it('has none for other files, HEIC and folders', () => {
+  it('has none for other files and folders', () => {
     expect(thumbURL(file('a.txt', 'text/plain'))).toBeNull()
-    expect(thumbURL(file('a.heic', 'image/heic'))).toBeNull()
+    expect(thumbURL(file('a.gif', 'image/gif'))).toBeNull()
     expect(thumbURL({ ...file('a.jpg', 'image/jpeg'), sha256: undefined })).toBeNull()
     expect(thumbURL({ ...file('Photos', 'inode/directory'), kind: 'dir' })).toBeNull()
   })
