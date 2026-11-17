@@ -1,0 +1,145 @@
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Account } from '../api.ts'
+import { navigate } from '../router.ts'
+import { mockApi } from '../test-api.ts'
+import { appOf } from './apps.ts'
+import { Desktop } from './Desktop.tsx'
+import { clampPosition } from './windows.ts'
+
+const enzo: Account = { name: 'enzo', display_name: 'Enzo', role: 'admin', created_at: '2026-11-17T10:00:00Z' }
+const johan: Account = { ...enzo, name: 'johan', display_name: 'Johan', role: 'member' }
+
+function api() {
+  return mockApi({
+    'GET /api/health': { status: 200, body: { version: '0.1.0', db: 'ok', migration: 10, tasks: { queued: 2, running: 1, failed: 0 } } },
+    'GET /api/files?path=': { status: 200, body: [] },
+    'GET /api/files?path=Photos': { status: 200, body: [] },
+    'GET /api/trash': { status: 200, body: [] },
+    'GET /api/shares': { status: 200, body: [] },
+    'GET /api/accounts': { status: 200, body: [enzo] },
+  })
+}
+
+const windowNamed = (name: string) => screen.queryByRole('region', { name })
+
+beforeEach(() => {
+  window.localStorage.clear()
+  window.history.replaceState(null, '', '/')
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+describe('appOf', () => {
+  it('maps addresses to apps, and the rest to the desktop', () => {
+    expect(appOf('/drive')).toBe('files')
+    expect(appOf('/drive/Photos/%C3%89t%C3%A9')).toBe('files')
+    expect(appOf('/partages')).toBe('shares')
+    expect(appOf('/corbeille')).toBe('trash')
+    expect(appOf('/comptes')).toBe('accounts')
+    expect(appOf('/')).toBeNull()
+    expect(appOf('/nimporte')).toBeNull()
+  })
+})
+
+describe('clampPosition', () => {
+  it('keeps the title bar below the menu bar and on the screen', () => {
+    expect(clampPosition(-5000, -50, 800).y).toBe(40)
+    expect(clampPosition(-5000, 100, 800).x).toBe(80 - 800)
+    expect(clampPosition(99999, 100, 800).x).toBe(window.innerWidth - 80)
+  })
+})
+
+describe('Desktop', () => {
+  it('opens apps in windows from the dock, with the address of the front one', async () => {
+    api()
+    render(<Desktop me={enzo} onSignedOut={() => {}} />)
+    expect(screen.getByRole('main', { name: 'Bureau' })).toBeInTheDocument()
+    expect(await screen.findByText('3 tâches en cours')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Fichiers' }))
+    expect(window.location.pathname).toBe('/drive')
+    expect(windowNamed('Fichiers')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Corbeille' }))
+    expect(window.location.pathname).toBe('/corbeille')
+    // Both stay open; Fichiers keeps its address and comes back forward.
+    expect(windowNamed('Fichiers')).toBeInTheDocument()
+    expect(windowNamed('Corbeille')).toHaveClass('front')
+    fireEvent.click(screen.getByRole('button', { name: 'Fichiers' }))
+    expect(window.location.pathname).toBe('/drive')
+    expect(windowNamed('Fichiers')).toHaveClass('front')
+  })
+
+  it('keeps a window at the folder it shows while another is in front', () => {
+    api()
+    window.history.replaceState(null, '', '/drive/Photos')
+    render(<Desktop me={enzo} onSignedOut={() => {}} />)
+    act(() => navigate('/partages'))
+    fireEvent.click(screen.getByRole('button', { name: 'Fichiers' }))
+    expect(window.location.pathname).toBe('/drive/Photos')
+  })
+
+  it('closes the front window and shows the next one, then the desktop', () => {
+    api()
+    render(<Desktop me={enzo} onSignedOut={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Fichiers' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Corbeille' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Fermer Corbeille' }))
+    return vi.waitFor(() => {
+      expect(windowNamed('Corbeille')).not.toBeInTheDocument()
+      expect(window.location.pathname).toBe('/drive')
+    }).then(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Fermer Fichiers' }))
+      await vi.waitFor(() => expect(window.location.pathname).toBe('/'))
+    })
+  })
+
+  it('sends unknown addresses and other people’s apps to the desktop', () => {
+    api()
+    window.history.replaceState(null, '', '/comptes')
+    render(<Desktop me={johan} onSignedOut={() => {}} />)
+    expect(window.location.pathname).toBe('/')
+    expect(windowNamed('Comptes')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Comptes' })).not.toBeInTheDocument()
+    act(() => navigate('/nimporte'))
+    expect(window.location.pathname).toBe('/')
+  })
+
+  it('grows a window and remembers it in this browser', () => {
+    api()
+    window.history.replaceState(null, '', '/corbeille')
+    const { unmount } = render(<Desktop me={enzo} onSignedOut={() => {}} />)
+    const win = windowNamed('Corbeille')!
+    fireEvent.click(within(win).getByRole('button', { name: 'Agrandir Corbeille' }))
+    expect(win).toHaveClass('max')
+    unmount()
+    render(<Desktop me={enzo} onSignedOut={() => {}} />)
+    expect(windowNamed('Corbeille')).toHaveClass('max')
+    fireEvent.doubleClick(windowNamed('Corbeille')!.querySelector('.window-title')!)
+    expect(windowNamed('Corbeille')).not.toHaveClass('max')
+  })
+
+  it('works without browser storage', () => {
+    api()
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked')
+    })
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked')
+    })
+    window.history.replaceState(null, '', '/corbeille')
+    render(<Desktop me={enzo} onSignedOut={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Agrandir Corbeille' }))
+    expect(windowNamed('Corbeille')).toHaveClass('max')
+    vi.restoreAllMocks()
+  })
+
+  it('leaves Demander off until the palette exists', () => {
+    api()
+    render(<Desktop me={enzo} onSignedOut={() => {}} />)
+    expect(screen.getByRole('button', { name: 'Demander (bientôt)' })).toBeDisabled()
+  })
+})

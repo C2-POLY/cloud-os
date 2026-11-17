@@ -35,10 +35,12 @@ describe('App', () => {
     fill('Mot de passe', 'correct horse battery')
     fireEvent.click(screen.getByText('Créer le compte administrateur'))
 
-    // The drive opens, with the admin's Comptes tab.
-    expect(await screen.findByText(/Ce dossier est vide/)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /Comptes/ })).toBeInTheDocument()
+    // The desktop opens, with the admin's Comptes app in the dock.
+    expect(await screen.findByRole('button', { name: 'Comptes' })).toBeInTheDocument()
     expect(screen.getByText('Enzo')).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/')
+    fireEvent.click(screen.getByRole('button', { name: 'Fichiers' }))
+    expect(await screen.findByText(/Ce dossier est vide/)).toBeInTheDocument()
     expect(window.location.pathname).toBe('/drive')
     expect(calls.find((c) => c.key === 'POST /api/setup')?.body).toEqual({
       name: 'enzo',
@@ -69,7 +71,7 @@ describe('App', () => {
     fireEvent.click(screen.getByText('Se connecter'))
     expect(await screen.findByLabelText('Se déconnecter')).toBeInTheDocument()
     // A member does not see the account management.
-    expect(screen.queryByRole('link', { name: /Comptes/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Comptes' })).not.toBeInTheDocument()
   })
 
   it('lets the admin disable another account but not act on their own', async () => {
