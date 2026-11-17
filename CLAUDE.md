@@ -55,6 +55,9 @@ make fmt
 docker compose run --rm -v "<folder>:/import:ro" core import <owner> /import
 docker compose run --rm core verify
 
+# Queue N selftest tasks and wait for the workers to run them (the queue, end to end)
+docker compose run --rm core selftest 20
+
 # The drive as a network disk: Finder › Se connecter au serveur › http://localhost:8480/dav/
 
 # Set a new password for an account that lost it (read from stdin) and end its sessions

@@ -4,6 +4,7 @@ export interface Health {
   db: 'ok' | 'down'
   migration?: number
   workers?: { id: string; seen_at: string }[]
+  tasks?: { queued: number; running: number; failed: number }
 }
 
 /** Reads the core's health; a 503 still carries a body that says the database is down. */

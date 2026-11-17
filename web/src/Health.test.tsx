@@ -20,6 +20,7 @@ describe('Health', () => {
       db: 'ok',
       migration: 1,
       workers: [{ id: 'worker-a', seen_at: '2026-11-17T10:00:00Z' }],
+      tasks: { queued: 3, running: 1, failed: 2 },
     })
 
     render(<Health />)
@@ -28,6 +29,7 @@ describe('Health', () => {
     expect(screen.getByText('joignable')).toBeInTheDocument()
     expect(screen.getByText('1')).toBeInTheDocument()
     expect(screen.getByText(/worker-a/)).toBeInTheDocument()
+    expect(screen.getByText('3 en attente · 1 en cours · 2 en échec')).toHaveClass('bad')
   })
 
   it('shows the worker as absent when no heartbeat is recent', async () => {

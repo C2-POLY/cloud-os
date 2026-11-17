@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/C2-POLY/cloud-os/core/internal/db"
+	"github.com/C2-POLY/cloud-os/core/internal/tasks"
 )
 
 type fakeStore struct {
@@ -25,6 +26,10 @@ type fakeStore struct {
 func (f *fakeStore) Ping(context.Context) error { return f.pingErr }
 
 func (f *fakeStore) MigrationVersion(context.Context) (int64, error) { return f.version, nil }
+
+func (f *fakeStore) TaskStats(context.Context) (tasks.Stats, error) {
+	return tasks.Stats{Queued: 2, Running: 1}, nil
+}
 
 func (f *fakeStore) RecentWorkers(_ context.Context, window time.Duration) ([]db.Worker, error) {
 	f.window = window
@@ -59,6 +64,9 @@ func TestHealthOK(t *testing.T) {
 	}
 	if len(body.Workers) != 1 || body.Workers[0].ID != "worker-a" || !body.Workers[0].SeenAt.Equal(seen) {
 		t.Errorf("workers = %+v", body.Workers)
+	}
+	if body.Tasks == nil || body.Tasks.Queued != 2 || body.Tasks.Running != 1 {
+		t.Errorf("tasks = %+v", body.Tasks)
 	}
 	if store.window != 30*time.Second {
 		t.Errorf("worker window = %v, want 30s", store.window)

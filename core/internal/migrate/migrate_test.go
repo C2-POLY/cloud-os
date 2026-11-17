@@ -35,6 +35,7 @@ var tables = []struct {
 	{6, []string{"trash"}, `SELECT 1`},
 	// Migration 7 refuses to go down while versions exist (TestVersionsMigrationKeepsVersions).
 	{7, []string{"file_versions"}, `SELECT 1`},
+	{8, []string{"tasks"}, `INSERT INTO tasks (kind) VALUES ('selftest')`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {

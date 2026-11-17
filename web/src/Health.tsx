@@ -72,6 +72,14 @@ export function Health({ refreshMs = REFRESH_MS }: { refreshMs?: number }) {
           ))}
         </dd>
       )}
+      {health.tasks && (
+        <>
+          <dt>Tâches</dt>
+          <dd className={health.tasks.failed > 0 ? 'bad' : undefined}>
+            {health.tasks.queued} en attente · {health.tasks.running} en cours · {health.tasks.failed} en échec
+          </dd>
+        </>
+      )}
     </dl>
   )
 }

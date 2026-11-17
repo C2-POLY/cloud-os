@@ -1,0 +1,207 @@
+"""The worker's side of the task queue shared with the core.
+
+The SQL here is the contract: core/internal/tasks/tasks.go runs the same
+statements, and both sides have the same tests.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import threading
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+import psycopg
+
+log = logging.getLogger("worker.tasks")
+
+# Defaults of the contract, the same as in Go.
+LEASE = 60.0
+EXTEND_EVERY = 20.0
+BASE_BACKOFF = 10.0
+MAX_BACKOFF = 3600.0
+IDLE_WAIT = 2.0
+
+COLUMNS = (
+    "id, kind, payload, priority, state, attempts, max_attempts, "
+    "run_after, locked_by, locked_until, last_error, dedupe_key"
+)
+
+
+class Lost(Exception):
+    """The task is no longer held by this worker (its lease expired)."""
+
+
+@dataclass
+class Task:
+    id: int
+    kind: str
+    payload: dict[str, Any]
+    priority: int
+    state: str
+    attempts: int
+    max_attempts: int
+
+
+def _task(row: tuple) -> Task:
+    return Task(
+        id=row[0],
+        kind=row[1],
+        payload=row[2] or {},
+        priority=row[3],
+        state=row[4],
+        attempts=row[5],
+        max_attempts=row[6],
+    )
+
+
+def enqueue(
+    conn: psycopg.Connection,
+    kind: str,
+    payload: dict[str, Any] | None = None,
+    priority: int = 0,
+    max_attempts: int = 5,
+    dedupe_key: str | None = None,
+) -> int | None:
+    """Add a task; None when a task with the same dedupe key is pending."""
+    row = conn.execute(
+        """INSERT INTO tasks (kind, payload, priority, max_attempts, dedupe_key)
+           VALUES (%s, %s, %s, %s, %s)
+           ON CONFLICT (dedupe_key) WHERE state IN ('queued', 'running') AND dedupe_key IS NOT NULL
+           DO NOTHING RETURNING id""",
+        (kind, json.dumps(payload or {}), priority, max_attempts, dedupe_key),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def claim(
+    conn: psycopg.Connection, worker: str, kinds: list[str], lease: float = LEASE
+) -> Task | None:
+    """Take the next ready task of one of kinds, or None. SKIP LOCKED makes
+    two workers never take the same task."""
+    row = conn.execute(
+        f"""UPDATE tasks SET state = 'running', attempts = attempts + 1, locked_by = %s,
+                locked_until = now() + make_interval(secs => %s), updated_at = now()
+            WHERE id = (
+                SELECT id FROM tasks
+                WHERE state = 'queued' AND run_after <= now() AND kind = ANY(%s)
+                ORDER BY priority DESC, run_after, id
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1)
+            RETURNING {COLUMNS}""",
+        (worker, lease, kinds),
+    ).fetchone()
+    return _task(row) if row else None
+
+
+def _held(cur: psycopg.Cursor) -> None:
+    if cur.rowcount == 0:
+        raise Lost
+
+
+def extend(conn: psycopg.Connection, task_id: int, worker: str, lease: float = LEASE) -> None:
+    """Push back the lease of a task this worker still holds."""
+    _held(
+        conn.execute(
+            """UPDATE tasks SET locked_until = now() + make_interval(secs => %s), updated_at = now()
+               WHERE id = %s AND state = 'running' AND locked_by = %s""",
+            (lease, task_id, worker),
+        )
+    )
+
+
+def complete(conn: psycopg.Connection, task_id: int, worker: str) -> None:
+    """Mark a held task done."""
+    _held(
+        conn.execute(
+            """UPDATE tasks SET state = 'done', locked_by = NULL, locked_until = NULL,
+                   last_error = NULL, finished_at = now(), updated_at = now()
+               WHERE id = %s AND state = 'running' AND locked_by = %s""",
+            (task_id, worker),
+        )
+    )
+
+
+def fail(conn: psycopg.Connection, task_id: int, worker: str, reason: str) -> None:
+    """Record an error: queued again after a growing delay, or failed once
+    max_attempts is used."""
+    _held(
+        conn.execute(
+            """UPDATE tasks SET last_error = %s, locked_by = NULL, locked_until = NULL,
+                   updated_at = now(),
+                   state = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'queued' END,
+                   finished_at = CASE WHEN attempts >= max_attempts THEN now() END,
+                   run_after = now() + make_interval(secs => least(%s * power(2, attempts - 1), %s))
+               WHERE id = %s AND state = 'running' AND locked_by = %s""",
+            (reason[:2000], BASE_BACKOFF, MAX_BACKOFF, task_id, worker),
+        )
+    )
+
+
+Handler = Callable[[Task], None]
+
+
+def selftest(task: Task) -> None:
+    """Proves the contract end to end: waits payload["sleep"] seconds, and fails
+    while attempts <= payload["fail_times"]."""
+    time.sleep(float(task.payload.get("sleep", 0)))
+    if task.attempts <= int(task.payload.get("fail_times", 0)):
+        raise RuntimeError(f"selftest failing on purpose (attempt {task.attempts})")
+
+
+HANDLERS: dict[str, Handler] = {"selftest": selftest}
+
+
+def run_one(conn: psycopg.Connection, worker: str, handlers: dict[str, Handler]) -> bool:
+    """Claim and run one task; False when none is ready. While the handler
+    works, a thread pushes back the lease so the task is not taken away."""
+    task = claim(conn, worker, list(handlers))
+    if task is None:
+        return False
+    done = threading.Event()
+    url = conn.info.dsn
+
+    def keep_lease() -> None:
+        try:
+            with psycopg.connect(url, autocommit=True) as c:
+                while not done.wait(EXTEND_EVERY):
+                    extend(c, task.id, worker)
+        except Lost:
+            log.warning("task %s: lease lost", task.id)
+        except psycopg.Error as err:
+            log.warning("task %s: could not extend the lease: %s", task.id, err)
+
+    keeper = threading.Thread(target=keep_lease, daemon=True)
+    keeper.start()
+    try:
+        handlers[task.kind](task)
+    except Exception as err:  # a failing handler is recorded, never kills the worker
+        done.set()
+        log.warning("task %s (%s) failed: %s", task.id, task.kind, err)
+        try:
+            fail(conn, task.id, worker, f"{type(err).__name__}: {err}")
+        except Lost:
+            log.warning("task %s: lost before recording the failure", task.id)
+        return True
+    done.set()
+    try:
+        complete(conn, task.id, worker)
+    except Lost:
+        log.warning("task %s: lost before completing", task.id)
+    return True
+
+
+def work(
+    conn: psycopg.Connection,
+    worker: str,
+    stop: threading.Event,
+    handlers: dict[str, Handler] | None = None,
+) -> None:
+    """Run tasks until stopped, waiting IDLE_WAIT when none is ready."""
+    handlers = handlers or HANDLERS
+    while not stop.is_set():
+        if not run_one(conn, worker, handlers):
+            stop.wait(IDLE_WAIT)
