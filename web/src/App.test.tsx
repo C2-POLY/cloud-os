@@ -1,24 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App.tsx'
-
-type Reply = { status: number; body?: unknown }
-
-/** Answers fetch from a table of "METHOD /path" → reply, and records the calls. */
-function mockApi(table: Record<string, Reply | Reply[]>) {
-  const calls: { key: string; body?: unknown }[] = []
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async (path: string, init?: RequestInit) => {
-      const key = `${init?.method ?? 'GET'} ${path}`
-      calls.push({ key, body: init?.body ? JSON.parse(String(init.body)) : undefined })
-      const entry = table[key]
-      const reply = Array.isArray(entry) ? (entry.shift() ?? { status: 500 }) : (entry ?? { status: 404 })
-      return new Response(reply.body === undefined ? null : JSON.stringify(reply.body), { status: reply.status })
-    }),
-  )
-  return calls
-}
+import { mockApi } from './test-api.ts'
 
 const health = { status: 200, body: { version: '0.1.0', db: 'ok', migration: 3 } }
 const enzo = { name: 'enzo', display_name: 'Enzo', role: 'admin', created_at: '2026-11-17T10:00:00Z' }
@@ -28,8 +11,11 @@ function fill(label: string, value: string) {
   fireEvent.change(screen.getByLabelText(label), { target: { value } })
 }
 
+const emptyRoot = { status: 200, body: [] }
+
 afterEach(() => {
   vi.unstubAllGlobals()
+  window.history.replaceState(null, '', '/')
 })
 
 describe('App', () => {
@@ -39,6 +25,7 @@ describe('App', () => {
       'POST /api/setup': { status: 201, body: { account: enzo, token: 't' } },
       'GET /api/health': health,
       'GET /api/accounts': { status: 200, body: [enzo] },
+      'GET /api/files?path=': emptyRoot,
     })
 
     render(<App />)
@@ -48,8 +35,11 @@ describe('App', () => {
     fill('Mot de passe', 'correct horse battery')
     fireEvent.click(screen.getByText('Créer le compte administrateur'))
 
-    expect(await screen.findByText('Comptes')).toBeInTheDocument()
-    expect(screen.getAllByText('Enzo').length).toBeGreaterThan(0)
+    // The drive opens, with the admin's Comptes tab.
+    expect(await screen.findByText(/Ce dossier est vide/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Comptes/ })).toBeInTheDocument()
+    expect(screen.getByText('Enzo')).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/drive')
     expect(calls.find((c) => c.key === 'POST /api/setup')?.body).toEqual({
       name: 'enzo',
       display_name: 'Enzo',
@@ -66,6 +56,7 @@ describe('App', () => {
         { status: 200, body: { account: johan, token: 't' } },
       ],
       'GET /api/health': health,
+      'GET /api/files?path=': emptyRoot,
     })
 
     render(<App />)
@@ -76,9 +67,9 @@ describe('App', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Identifiant ou mot de passe incorrect.')
 
     fireEvent.click(screen.getByText('Se connecter'))
-    expect(await screen.findByText('Se déconnecter')).toBeInTheDocument()
+    expect(await screen.findByLabelText('Se déconnecter')).toBeInTheDocument()
     // A member does not see the account management.
-    expect(screen.queryByText('Comptes')).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Comptes/ })).not.toBeInTheDocument()
   })
 
   it('lets the admin disable another account but not act on their own', async () => {
@@ -89,6 +80,7 @@ describe('App', () => {
       'GET /api/accounts': { status: 200, body: [enzo, johan] },
       'PATCH /api/accounts/johan': { status: 200, body: { ...johan, disabled_at: '2026-11-17T11:00:00Z' } },
     })
+    window.history.replaceState(null, '', '/comptes')
 
     render(<App />)
     expect(await screen.findByText('Johan')).toBeInTheDocument()

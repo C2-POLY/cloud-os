@@ -1,8 +1,7 @@
-import { useEffect, useState } from 'react'
-import { Accounts } from './Accounts.tsx'
+import { useEffect, useState, type ReactNode } from 'react'
 import { ApiError, api, type Account } from './api.ts'
 import { CredentialsForm } from './CredentialsForm.tsx'
-import { Health } from './Health.tsx'
+import { Shell } from './Shell.tsx'
 
 type Screen =
   | { kind: 'loading' }
@@ -37,13 +36,23 @@ export function App() {
   }, [])
 
   switch (screen.kind) {
+    case 'home':
+      return <Shell me={screen.me} onSignedOut={() => setScreen({ kind: 'login' })} />
     case 'loading':
-      return <p className="muted">Chargement…</p>
+      return (
+        <Narrow>
+          <p className="muted">Chargement…</p>
+        </Narrow>
+      )
     case 'error':
-      return <p className="bad">Le cœur ne répond pas : {screen.message}</p>
+      return (
+        <Narrow>
+          <p className="bad">Le cœur ne répond pas : {screen.message}</p>
+        </Narrow>
+      )
     case 'setup':
       return (
-        <section>
+        <Narrow>
           <h2>Bienvenue</h2>
           <p className="muted">Créez le compte administrateur de la box.</p>
           <CredentialsForm
@@ -54,11 +63,11 @@ export function App() {
               setScreen({ kind: 'home', me: account })
             }}
           />
-        </section>
+        </Narrow>
       )
     case 'login':
       return (
-        <section>
+        <Narrow>
           <h2>Connexion</h2>
           <CredentialsForm
             submitLabel="Se connecter"
@@ -67,28 +76,17 @@ export function App() {
               setScreen({ kind: 'home', me: account })
             }}
           />
-        </section>
-      )
-    case 'home':
-      return (
-        <section>
-          <p className="signed-in">
-            Connecté en tant que <strong>{screen.me.display_name}</strong>
-            {screen.me.role === 'admin' && <span className="badge">admin</span>}
-            <button
-              type="button"
-              className="link"
-              onClick={async () => {
-                await api('POST', '/api/logout', {})
-                setScreen({ kind: 'login' })
-              }}
-            >
-              Se déconnecter
-            </button>
-          </p>
-          <Health />
-          {screen.me.role === 'admin' && <Accounts me={screen.me} />}
-        </section>
+        </Narrow>
       )
   }
+}
+
+/** The narrow column of the screens before signing in. */
+function Narrow({ children }: { children: ReactNode }) {
+  return (
+    <main className="narrow">
+      <h1>Cloud OS</h1>
+      <section>{children}</section>
+    </main>
+  )
 }
