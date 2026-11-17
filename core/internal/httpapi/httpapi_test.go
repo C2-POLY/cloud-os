@@ -34,7 +34,7 @@ func (f *fakeStore) RecentWorkers(_ context.Context, window time.Duration) ([]db
 func getHealth(t *testing.T, store HealthStore) (int, Health) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	NewHandler("1.2.3", store, "").ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+	NewHandler(Config{Version: "1.2.3", Health: store}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
 	var body Health
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode %q: %v", rec.Body.String(), err)
@@ -84,7 +84,7 @@ func TestStaticFallsBackToIndex(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "app.js"), []byte("js"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler("1.2.3", &fakeStore{}, dir)
+	h := NewHandler(Config{Version: "1.2.3", Health: &fakeStore{}, StaticDir: dir})
 
 	for path, want := range map[string]string{"/": "app", "/photos/2026": "app", "/app.js": "js"} {
 		rec := httptest.NewRecorder()

@@ -3,6 +3,7 @@
   --fg: #1d1d1b;
   --muted: #6b6b66;
   --line: #e2e2dd;
+  --field: #c9c9c3;
   --good: #1f7a3d;
   --bad: #b3261e;
   color-scheme: light dark;
@@ -16,6 +17,7 @@
     --fg: #ececea;
     --muted: #9a9a94;
     --line: #2c2c2a;
+    --field: #4a4a46;
     --good: #5cc983;
     --bad: #f2786f;
   }
@@ -71,4 +73,125 @@ h1 {
 
 .muted {
   color: var(--muted);
+}
+
+h2 {
+  font-size: 1.15rem;
+  margin: 0 0 0.75rem;
+}
+
+h3 {
+  font-size: 1rem;
+  margin: 1.5rem 0 0.75rem;
+}
+
+.form {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 22rem;
+}
+
+.form label {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.form input {
+  font: inherit;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--field);
+  border-radius: 0.5rem;
+  padding: 0.55rem 0.7rem;
+}
+
+.form input:focus {
+  outline: 2px solid var(--good);
+  outline-offset: 1px;
+}
+
+.hint {
+  margin: -0.25rem 0 0;
+  font-size: 0.85rem;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.form button[type='submit'] {
+  justify-self: start;
+  color: var(--bg);
+  background: var(--fg);
+  border: 0;
+  border-radius: 0.5rem;
+  padding: 0.55rem 1rem;
+}
+
+.form button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+button.link {
+  color: var(--fg);
+  background: none;
+  border: 0;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.signed-in {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1.25rem;
+}
+
+.signed-in .link {
+  margin-left: auto;
+}
+
+.badge {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.accounts {
+  margin-top: 2rem;
+}
+
+.accounts ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+}
+
+.accounts li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+}
+
+.accounts li + li {
+  border-top: 1px solid var(--line);
+}
+
+.actions {
+  display: flex;
+  gap: 1rem;
 }
