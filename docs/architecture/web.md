@@ -77,7 +77,7 @@ stateDiagram-v2
 
 ## Animations et défilement
 
-Motion anime l'interface et Lenis fait défiler la page, tous deux sous MIT ; GSAP et React Bits sont écartés pour leur licence ([ADR 002](../decisions/003-front-motion.md)). Le code est dans `web/src/motion/` :
+Motion anime l'interface et Lenis fait défiler la page, tous deux sous MIT ; GSAP et React Bits sont écartés pour leur licence ([ADR 003](../decisions/003-front-motion.md)). Le code est dans `web/src/motion/` :
 
 | Fichier | Rôle |
 |---|---|
