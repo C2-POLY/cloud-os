@@ -1,6 +1,6 @@
 # Métadonnées des photos
 
-Chaque image du drive a ses métadonnées en base : date de prise de vue, lieu, appareil et dimensions. Elles sont lues dans l'EXIF par les workers, en tâche de fond. Les originaux ne sont jamais modifiés. Elles servent la timeline (#35) et la carte (#40).
+Chaque image du drive a ses métadonnées en base : date de prise de vue, lieu, appareil et dimensions. Elles sont lues dans l'EXIF par les workers, en tâche de fond. Les originaux ne sont jamais modifiés. Elles servent la Chronologie de Fichiers (#47, `GET /api/timeline`, voir [web.md](web.md)), la timeline de l'app Photos (#35) et la carte (#40).
 Issue : #34 (HEIC : #30, vidéos : #41, qui rempliront la même table).
 
 ## Parcours

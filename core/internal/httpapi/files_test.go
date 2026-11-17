@@ -344,3 +344,38 @@ func TestMeta(t *testing.T) {
 		}
 	}
 }
+
+func TestTimelineRoutes(t *testing.T) {
+	enzo, _ := newFilesAPI(t)
+	for i := range 3 {
+		enzo.upload(fmt.Sprintf("Docs/n%d.txt", i), fmt.Sprint(i), map[string]string{"X-Modified-At": fmt.Sprint(1700000000 + i)})
+	}
+	rec := enzo.get("/api/timeline?limit=2&tz=Europe/Paris", nil)
+	var page struct {
+		Items []struct {
+			Path  string `json:"path"`
+			At    string `json:"at"`
+			Taken bool   `json:"taken"`
+		} `json:"items"`
+		Next *struct {
+			At   string `json:"at"`
+			Path string `json:"path"`
+		} `json:"next"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil || len(page.Items) != 2 || page.Next == nil {
+		t.Fatalf("page 1: %d %s", rec.Code, rec.Body)
+	}
+	if page.Items[0].Path != "Docs/n2.txt" || page.Items[0].At != "2023-11-14T23:13:22" {
+		t.Errorf("first: %+v", page.Items[0])
+	}
+	rec = enzo.get("/api/timeline?limit=2&tz=Europe/Paris&before_at="+page.Next.At+"&before_path="+page.Next.Path, nil)
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil || len(page.Items) != 1 || page.Items[0].Path != "Docs/n0.txt" || page.Next != nil {
+		t.Errorf("page 2: %s", rec.Body)
+	}
+	if rec := enzo.get("/api/timeline?before_at=hier", nil); rec.Code != http.StatusBadRequest {
+		t.Errorf("bad cursor: %d", rec.Code)
+	}
+	if rec := enzo.get("/api/timeline/months?tz=UTC", nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `{"month":"2023-11","count":3}`) {
+		t.Errorf("months: %d %s", rec.Code, rec.Body)
+	}
+}

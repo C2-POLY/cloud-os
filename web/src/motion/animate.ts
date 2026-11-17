@@ -1,6 +1,8 @@
 import { animate } from 'motion/mini'
 import { prefersReducedMotion } from './reducedMotion.ts'
 
+const enterSeconds = 0.2
+
 /** How many rows of a listing come in animated; the rest are shown as they are. */
 export const animatedRows = 30
 
@@ -20,10 +22,16 @@ export function enter(targets: Element | null | (Element | null)[], { y = 0, sca
   const keyframes: Record<string, (string | number)[]> = { opacity: [0, 1] }
   if (y || scale !== 1) keyframes.transform = [`translateY(${y}px) scale(${scale})`, 'none']
   list.forEach((el, i) => {
-    animate(el, keyframes, { duration: 0.2, ease: 'easeOut', delay: i * step }).then(() => {
+    const delay = i * step
+    const controls = animate(el, keyframes, { duration: enterSeconds, ease: 'easeOut', delay })
+    void controls.then(() => {
       el.style.removeProperty('opacity')
       el.style.removeProperty('transform')
     })
+    // A browser that holds back animations (a background tab, a paused frame
+    // clock) must not leave the element invisible: it is completed shortly
+    // after its own end.
+    setTimeout(() => controls.complete(), (enterSeconds + delay) * 1000 + 300)
   })
 }
 
