@@ -379,3 +379,43 @@ func TestTimelineRoutes(t *testing.T) {
 		t.Errorf("months: %d %s", rec.Code, rec.Body)
 	}
 }
+
+func TestKnownAndDedupe(t *testing.T) {
+	enzo, johan := newFilesAPI(t)
+	enzo.upload("Photos/plage.jpg", "plage", nil)
+	johan.upload("secret.jpg", "secret", nil)
+	hexOf := func(s string) string {
+		sum := sha256.Sum256([]byte(s))
+		return hex.EncodeToString(sum[:])
+	}
+
+	rec := enzo.do("POST", "/api/files/known", `{"sha256":["`+hexOf("plage")+`","`+hexOf("secret")+`"]}`)
+	if rec.Code != http.StatusOK || rec.Body.String() != `{"known":["`+hexOf("plage")+`"]}`+"\n" {
+		t.Errorf("known: %d %q", rec.Code, rec.Body)
+	}
+	if rec := enzo.do("POST", "/api/files/known", `{"sha256":["zz"]}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("bad hash: %d", rec.Code)
+	}
+
+	body := `{"path":"Phone/IMG_0001.jpg","sha256":"` + hexOf("plage") + `","modified_at":1721000000}`
+	if rec := enzo.do("POST", "/api/files/dedupe", body); rec.Code != http.StatusCreated {
+		t.Fatalf("dedupe: %d %s", rec.Code, rec.Body)
+	}
+	if rec := enzo.get("/api/files/content?path=Phone/IMG_0001.jpg", nil); rec.Body.String() != "plage" {
+		t.Errorf("copied content %q", rec.Body)
+	}
+	if rec := enzo.do("POST", "/api/files/dedupe", body); rec.Code != http.StatusOK {
+		t.Errorf("again: %d", rec.Code)
+	}
+	if rec := enzo.do("POST", "/api/files/dedupe", `{"path":"Phone/IMG_0001.jpg","sha256":"`+hexOf("autre")+`"}`); rec.Code != http.StatusConflict {
+		t.Errorf("taken path: %d", rec.Code)
+	}
+	// Johan's content is not enzo's to copy, and nothing says it exists.
+	if rec := enzo.do("POST", "/api/files/dedupe", `{"path":"x.jpg","sha256":"`+hexOf("secret")+`"}`); rec.Code != http.StatusNotFound {
+		t.Errorf("other account: %d", rec.Code)
+	}
+	anon := &client{t: t, h: enzo.h}
+	if rec := anon.do("POST", "/api/files/dedupe", body); rec.Code != http.StatusUnauthorized {
+		t.Errorf("signed out: %d", rec.Code)
+	}
+}

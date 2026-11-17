@@ -55,7 +55,7 @@ func owner(r *http.Request) string {
 // failFiles maps a storage error to its status; anything unexpected is logged and hidden.
 func failFiles(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, storage.ErrInvalidPath):
+	case errors.Is(err, storage.ErrInvalidPath), errors.Is(err, storage.ErrInvalidRequest):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 	case errors.Is(err, storage.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such file or folder"})
@@ -229,6 +229,73 @@ func (a *filesAPI) meta(w http.ResponseWriter, r *http.Request) {
 		out.TakenOffset = &s
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// known answers which of the given SHA-256 (hex) the account already has, so
+// that a client backing up a phone skips them at once.
+func (a *filesAPI) known(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		SHA256 []string `json:"sha256"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	sums := make([][]byte, 0, len(body.SHA256))
+	for _, h := range body.SHA256 {
+		sum, err := hex.DecodeString(h)
+		if err != nil || len(sum) != 32 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sha256 must be 64 hex characters"})
+			return
+		}
+		sums = append(sums, sum)
+	}
+	found, err := a.store.Known(r.Context(), owner(r), sums)
+	if err != nil {
+		failFiles(w, err)
+		return
+	}
+	out := make([]string, len(found))
+	for i, sum := range found {
+		out[i] = hex.EncodeToString(sum)
+	}
+	writeJSON(w, http.StatusOK, map[string][]string{"known": out})
+}
+
+// dedupe stores at path a content the account already has, without its
+// bytes: 201 copied, 200 when path already holds it, 404 when the account
+// does not have it (the client then sends it), 409 when path holds another.
+func (a *filesAPI) dedupe(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path       string `json:"path"`
+		SHA256     string `json:"sha256"`
+		ModifiedAt int64  `json:"modified_at"` // Unix seconds; 0 means now
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	sum, err := hex.DecodeString(body.SHA256)
+	if err != nil || len(sum) != 32 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sha256 must be 64 hex characters"})
+		return
+	}
+	var mod time.Time
+	if body.ModifiedAt > 0 {
+		mod = time.Unix(body.ModifiedAt, 0)
+	}
+	f, result, err := a.store.Dedupe(r.Context(), owner(r), body.Path, sum, mod)
+	if errors.Is(err, storage.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown content: send the file"})
+		return
+	}
+	if err != nil {
+		failFiles(w, err)
+		return
+	}
+	status := http.StatusCreated
+	if result == storage.DedupePresent {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, entryOf(f))
 }
 
 // upload stores the request body at path. Content-Length, when sent, and
