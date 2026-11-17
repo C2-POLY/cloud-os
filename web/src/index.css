@@ -1633,6 +1633,165 @@ html:has(.desktop) body {
   padding: 1rem 0 2rem;
 }
 
+/* Photos: the media timeline by day, and the viewer */
+
+.timeline.photos .timeline-media {
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 3px;
+}
+
+.timeline.photos .timeline-media button {
+  border-radius: 4px;
+}
+
+.photos-day h3 {
+  margin: 0.9rem 0 0.4rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  color: #f2f2f2;
+  background: rgb(8 6 14 / 92%);
+  backdrop-filter: blur(20px);
+}
+
+.viewer-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem 4rem;
+}
+
+.viewer-stage img,
+.viewer-stage video {
+  max-width: 100%;
+  max-height: calc(100vh - 3rem);
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 30px 80px -20px rgb(0 0 0 / 60%);
+}
+
+.viewer-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: rgb(255 255 255 / 12%);
+  cursor: pointer;
+}
+
+.viewer-nav:hover:not(:disabled) {
+  background: rgb(255 255 255 / 24%);
+}
+
+.viewer-nav:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.viewer-nav.prev {
+  left: 0.75rem;
+}
+
+.viewer-nav.next {
+  right: 0.75rem;
+}
+
+.viewer-info {
+  position: relative;
+  flex: 0 0 300px;
+  box-sizing: border-box;
+  padding: 3.25rem 1.25rem 1.25rem;
+  overflow: auto;
+  background: rgb(255 255 255 / 6%);
+  border-left: 1px solid rgb(255 255 255 / 10%);
+}
+
+.viewer-info h2 {
+  margin: 0 0 1rem;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+
+.viewer-info dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.45rem 1rem;
+  margin: 0 0 1.25rem;
+  font-size: 0.88rem;
+}
+
+.viewer-info dt {
+  color: rgb(255 255 255 / 60%);
+}
+
+.viewer-info dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.viewer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.viewer-actions .button,
+.viewer-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 10px;
+  color: #fff;
+  font: inherit;
+  font-size: 0.88rem;
+  text-decoration: none;
+  background: rgb(255 255 255 / 10%);
+  cursor: pointer;
+}
+
+.viewer-actions .button:hover,
+.viewer-actions button:hover {
+  background: rgb(255 255 255 / 20%);
+}
+
+.viewer-close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: rgb(255 255 255 / 12%);
+  cursor: pointer;
+}
+
+.viewer-count {
+  margin-top: 1rem;
+  font-size: 0.8rem;
+  color: rgb(255 255 255 / 55%);
+}
+
 /* On a phone: one window at a time, full screen, the dock below. */
 @media (max-width: 767px) {
   .menubar-who,
@@ -1647,6 +1806,37 @@ html:has(.desktop) body {
 
   .palette-preview {
     display: none;
+  }
+
+  .viewer {
+    flex-direction: column;
+  }
+
+  .viewer-stage {
+    padding: 0.5rem 0.5rem;
+  }
+
+  .viewer-stage img,
+  .viewer-stage video {
+    max-height: 62vh;
+  }
+
+  .viewer-info {
+    flex: none;
+    max-height: 38vh;
+    padding-top: 1rem;
+    border-left: 0;
+    border-top: 1px solid rgb(255 255 255 / 10%);
+  }
+
+  .viewer-close {
+    position: fixed;
+    top: 0.5rem;
+    right: 0.5rem;
+  }
+
+  .timeline.photos .timeline-media {
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
   }
 
   .clock {

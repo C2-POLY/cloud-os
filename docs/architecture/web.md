@@ -1,7 +1,7 @@
 # Interface web
 
 Le front React (Vite, TypeScript) que le cœur sert en fichiers statiques : `web/src/`.
-Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (versions), #13 (partage par lien), #31 (animations et défilement), #46 (le bureau), #48 (la palette Demander), #49 (les widgets du bureau), #47 (la Chronologie de Fichiers).
+Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (versions), #13 (partage par lien), #31 (animations et défilement), #46 (le bureau), #48 (la palette Demander), #49 (les widgets du bureau), #47 (la Chronologie de Fichiers), #35 (l'app Photos).
 
 ## Écrans et adresses
 
@@ -12,6 +12,7 @@ Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (
 | `/` | Aucune : le bureau | Tout compte |
 | `/drive`, `/drive/<dossier>` | Fichiers, vue Dossiers, sur ce dossier | Tout compte |
 | `/chronologie` | Fichiers, vue Chronologie | Tout compte |
+| `/photos` | Photos | Tout compte |
 | `/partages` | Partages : ses liens, avec Révoquer | Tout compte |
 | `/corbeille` | Corbeille | Tout compte |
 | `/s/<jeton>` | Hors du bureau : la page de l'invité d'un lien de partage | Sans compte |
@@ -27,13 +28,14 @@ Le compte connecté arrive sur un bureau : fond d'écran vivant, barre de menus,
 
 | Fichier | Rôle |
 |---|---|
-| `apps.ts` | Les apps (Fichiers, Partages, Corbeille, Comptes) : titre, icône, couleur du dock, adresse d'ouverture ; `appOf(adresse)` |
+| `apps.ts` | Les apps (Fichiers, Photos, Partages, Corbeille, Comptes) : titre, icône, couleur du dock, adresse d'ouverture ; `appOf(adresse)` |
 | `windows.ts` | `useWindows` : les fenêtres ouvertes, de l'arrière vers l'avant, et `useGeometries` : leurs places, gardées dans `localStorage` (`cloudos.windows.v1`) |
 | `Window.tsx` | Une fenêtre : barre de titre (Fermer, Agrandir), déplacement au pointeur, double-clic pour agrandir |
 | `Desktop.tsx` | Le bureau : fond, barre de menus, horloge, fenêtres, dock, raccourci ⌘K |
 | `Palette.tsx`, `search.ts` | La palette Demander ([search.md](search.md)) |
 | `Widgets.tsx`, `widgets.ts` | Les widgets Reprendre et Ce qui s'est passé |
-| `Timeline.tsx`, `timeline.ts` | La vue Chronologie de Fichiers |
+| `Timeline.tsx`, `timeline.ts` | La vue Chronologie de Fichiers, et l'app Photos (`photos`) |
+| `Viewer.tsx` | La visionneuse de Photos |
 
 - **L'adresse fait foi :** aller à l'adresse d'une app l'ouvre, ou la met au premier plan à cette adresse. Les autres fenêtres restent ouvertes, chacune à l'adresse qu'elle montrait (Fichiers garde son dossier). Fermer la fenêtre du premier plan donne la main à la suivante, ou au bureau (`/`). Précédent et Suivant marchent comme avant.
 - **Fenêtres :** elles se déplacent par la barre de titre, sans pouvoir passer sous la barre de menus ni sortir de l'écran (`clampPosition`). Le double-clic ou le bouton agrandit la fenêtre à tout le bureau. Une place se garde par app dans ce navigateur ; sans stockage (navigation privée), elle dure jusqu'à la fermeture de la page. Le contenu d'une fenêtre défile seul (`data-lenis-prevent`), la page jamais.
@@ -46,6 +48,13 @@ Le compte connecté arrive sur un bureau : fond d'écran vivant, barre de menus,
   - **Frise :** une barre par mois, du premier au dernier, les mois vides compris. Un clic charge la liste à partir de ce mois.
   - **Pages :** 60 éléments à la fois, la suivante quand la fin de liste devient visible (bouton Plus ancien sinon). Une réponse à un saut plus ancien qui arrive en retard est ignorée.
   - **API, partagée avec la timeline de l'app Photos (#35) :** `GET /api/timeline?tz=&filter=media|docs&limit=&before_at=&before_path=` renvoie `{items, next}`. Le curseur est la date et le chemin du dernier élément, ce qui garantit des pages sans doublon ni trou même à date égale. `GET /api/timeline/months?tz=&filter=` donne le nombre de fichiers par mois. Le tri se fait à la volée (`storage.Timeline`), sans index dédié ; à revoir pour une très grande photothèque.
+- **Photos** (`/photos`) : la même `Timeline`, avec `photos`, sur `GET /api/timeline?filter=media`.
+  - **Grille :** une grille dense de miniatures, avec des titres par mois et par jour (« Dimanche 14 juillet »). Sans date EXIF, une photo prend sa date de modification, celle de l'appareil, plutôt que la date d'envoi, qui regrouperait un vieil import au jour de l'import.
+  - **Visionneuse** (`Viewer.tsx`, dessinée sur `document.body`, au-dessus du bureau et du dock) :
+    - l'image d'origine (`/api/files/content`) pour ce que le navigateur sait dessiner, sinon la miniature, par exemple pour un HEIC ; une vidéo se lit sur place ;
+    - les flèches, à l'écran ou au clavier, vont à la plus récente ou à la plus ancienne, et Échap ferme ;
+    - le panneau montre les métadonnées de `GET /api/files/meta` (date de prise de vue écrite sans conversion de fuseau, appareil, objectif, dimensions, GPS), le dossier, Télécharger et Afficher dans Fichiers ;
+    - près de la fin de ce qui est chargé, la page suivante est demandée.
 - **Journal d'activité** (`core/internal/activity`, table `activity`, migration 0013) :
   - **Ce qu'il retient :** `storage.Store.Notify` signale `added` et `replaced` (fichier enregistré, version gardée ou non), `trashed` et `restored`. La page d'un invité signale `share_opened` à chaque visite (`GET /api/s/{jeton}`).
   - **Ce qu'il ne retient pas :** les téléchargements, qui compteraient chaque morceau d'une vidéo lue.
