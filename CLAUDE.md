@@ -48,6 +48,11 @@ make test
 
 # Rewrite Go and Python files in place
 make fmt
+
+# Import a folder into an owner's space (the folder is mounted read-only), then
+# check every stored file against the index (exit 1 on any difference)
+docker compose run --rm -v "<folder>:/import:ro" core import <owner> /import
+docker compose run --rm core verify
 ```
 
 Layout: `core/` (Go module, `cmd/core`, `internal/`, SQL migrations in `core/migrations/`, applied by the core at startup with goose), `worker/` (Python, uv), `web/` (React, Vite, npm), `compose.yaml`, `Makefile`, `.github/workflows/ci.yml` (`make lint` and `make test` on every PR and on `main`).
@@ -58,13 +63,14 @@ Layout: `core/` (Go module, `cmd/core`, `internal/`, SQL migrations in `core/mig
 COMPOSE_PROJECT_NAME=cloud-os-<name> CLOUDOS_DB_PORT=54321 CLOUDOS_CORE_PORT=8481 CLOUDOS_WEB_PORT=5181 make up
 ```
 
-Defaults: database `54320`, core `8480`, Vite `5180`, all bound to `127.0.0.1`. The Compose credentials (`cloudos`/`cloudos`) are for the local throwaway database only.
+Defaults: database `54320`, core `8480`, Vite `5180`, all bound to `127.0.0.1`. User files are stored in `CLOUDOS_DATA_DIR` (default `./.data/files`, git-ignored), mounted at `/data` in the core. The Compose credentials (`cloudos`/`cloudos`) are for the local throwaway database only.
 
 ## Non-negotiable rules
 
 - **No data loss, ever.** Indexing never modifies original files; integrity is checked by hash; deletes go to the trash; database migrations are versioned and reversible. A feature that can lose a file does not ship.
 - **Nothing leaves the box by default.** Any call to an external API is explicit and enabled per module.
-- Files are stored in clear, in a readable tree: the data stays usable without the product.
+- Files are stored in clear, in a readable tree: the data stays usable without the product. Only `core/internal/storage` writes there: it writes to a temporary file, checks it, then links it into place without ever replacing a file; it never deletes or modifies a stored file.
+- **Dependencies and models have a permissive licence** (MIT, BSD, Apache-2.0, MPL-2.0, ISC). No AGPL or GPL, no non-commercial licence, so the project can still be released as open source.
 
 ## New subjects
 

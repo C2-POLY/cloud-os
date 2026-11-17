@@ -1,50 +1,19 @@
-package migrate
+package migrate_test
 
 import (
 	"context"
-	"fmt"
-	"net/url"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/C2-POLY/cloud-os/core/internal/db"
+	"github.com/C2-POLY/cloud-os/core/internal/migrate"
+	"github.com/C2-POLY/cloud-os/core/internal/testdb"
 )
 
-// tempDatabase creates an empty database next to the one in
-// CLOUDOS_TEST_DATABASE_URL and drops it when the test ends, so the test never
-// touches the running stack's data.
-func tempDatabase(t *testing.T) string {
-	t.Helper()
-	admin := os.Getenv("CLOUDOS_TEST_DATABASE_URL")
-	if admin == "" {
-		t.Skip("CLOUDOS_TEST_DATABASE_URL is not set: run `make test`, which starts the database")
-	}
-	ctx := context.Background()
-	conn, err := pgx.Connect(ctx, admin)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	name := fmt.Sprintf("cloudos_test_%d", time.Now().UnixNano())
-	if _, err := conn.Exec(ctx, "CREATE DATABASE "+name); err != nil {
-		t.Fatalf("create database: %v", err)
-	}
-	t.Cleanup(func() {
-		if _, err := conn.Exec(ctx, "DROP DATABASE "+name+" WITH (FORCE)"); err != nil {
-			t.Errorf("drop database: %v", err)
-		}
-		conn.Close(ctx)
-	})
-	u, err := url.Parse(admin)
-	if err != nil {
-		t.Fatal(err)
-	}
-	u.Path = "/" + name
-	return u.String()
-}
+// latest is the number of the last migration in core/migrations.
+const latest = 2
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {
 	t.Helper()
@@ -64,19 +33,22 @@ func extensionExists(t *testing.T, pool *pgxpool.Pool, name string) bool {
 	return exists
 }
 
+// TestMigrationsUpDownUp applies every migration, undoes them one by one with
+// data in the tables, and applies them again.
 func TestMigrationsUpDownUp(t *testing.T) {
 	ctx := context.Background()
-	pool, err := db.Open(ctx, tempDatabase(t))
+	pool, err := db.Open(ctx, testdb.URL(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	p, err := NewProvider(db.SQL(pool))
+	p, err := migrate.NewProvider(db.SQL(pool))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	check := func(step string, wantVersion int64, wantSchema bool) {
+	type schema struct{ vector, heartbeat, files bool }
+	check := func(step string, wantVersion int64, want schema) {
 		t.Helper()
 		v, err := p.GetDBVersion(ctx)
 		if err != nil {
@@ -85,44 +57,45 @@ func TestMigrationsUpDownUp(t *testing.T) {
 		if v != wantVersion {
 			t.Errorf("%s: version = %d, want %d", step, v, wantVersion)
 		}
-		if got := tableExists(t, pool, "worker_heartbeat"); got != wantSchema {
-			t.Errorf("%s: worker_heartbeat exists = %v, want %v", step, got, wantSchema)
-		}
-		if got := extensionExists(t, pool, "vector"); got != wantSchema {
-			t.Errorf("%s: vector extension exists = %v, want %v", step, got, wantSchema)
+		got := schema{extensionExists(t, pool, "vector"), tableExists(t, pool, "worker_heartbeat"), tableExists(t, pool, "files")}
+		if got != want {
+			t.Errorf("%s: schema = %+v, want %+v", step, got, want)
 		}
 	}
+	all := schema{true, true, true}
 
 	if _, err := p.Up(ctx); err != nil {
 		t.Fatalf("up: %v", err)
 	}
-	check("up", 1, true)
+	check("up", latest, all)
+
+	if _, err := pool.Exec(ctx, `INSERT INTO worker_heartbeat VALUES ('w', now())`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO files (owner, path, size, mime, sha256, modified_at)
+		VALUES ('enzo', 'a.txt', 1, 'text/plain', sha256('a'), now())`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := p.Down(ctx); err != nil {
+		t.Fatalf("down 0002: %v", err)
+	}
+	check("down 0002", 1, schema{true, true, false})
 
 	if _, err := p.DownTo(ctx, 0); err != nil {
-		t.Fatalf("down: %v", err)
+		t.Fatalf("down 0001: %v", err)
 	}
-	check("down", 0, false)
+	check("down 0001", 0, schema{})
 
 	if _, err := p.Up(ctx); err != nil {
 		t.Fatalf("up again: %v", err)
 	}
-	check("up again", 1, true)
+	check("up again", latest, all)
 }
 
 func TestHeartbeatQuery(t *testing.T) {
 	ctx := context.Background()
-	pool, err := db.Open(ctx, tempDatabase(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
-	p, err := NewProvider(db.SQL(pool))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := p.Up(ctx); err != nil {
-		t.Fatal(err)
-	}
+	pool, p := testdb.Migrated(t)
 	if _, err := pool.Exec(ctx, `INSERT INTO worker_heartbeat VALUES ('fresh', now()), ('stale', now() - interval '1 minute')`); err != nil {
 		t.Fatal(err)
 	}
