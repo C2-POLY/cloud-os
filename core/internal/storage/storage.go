@@ -78,7 +78,39 @@ func (s *Store) Put(ctx context.Context, owner, p string, r io.Reader, opt PutOp
 		return File{}, err
 	}
 	defer os.Remove(tmp) // no-op once linked and removed below
+	return s.finish(ctx, owner, p, tmp, sum, size, sniff, opt)
+}
 
+// PlaceFile stores a file already written under the data root (an upload's
+// bytes) at owner/p, with the same checks as Put. It reads the file again to
+// hash what is really on disk. The source is left where it is: the caller
+// removes it once PlaceFile succeeds.
+func (s *Store) PlaceFile(ctx context.Context, owner, p, src string, opt PutOptions) (File, error) {
+	owner, err := CleanOwner(owner)
+	if err != nil {
+		return File{}, err
+	}
+	p, err = CleanPath(p)
+	if err != nil {
+		return File{}, err
+	}
+	info, err := os.Lstat(src)
+	if err != nil {
+		return File{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return File{}, fmt.Errorf("%s is not a regular file", src)
+	}
+	sum, sniff, err := hashFile(src)
+	if err != nil {
+		return File{}, err
+	}
+	return s.finish(ctx, owner, p, src, sum, info.Size(), sniff, opt)
+}
+
+// finish checks the expectations, sets the modification time and places the
+// written file tmp at owner/p.
+func (s *Store) finish(ctx context.Context, owner, p, tmp string, sum []byte, size int64, sniff []byte, opt PutOptions) (File, error) {
 	if opt.ExpectSize >= 0 && size != opt.ExpectSize {
 		return File{}, fmt.Errorf("%w: wrote %d bytes, expected %d", ErrMismatch, size, opt.ExpectSize)
 	}
@@ -92,7 +124,6 @@ func (s *Store) Put(ctx context.Context, owner, p string, r io.Reader, opt PutOp
 	if err := os.Chtimes(tmp, mod, mod); err != nil {
 		return File{}, fmt.Errorf("set modification time: %w", err)
 	}
-
 	f := File{Owner: owner, Path: p, Kind: KindFile, Size: size, MIME: detectMIME(p, sniff), SHA256: sum, ModifiedAt: mod}
 	return s.place(ctx, f, tmp)
 }

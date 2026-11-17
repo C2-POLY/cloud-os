@@ -1,7 +1,7 @@
 # Stockage des fichiers
 
 Le domaine qui écrit, range et vérifie les fichiers des utilisateurs : `core/internal/storage`, et l'API qui l'expose, `core/internal/httpapi/files.go`.
-Issues : #7 (écriture et index), #9 (dossiers, déplacements, API).
+Issues : #7 (écriture et index), #9 (dossiers, déplacements, API), #18 (envoi reprenable).
 
 ## Ce qui est garanti
 
@@ -14,6 +14,7 @@ Issues : #7 (écriture et index), #9 (dossiers, déplacements, API).
 ```text
 <CLOUDOS_DATA_DIR>/            /data dans le conteneur du cœur
 ├── .cloudos/tmp/              écritures en cours, vidées au démarrage du serveur
+├── .cloudos/uploads/<id>      envois reprenables en cours (tus), supprimés à la fin ou après 24 h
 ├── enzo/                      un dossier par compte (nom du compte = nom du dossier)
 │   ├── Documents/contrat.pdf
 │   └── Photos/2024/plage.jpg
@@ -97,4 +98,45 @@ Toutes les routes exigent une session, et chacun ne voit que son propre espace :
   | 409 | Conflit de nom |
   | 422 | Taille ou hash différents |
 
-- **Envoi reprenable :** l'envoi en plusieurs morceaux, avec reprise, arrive avec #18 (protocole tus).
+- **Envoi reprenable :** voir la section suivante.
+
+## Envoi reprenable (tus)
+
+Les gros fichiers passent par le protocole [tus 1.0](https://tus.io/protocols/resumable-upload) : le cœur du protocole, plus les extensions création, expiration et terminaison. Côté client, c'est `tus-js-client`, dans le navigateur comme dans React Native.
+
+| Route | Effet |
+|---|---|
+| `OPTIONS /api/uploads` | Versions, extensions et `Tus-Max-Size` (si `CLOUDOS_MAX_UPLOAD` est réglé) |
+| `POST /api/uploads` | `Upload-Length` et `Upload-Metadata` (`path` obligatoire ; `sha256` en hex et `mtime` en secondes Unix en option). 409 si le nom est pris, 413 si c'est trop gros pour la limite ou pour la place libre. Répond 201 avec `Location` et `Upload-Expires` |
+| `HEAD /api/uploads/{id}` | `Upload-Offset` (où reprendre) et `Upload-Length` |
+| `PATCH /api/uploads/{id}` | Ajoute un morceau (`application/offset+octet-stream`) à `Upload-Offset`, qui doit être exact (sinon 409). 423 si un autre `PATCH` écrit le même envoi, 413 si le morceau dépasse la longueur |
+| `DELETE /api/uploads/{id}` | Abandonne l'envoi : supprime son fichier partiel, jamais un fichier stocké |
+
+```mermaid
+sequenceDiagram
+    participant T as tus-js-client
+    participant C as core
+    participant U as .cloudos/uploads/id
+    participant S as storage
+    T->>C: POST /api/uploads (Upload-Length, path)
+    C->>C: nom libre ? place sur le disque ?
+    C-->>T: 201 Location /api/uploads/id
+    loop morceaux
+        T->>C: PATCH (Upload-Offset = taille reçue)
+        C->>U: ajout du morceau, fsync
+        C-->>T: 204 Upload-Offset
+    end
+    Note over T,C: coupure, puis le client revient
+    T->>C: HEAD /api/uploads/id
+    C-->>T: Upload-Offset = taille de U
+    T->>C: PATCH du reste
+    C->>S: PlaceFile : relit et hache U, contrôle, link sans écraser, index
+    C-->>T: 204 (fini)
+```
+
+- **Position de reprise :** c'est la taille du fichier partiel. Ce qui a été reçu et écrit avant une coupure reste acquis.
+- **Fin de l'envoi :** `PlaceFile` relit le fichier pour hacher ce qui est vraiment sur le disque, vérifie la taille et le hash attendus, puis le met en place par le même `link` sans écrasement que `Put`. Un envoi dont le hash est faux, ou dont le nom a été pris entre-temps, est terminé et supprimé : le renvoyer ne changerait rien.
+- **Envoi vide :** un envoi de 0 octet est terminé dès sa création.
+- **Expiration et ménage :** chaque morceau repousse l'expiration de 24 h. `CleanUploads` tourne au démarrage puis toutes les heures : il supprime les envois expirés et les fichiers partiels qu'aucun envoi ne possède, et seulement dans `.cloudos/uploads/`.
+- **Isolation :** l'identifiant d'un envoi est fait de 128 bits aléatoires, et un envoi d'un autre compte répond 404.
+- **CSRF :** comme pour l'envoi simple, les requêtes tus portent l'en-tête `X-Cloudos-Client`, à passer dans l'option `headers` de `tus-js-client`.

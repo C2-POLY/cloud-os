@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -117,6 +118,12 @@ func serve(ctx context.Context, c core) error {
 	if n > 0 {
 		slog.Warn("removed temporary files left by interrupted writes", "count", n)
 	}
+	if n, err := c.files.CleanUploads(ctx); err != nil {
+		return fmt.Errorf("clean uploads: %w", err)
+	} else if n > 0 {
+		slog.Info("removed expired or orphan uploads", "count", n)
+	}
+	go cleanUploadsEvery(ctx, c.files, time.Hour)
 	finished, dropped, err := c.files.RecoverMoves(ctx)
 	if err != nil {
 		return fmt.Errorf("recover moves: %w", err)
@@ -133,6 +140,7 @@ func serve(ctx context.Context, c core) error {
 			Health:    &db.Store{Pool: c.pool, Migrations: c.provider},
 			Auth:      auth.NewService(c.pool),
 			Files:     c.files,
+			MaxUpload: maxUpload(),
 			StaticDir: os.Getenv("STATIC_DIR"),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -191,6 +199,33 @@ func resetPassword(ctx context.Context, c core, name string, in io.Reader, out i
 	}
 	fmt.Fprintf(out, "password of %s changed, its sessions ended\n", name)
 	return nil
+}
+
+// cleanUploadsEvery ends abandoned uploads until ctx is done.
+func cleanUploadsEvery(ctx context.Context, files *storage.Store, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if n, err := files.CleanUploads(ctx); err != nil {
+				slog.Error("clean uploads", "err", err)
+			} else if n > 0 {
+				slog.Info("removed expired or orphan uploads", "count", n)
+			}
+		}
+	}
+}
+
+// maxUpload reads CLOUDOS_MAX_UPLOAD (bytes); 0 or unset means no limit but the free space.
+func maxUpload() int64 {
+	n, err := strconv.ParseInt(os.Getenv("CLOUDOS_MAX_UPLOAD"), 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 func envOr(key, fallback string) string {

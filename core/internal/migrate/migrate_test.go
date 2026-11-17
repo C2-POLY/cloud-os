@@ -29,6 +29,8 @@ var tables = []struct {
 	{4, []string{"moves"}, `INSERT INTO files (owner, path, kind, size, mime, modified_at)
 		VALUES ('enzo', 'Photos', 'dir', 0, 'inode/directory', now());
 		INSERT INTO moves (owner, from_path, to_path) VALUES ('enzo', 'a', 'b')`},
+	{5, []string{"uploads"}, `INSERT INTO uploads (id, owner, path, length, expires_at)
+		VALUES ('0123456789abcdef0123456789abcdef', 'enzo', 'video.mp4', 10, now())`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {
