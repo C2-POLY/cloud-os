@@ -1,10 +1,11 @@
 import { Cloud, HardDrive, LogOut, Share2, Trash2, Users } from 'lucide-react'
-import { useEffect } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { Accounts } from './Accounts.tsx'
 import { api, type Account } from './api.ts'
 import { Drive } from './drive/Drive.tsx'
 import { TrashPage } from './drive/TrashPage.tsx'
 import { Health } from './Health.tsx'
+import { enter } from './motion/animate.ts'
 import { SharesPage } from './share/SharesPage.tsx'
 import { driveURL, folderFromURL, navigate, usePath } from './router.ts'
 
@@ -15,6 +16,15 @@ export function Shell({ me, onSignedOut }: { me: Account; onSignedOut: () => voi
   const onAccounts = path === '/comptes' && me.role === 'admin'
   const onTrash = path === '/corbeille'
   const onShares = path === '/partages'
+  const section = folder !== null ? 'drive' : onAccounts ? 'accounts' : onTrash ? 'trash' : onShares ? 'shares' : 'none'
+  const page = useRef<HTMLElement>(null)
+
+  // Each section comes in with a short fade; moving between folders does not.
+  // Opacity only: a transform on <main> would move its fixed children (the
+  // upload panel, a dialog) while it runs.
+  useLayoutEffect(() => {
+    if (page.current) enter(page.current)
+  }, [section])
 
   // Any other address opens the drive's root.
   useEffect(() => {
@@ -67,7 +77,7 @@ export function Shell({ me, onSignedOut }: { me: Account; onSignedOut: () => voi
           </button>
         </span>
       </header>
-      <main className="page">
+      <main className="page" ref={page}>
         {folder !== null && <Drive folder={folder} />}
         {onTrash && <TrashPage />}
         {onShares && <SharesPage />}
