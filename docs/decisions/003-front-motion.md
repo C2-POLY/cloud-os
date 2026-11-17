@@ -1,4 +1,4 @@
-# 002 — Animations et défilement du front : Motion et Lenis
+# 003 — Animations et défilement du front : Motion et Lenis
 
 - Date : 2026-11-17
 - Statut : acceptée
