@@ -1,23 +1,54 @@
 # Interface web
 
 Le front React (Vite, TypeScript) que le cœur sert en fichiers statiques : `web/src/`.
-Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (versions), #13 (partage par lien), #31 (animations et défilement).
+Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (versions), #13 (partage par lien), #31 (animations et défilement), #46 (le bureau).
 
 ## Écrans et adresses
 
-`App.tsx` affiche d'abord la page de l'invité si l'adresse est celle d'un lien de partage (`/s/<jeton>`), sans rien demander au cœur sur la session (voir [share.md](share.md)). Sinon, avant la connexion, il choisit l'écran selon l'état du cœur : l'assistant de premier démarrage si `GET /api/setup` répond `needed`, sinon la connexion si `GET /api/me` répond 401. Une fois connecté, `Shell.tsx` affiche la barre du haut et la page que nomme l'adresse :
+`App.tsx` affiche d'abord la page de l'invité si l'adresse est celle d'un lien de partage (`/s/<jeton>`), sans rien demander au cœur sur la session (voir [share.md](share.md)). Sinon, avant la connexion, il choisit l'écran selon l'état du cœur : l'assistant de premier démarrage si `GET /api/setup` répond `needed`, sinon la connexion si `GET /api/me` répond 401. Une fois connecté, `desktop/Desktop.tsx` affiche le bureau, et chaque app dans sa fenêtre à l'adresse qui la nomme (voir Bureau ci-dessous) :
 
-| Adresse | Page | Pour |
+| Adresse | Fenêtre | Pour |
 |---|---|---|
-| `/drive`, `/drive/<dossier>` | Le drive, sur ce dossier | Tout compte |
-| `/partages` | Ses liens de partage, avec Révoquer | Tout compte |
-| `/corbeille` | La corbeille | Tout compte |
-| `/s/<jeton>` | La page de l'invité d'un lien de partage | Sans compte |
-| `/comptes` | La santé de la box et la gestion des comptes | Admin |
-| Toute autre adresse | Remplacée par `/drive` | |
+| `/` | Aucune : le bureau | Tout compte |
+| `/drive`, `/drive/<dossier>` | Fichiers, sur ce dossier | Tout compte |
+| `/partages` | Partages : ses liens, avec Révoquer | Tout compte |
+| `/corbeille` | Corbeille | Tout compte |
+| `/s/<jeton>` | Hors du bureau : la page de l'invité d'un lien de partage | Sans compte |
+| `/comptes` | Comptes : la santé de la box et la gestion des comptes | Admin |
+| Toute autre adresse, ou une app réservée à l'admin | Remplacée par `/` | |
 
 - **Routage :** `router.ts` s'appuie sur l'API History, sans bibliothèque. Précédent et Suivant marchent, et un lien vers un dossier se partage tel quel. Le cœur renvoie `index.html` pour toute adresse qu'il ne connaît pas.
 - **Adresses des dossiers :** chaque segment d'un dossier est encodé à part dans l'URL (`/drive/Photos/%C3%89t%C3%A9%202024`).
+
+## Bureau
+
+Le compte connecté arrive sur un bureau : fond d'écran vivant, barre de menus, fenêtres en verre et dock. Code : `web/src/desktop/`. Maquettes : <https://claude.ai/artifact/CfYsYH4YrN4fkV2bacriWf> (page Bureau). Issue : #46, Feature #45.
+
+| Fichier | Rôle |
+|---|---|
+| `apps.ts` | Les apps (Fichiers, Partages, Corbeille, Comptes) : titre, icône, couleur du dock, adresse d'ouverture ; `appOf(adresse)` |
+| `windows.ts` | `useWindows` : les fenêtres ouvertes, de l'arrière vers l'avant, et `useGeometries` : leurs places, gardées dans `localStorage` (`cloudos.windows.v1`) |
+| `Window.tsx` | Une fenêtre : barre de titre (Fermer, Agrandir), déplacement au pointeur, double-clic pour agrandir |
+| `Desktop.tsx` | Le bureau : fond, barre de menus, horloge, fenêtres, dock |
+
+- **L'adresse fait foi :** aller à l'adresse d'une app l'ouvre, ou la met au premier plan à cette adresse. Les autres fenêtres restent ouvertes, chacune à l'adresse qu'elle montrait (Fichiers garde son dossier). Fermer la fenêtre du premier plan donne la main à la suivante, ou au bureau (`/`). Précédent et Suivant marchent comme avant.
+- **Fenêtres :** elles se déplacent par la barre de titre, sans pouvoir passer sous la barre de menus ni sortir de l'écran (`clampPosition`). Le double-clic ou le bouton agrandit la fenêtre à tout le bureau. Une place se garde par app dans ce navigateur ; sans stockage (navigation privée), elle dure jusqu'à la fermeture de la page. Le contenu d'une fenêtre défile seul (`data-lenis-prevent`), la page jamais.
+- **Barre de menus :** l'app au premier plan, l'état des tâches lu dans `/api/health` toutes les 20 s (« Sauvegarde à jour » ou « N tâches en cours »), l'heure, le compte et la déconnexion.
+- **Dock :** Bureau, puis les apps de ce compte, un point sous celles qui sont ouvertes. Demander est grisé jusqu'à la palette (#48).
+- **Téléphone (moins de 768 px) :** une seule fenêtre, celle du premier plan, en plein écran entre la barre de menus et le dock. Ni déplacement ni agrandissement.
+- **Verre :** fond `--surface` à 86 % et `backdrop-filter`, dans les thèmes clair et sombre. Le fond d'écran a sa version sombre. N'écrire que `backdrop-filter` : le minifieur (lightningcss) ajoute lui-même le préfixe `-webkit-`, et supprime les deux quand on écrit les deux.
+- **Éléments fixes dans une fenêtre :** le verre (`backdrop-filter`) fait de la fenêtre le conteneur de ses enfants en `position: fixed`. Le panneau d'envoi et les messages restent donc dans la fenêtre Fichiers, ce qui est voulu. La boîte de dialogue (`Modal`) est dessinée sur `document.body` (`createPortal`) pour passer au-dessus de tout. Le bureau et les fenêtres sont en `overflow: clip`, pour que même un `focus()` ne les fasse pas défiler.
+- **Polices :** celles du système. Une police chargée depuis Google Fonts ferait sortir une requête de la box.
+
+```mermaid
+flowchart TD
+    U[Adresse] --> A{appOf}
+    A -- null --> D[Bureau, aucune fenêtre au premier plan]
+    A -- app permise --> F[Fenêtre de l'app au premier plan, à cette adresse]
+    A -- app réservée à l'admin --> R[navigate vers /]
+    F --> C[Fermer : leave, puis la fenêtre suivante ou /]
+    F --> M[Barre de titre : déplacer, agrandir ; place gardée]
+```
 
 ## Drive
 
@@ -87,7 +118,7 @@ Motion anime l'interface et Lenis fait défiler la page, tous deux sous MIT ; GS
 
 Ce qui s'anime :
 
-- **Changement de section** (`Shell.tsx`) : `<main>` entre en fondu quand on passe du drive aux partages, à la corbeille ou aux comptes. Pas d'animation d'un dossier à l'autre. Fondu seul : une transformation sur `<main>` déplacerait pendant l'animation ses enfants en `position: fixed` (le panneau d'envoi, une fenêtre).
+- **Fenêtres du bureau** (`desktop/Window.tsx`) : une fenêtre entre en grandissant de 0,97 à 1, avec une montée de 8 px, et sort en rétrécissant avant d'être retirée. Pas d'animation d'un dossier à l'autre. Le fond d'écran dérive et change de teinte en CSS, et s'arrête avec le mouvement réduit.
 - **Liste du drive** (`FileList.tsx`) : quand le dossier affiché change, les `animatedRows` (30) premières lignes entrent l'une après l'autre (6 px, 15 ms d'écart). Les suivantes s'affichent telles quelles, si bien qu'un dossier de milliers de fichiers ne coûte pas plus cher qu'un petit. Un tri, un renommage ou un envoi ne relance rien : `Drive.tsx` passe à `FileList` le dossier auquel appartient la liste reçue (`listing.folder`), pas celui de l'adresse.
 - **Fenêtres** (`Modal`, `Dialogs.tsx`) : le fond entre en fondu et le panneau grandit de 0,96 à 1. Échap, un clic sur le fond ou un `DismissButton` (Annuler, Fermer) lancent la sortie, puis appellent `onClose` une seule fois, même après plusieurs demandes. Une fenêtre qui se ferme après une action réussie appelle `onClose` directement.
 - **Panneau d'envoi** (`UploadPanel.tsx`) : il monte de 16 px quand le premier envoi commence, et chaque nouvel envoi entre en fondu. La progression ne relance rien.
@@ -98,12 +129,12 @@ flowchart TD
     B -- oui --> C[Défilement natif ; enter et leave ne font rien]
     C --> C2[Modal : onClose dès la demande]
     B -- non --> D[ReactLenis root, autoRaf]
-    D --> G[Shell : enter sur main à chaque section]
+    D --> G[Window : enter à l'ouverture, leave avant la fermeture]
     D --> H[FileList : enter sur les 30 premières lignes, à chaque dossier]
     D --> I[Modal : enter, puis leave avant onClose]
     D --> J[UploadPanel : enter du panneau et de chaque envoi]
 ```
 
-- **Défilements imbriqués :** la fenêtre et le panneau d'envoi, qui défilent seuls, portent `data-lenis-prevent` pour que Lenis leur laisse la molette.
+- **Défilements imbriqués :** le corps d'une fenêtre du bureau, la boîte de dialogue et le panneau d'envoi, qui défilent seuls, portent `data-lenis-prevent` pour que Lenis leur laisse la molette.
 - **Mouvement réduit :** avec « Réduire les animations » du système (`prefers-reduced-motion: reduce`), Lenis n'est pas monté, aucune animation ne part et les fenêtres se ferment sans attendre. Le réglage est relu à chaque animation : le changer s'applique sans recharger.
 - **Tests :** jsdom n'a pas l'API Web Animations : sans `matchMedia`, tout le reste des tests passe par le chemin réduit. `motion/motion.test.tsx` simule l'API et couvre les deux chemins : le mouvement réduit (pas de Lenis, des lignes sans style, une fenêtre fermée aussitôt) et le mouvement permis (Lenis monté, 30 lignes animées sur 500 et seulement au changement de dossier, `onClose` appelé une fois après la sortie).

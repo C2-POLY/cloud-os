@@ -1,5 +1,6 @@
 import { ChevronLeft, Download, Folder, RotateCcw } from 'lucide-react'
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { messageOf } from '../api.ts'
 import { enter, leave } from '../motion/animate.ts'
 import { formatDate, formatDateSeconds, formatSize, join, listFolder, listVersions, parentOf, restoreVersion, versionURL, type Entry, type VersionEntry } from './files.ts'
@@ -11,6 +12,8 @@ const DismissContext = createContext<() => void>(() => {})
  * A modal panel; Escape, the backdrop or a DismissButton closes it. It opens and
  * closes with a short animation, then calls onClose once. A dialog that closes
  * itself after a successful action calls onClose directly, without waiting.
+ * It is drawn on the document's body: inside a desktop window, whose glass
+ * (backdrop-filter) holds its fixed children, it would be shut in the window.
  */
 export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   const backdrop = useRef<HTMLDivElement>(null)
@@ -33,13 +36,14 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [dismiss])
-  return (
+  return createPortal(
     <div ref={backdrop} className="backdrop" onMouseDown={(e) => e.target === e.currentTarget && dismiss()}>
       <div ref={panel} className="modal" role="dialog" aria-modal="true" aria-label={title} data-lenis-prevent>
         <h2>{title}</h2>
         <DismissContext.Provider value={dismiss}>{children}</DismissContext.Provider>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
