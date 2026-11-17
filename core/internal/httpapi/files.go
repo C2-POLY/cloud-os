@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
+	mediameta "github.com/C2-POLY/cloud-os/core/internal/meta"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 	"github.com/C2-POLY/cloud-os/core/internal/thumbs"
 )
@@ -177,6 +178,57 @@ func (a *filesAPI) search(w http.ResponseWriter, r *http.Request) {
 		entries[i] = entryOf(f)
 	}
 	writeJSON(w, http.StatusOK, entries)
+}
+
+// metaJSON is the metadata of a file as the API returns it. TakenAt is the
+// wall-clock time the photo was taken, without a zone ("2024-07-14T18:03:22");
+// TakenOffset is its offset from UTC ("+02:00") when the camera wrote one.
+type metaJSON struct {
+	TakenAt     *string  `json:"taken_at"`
+	TakenOffset *string  `json:"taken_offset"`
+	Latitude    *float64 `json:"latitude"`
+	Longitude   *float64 `json:"longitude"`
+	Make        *string  `json:"make"`
+	Model       *string  `json:"model"`
+	Lens        *string  `json:"lens"`
+	Width       *int     `json:"width"`
+	Height      *int     `json:"height"`
+	Orientation *int     `json:"orientation"`
+}
+
+// meta returns the metadata the workers read from a file (date taken, GPS,
+// camera, dimensions), 404 while it has none (not an image, or not read yet).
+func (a *filesAPI) meta(w http.ResponseWriter, r *http.Request) {
+	f, err := a.store.Lookup(r.Context(), owner(r), r.URL.Query().Get("path"))
+	if err == nil && f.IsDir() {
+		err = storage.ErrNotFound
+	}
+	if err != nil {
+		failFiles(w, err)
+		return
+	}
+	m, err := mediameta.Get(r.Context(), a.store.Pool, f.SHA256)
+	if errors.Is(err, mediameta.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no metadata"})
+		return
+	}
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	out := metaJSON{
+		Latitude: m.Latitude, Longitude: m.Longitude, Make: m.Make, Model: m.Model, Lens: m.Lens,
+		Width: m.Width, Height: m.Height, Orientation: m.Orientation,
+	}
+	if m.TakenAt != nil {
+		s := m.TakenAt.Format("2006-01-02T15:04:05")
+		out.TakenAt = &s
+	}
+	if m.TakenOffset != nil {
+		s := time.Unix(0, 0).In(time.FixedZone("", *m.TakenOffset*60)).Format("-07:00")
+		out.TakenOffset = &s
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // upload stores the request body at path. Content-Length, when sent, and

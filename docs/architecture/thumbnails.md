@@ -26,7 +26,7 @@ sequenceDiagram
 
 ## Mise en file
 
-- **Quand :** `storage.Store.AfterStore` est appelé après chaque fichier enregistré : envoi, envoi reprenable, WebDAV, import, remplacement, version restaurée. Le cœur y branche `thumbs.Enqueue`.
+- **Quand :** `storage.Store.AfterStore` est appelé après chaque fichier enregistré : envoi, envoi reprenable, WebDAV, import, remplacement, version restaurée. Le cœur y branche `thumbs.Enqueue` (et `meta.Enqueue`, voir [metadata.md](metadata.md)).
 - **Formats :** une image JPEG, PNG ou WebP, reconnue par son type MIME ou par ses premiers octets (un fichier sans extension compte).
 - **Doublons :** rien n'est mis en file si le contenu a déjà sa miniature, ou si une tâche est déjà en attente pour lui (`dedupe_key`).
 - **Priorités :** `PriorityNew` pour un envoi, `PriorityBackfill` pour un import de bibliothèque, qui ne doit pas retarder les nouveaux fichiers.
@@ -35,7 +35,7 @@ sequenceDiagram
 ## Génération (worker)
 
 `worker/src/worker/thumbs.py`, avec Pillow (licence HPND, permissive) :
-- **Lecture :** le worker cherche un fichier vivant avec cette empreinte, le lit depuis `/data`, monté **en lecture seule**, et vérifie son SHA-256 avant de s'en servir.
+- **Lecture :** le worker cherche un fichier vivant avec cette empreinte, le lit depuis `/data`, monté **en lecture seule**, et vérifie son SHA-256 avant de s'en servir (`worker/src/worker/content.py`, commun avec les [métadonnées](metadata.md)).
 - **Rendu :** l'orientation EXIF est appliquée, puis la miniature WebP fait 256 px sur le grand côté (qualité 80), en gardant la transparence.
 - **Erreurs définitives (`Permanent`, la tâche passe en `failed` au premier essai, la file continue) :** image illisible, format non couvert, plus de 100 mégapixels, fichier de plus de 200 Mo.
 - **Erreurs passagères (nouvel essai avec le délai de la file) :** le fichier a bougé ou changé pendant la lecture.

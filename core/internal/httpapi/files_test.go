@@ -308,3 +308,39 @@ func TestDesktopWidgets(t *testing.T) {
 		t.Errorf("bad tz: %d", rec.Code)
 	}
 }
+
+func TestMeta(t *testing.T) {
+	enzo, johan, pool := newFilesAPIPool(t)
+	enzo.upload("a.jpg", "jpeg bytes", nil)
+	enzo.upload("b.jpg", "no exif", nil)
+	if rec := enzo.get("/api/files/meta?path=a.jpg", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("before the worker: %d", rec.Code)
+	}
+	a, b := sha256.Sum256([]byte("jpeg bytes")), sha256.Sum256([]byte("no exif"))
+	if _, err := pool.Exec(t.Context(),
+		`INSERT INTO media_meta (sha256, taken_at, taken_offset, latitude, longitude, make, model, lens, width, height, orientation)
+		 VALUES ($1, '2024-07-14 18:03:22', -330, 48.8584, 2.2945, 'Apple', 'iPhone 15', 'back camera', 3024, 4032, 6),
+		        ($2, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 640, 480, NULL)`, a[:], b[:]); err != nil {
+		t.Fatal(err)
+	}
+	rec := enzo.get("/api/files/meta?path=a.jpg", nil)
+	want := `{"taken_at":"2024-07-14T18:03:22","taken_offset":"-05:30","latitude":48.8584,"longitude":2.2945,"make":"Apple","model":"iPhone 15","lens":"back camera","width":3024,"height":4032,"orientation":6}`
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != want {
+		t.Fatalf("meta: %d %s", rec.Code, rec.Body)
+	}
+	rec = enzo.get("/api/files/meta?path=b.jpg", nil)
+	want = `{"taken_at":null,"taken_offset":null,"latitude":null,"longitude":null,"make":null,"model":null,"lens":null,"width":640,"height":480,"orientation":null}`
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != want {
+		t.Fatalf("meta without exif: %d %s", rec.Code, rec.Body)
+	}
+	// Owner-scoped like every file route; folders and missing files are 404.
+	if rec := johan.get("/api/files/meta?path=a.jpg", nil); rec.Code != http.StatusNotFound {
+		t.Errorf("another account: %d", rec.Code)
+	}
+	enzo.do("POST", "/api/files/folders", `{"path":"Photos"}`)
+	for _, p := range []string{"Photos", "missing.jpg"} {
+		if rec := enzo.get("/api/files/meta?path="+p, nil); rec.Code != http.StatusNotFound {
+			t.Errorf("%s: %d", p, rec.Code)
+		}
+	}
+}

@@ -6,29 +6,26 @@ database, keyed by the content's SHA-256: it never writes a file.
 
 from __future__ import annotations
 
-import hashlib
 import io
-import os
 import warnings
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import psycopg
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from worker.tasks import Permanent, Task
+from worker.content import read_content, sha_of
+from worker.errors import Permanent
+
+if TYPE_CHECKING:
+    from worker.tasks import Task
 
 KIND = "thumb"
 SIZE = 256  # longest side, as thumbs.Size in Go
 FORMATS = ["JPEG", "PNG", "WEBP"]  # HEIC: issue #30
 MAX_PIXELS = 100_000_000
-MAX_BYTES = 200 * 1024 * 1024
 QUALITY = 80
 
 Image.MAX_IMAGE_PIXELS = MAX_PIXELS
-
-
-def data_root() -> Path:
-    return Path(os.environ.get("CLOUDOS_DATA_DIR", "/data")).resolve()
 
 
 def render(data: bytes) -> tuple[bytes, int, int]:
@@ -60,45 +57,15 @@ def render(data: bytes) -> tuple[bytes, int, int]:
         raise Permanent(f"unreadable image: {type(err).__name__}: {err}") from err
 
 
-def read_content(conn: psycopg.Connection, sha: bytes) -> bytes | None:
-    """The bytes of a live file with this content, checked against its hash.
-    None when no live file has it any more (deleted or trashed: nothing to do)."""
-    rows = conn.execute(
-        """SELECT owner, path, size FROM files
-           WHERE kind = 'file' AND sha256 = %s AND trash_id IS NULL ORDER BY id""",
-        (sha,),
-    ).fetchall()
-    if not rows:
-        return None
-    root = data_root()
-    for owner, path, size in rows:
-        if size > MAX_BYTES:
-            raise Permanent(f"image too large: {size} bytes")
-        disk = (root / owner / path).resolve()
-        if not disk.is_relative_to(root):
-            continue
-        try:
-            data = disk.read_bytes()
-        except OSError:
-            continue  # moved or replaced while we read: try the next copy
-        if hashlib.sha256(data).digest() == sha:
-            return data
-    # Every copy moved or changed under us: retry later.
-    raise RuntimeError("no copy of the content could be read")
-
-
 def make(task: Task, conn: psycopg.Connection) -> None:
     """The thumb task: payload {"sha256": hex}."""
-    try:
-        sha = bytes.fromhex(task.payload["sha256"])
-    except (KeyError, TypeError, ValueError) as err:
-        raise Permanent(f"bad payload: {task.payload!r}") from err
+    sha = sha_of(task.payload)
     done = conn.execute(
         "SELECT 1 FROM thumbnails WHERE sha256 = %s AND size = %s", (sha, SIZE)
     ).fetchone()
     if done:
         return
-    data = read_content(conn, sha)
+    data = read_content(conn, sha, "image")
     if data is None:
         return
     webp, width, height = render(data)

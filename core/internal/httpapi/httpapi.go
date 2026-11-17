@@ -93,6 +93,7 @@ func routes(c Config) []route {
 		{"POST /api/files/move", member, f.move},
 		{"GET /api/files/content", member, f.download},
 		{"GET /api/files/thumb", member, f.thumb},
+		{"GET /api/files/meta", member, f.meta},
 		{"GET /api/search", member, f.search},
 		{"GET /api/files/recent", member, d.recent},
 		{"GET /api/activity", member, d.events},

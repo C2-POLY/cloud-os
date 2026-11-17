@@ -61,6 +61,9 @@ docker compose run --rm core selftest 20
 # Queue the thumbnail of every stored image that has none (catch-up)
 docker compose run --rm core thumbs backfill
 
+# Queue the metadata (EXIF date, GPS, camera) of every stored image that has none
+docker compose run --rm core meta backfill
+
 # The drive as a network disk: Finder › Se connecter au serveur › http://localhost:8480/dav/
 
 # Set a new password for an account that lost it (read from stdin) and end its sessions
