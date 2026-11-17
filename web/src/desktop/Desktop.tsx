@@ -8,6 +8,7 @@ import { Health } from '../Health.tsx'
 import { folderFromURL, navigate, usePath } from '../router.ts'
 import { SharesPage } from '../share/SharesPage.tsx'
 import { appInfo, apps, type AppId } from './apps.ts'
+import { Palette } from './Palette.tsx'
 import { Window } from './Window.tsx'
 import { useGeometries, useWindows, type Win } from './windows.ts'
 
@@ -17,11 +18,24 @@ export function Desktop({ me, onSignedOut }: { me: Account; onSignedOut: () => v
   const allowed = (id: AppId) => !appInfo(id).adminOnly || me.role === 'admin'
   const { windows, front, show, close } = useWindows(path, allowed)
   const places = useGeometries()
+  const [asking, setAsking] = useState(false)
+
+  // ⌘K (Ctrl+K elsewhere) opens or closes Demander from anywhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setAsking((a) => !a)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   return (
     <div className="desktop">
       <div className="wallpaper" aria-hidden />
-      <MenuBar title={front ? appInfo(front).title : 'Bureau'} me={me} onSignedOut={onSignedOut} />
+      <MenuBar title={front ? appInfo(front).title : 'Bureau'} me={me} onSignedOut={onSignedOut} onAsk={() => setAsking(true)} />
 
       <main className="desk" aria-label="Bureau" onPointerDown={(e) => e.target === e.currentTarget && navigate('/')}>
         <Clock />
@@ -59,10 +73,12 @@ export function Desktop({ me, onSignedOut }: { me: Account; onSignedOut: () => v
           </DockButton>
         ))}
         <span className="dock-sep" aria-hidden />
-        <DockButton label="Demander (bientôt)" color="#1d1b26" disabled>
+        <DockButton label="Demander" color="#1d1b26" active={asking} onClick={() => setAsking(true)}>
           <Search size={24} aria-hidden />
         </DockButton>
       </nav>
+
+      {asking && <Palette onClose={() => setAsking(false)} />}
     </div>
   )
 }
@@ -170,13 +186,17 @@ function useTaskStatus(): string | null {
   return status
 }
 
-function MenuBar({ title, me, onSignedOut }: { title: string; me: Account; onSignedOut: () => void }) {
+function MenuBar({ title, me, onSignedOut, onAsk }: { title: string; me: Account; onSignedOut: () => void; onAsk: () => void }) {
   const now = useNow(15_000)
   const status = useTaskStatus()
   return (
     <header className="menubar">
       <Cloud size={16} aria-label="Cloud OS" />
       <strong className="menubar-app">{title}</strong>
+      <span className="menubar-fill" />
+      <button type="button" className="menubar-ask" onClick={onAsk}>
+        <Search size={13} aria-hidden /> Demander <kbd>⌘K</kbd>
+      </button>
       <span className="menubar-fill" />
       {status && <span className="menubar-status">{status}</span>}
       <span className="menubar-clock">

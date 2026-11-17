@@ -41,6 +41,8 @@ var tables = []struct {
 		INSERT INTO share_grants (token_hash, share_id, expires_at) SELECT sha256('g'), id, now() FROM shares`},
 	{10, []string{"thumbnails"}, `INSERT INTO thumbnails (sha256, size, mime, width, height, bytes)
 		VALUES (sha256('a'), 256, 'image/webp', 1, 1, '\x00')`},
+	// Migration 12 adds an index and a function, no table.
+	{12, []string{}, `SELECT cloudos_fold('Été')`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {

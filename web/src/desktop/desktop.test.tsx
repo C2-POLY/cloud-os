@@ -137,9 +137,19 @@ describe('Desktop', () => {
     vi.restoreAllMocks()
   })
 
-  it('leaves Demander off until the palette exists', () => {
+  it('opens Demander from the dock, the menu bar and ⌘K or Ctrl+K', () => {
     api()
     render(<Desktop me={enzo} onSignedOut={() => {}} />)
-    expect(screen.getByRole('button', { name: 'Demander (bientôt)' })).toBeDisabled()
+    const palette = () => screen.queryByRole('dialog', { name: 'Demander' })
+    fireEvent.click(screen.getByRole('button', { name: 'Demander' }))
+    expect(palette()).toBeInTheDocument()
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Escape' })
+    expect(palette()).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Demander ⌘K/ }))
+    expect(palette()).toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    expect(palette()).not.toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'K', ctrlKey: true })
+    expect(palette()).toBeInTheDocument()
   })
 })

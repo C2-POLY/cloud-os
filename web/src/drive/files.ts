@@ -13,6 +13,11 @@ export interface Entry {
 
 const q = (path: string) => encodeURIComponent(path)
 
+/** The account's files and folders whose path holds every word of q (accents and case ignored). */
+export function searchFiles(query: string, limit = 30): Promise<Entry[]> {
+  return api<Entry[]>('GET', `/api/search?q=${encodeURIComponent(query)}&limit=${limit}`)
+}
+
 /** The direct children of a folder ("" is the root). */
 export function listFolder(folder: string): Promise<Entry[]> {
   return api<Entry[]>('GET', `/api/files?path=${q(folder)}`)
