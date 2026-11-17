@@ -10,7 +10,7 @@ import { ShareDialog } from '../share/ShareDialog.tsx'
 import { UploadPanel } from './UploadPanel.tsx'
 import { uploadQueue, type UploadQueue } from './uploads.ts'
 
-type Listing = { kind: 'loading' } | { kind: 'ok'; entries: Entry[] } | { kind: 'missing' } | { kind: 'error'; message: string }
+type Listing = { kind: 'loading' } | { kind: 'ok'; folder: string; entries: Entry[] } | { kind: 'missing' } | { kind: 'error'; message: string }
 
 type Dialog =
   | { kind: 'mkdir' }
@@ -34,7 +34,7 @@ export function Drive({ folder, queue = uploadQueue }: { folder: string; queue?:
   useEffect(() => {
     let current = true
     listFolder(folder)
-      .then((entries) => current && setListing({ kind: 'ok', entries }))
+      .then((entries) => current && setListing({ kind: 'ok', folder, entries }))
       .catch(
         (err: unknown) =>
           current &&
@@ -113,6 +113,7 @@ export function Drive({ folder, queue = uploadQueue }: { folder: string; queue?:
       )}
       {listing.kind === 'ok' && (
         <FileList
+          folder={listing.folder}
           entries={listing.entries}
           onRename={(entry) => setDialog({ kind: 'rename', entry })}
           onMove={(entry) => setDialog({ kind: 'move', entry })}
