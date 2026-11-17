@@ -6,6 +6,7 @@ An all-in-one home cloud OS installed on a box: drive, photos, documents and med
 
 - 2026-11-17: repository created; phase 1 skeleton in place (Compose stack, health endpoint, worker heartbeat, CI). The V1 is phases 1 to 3 of the PRD roadmap (Core + Drive, Photos + mobile, AI search + Documents), run in Docker Compose. The OS packaging comes after.
 - Decisions are recorded in `docs/decisions/` (one numbered file each, with the why and the options rejected). Stack: `001-stack.md`.
+- How it is built, domain by domain with diagrams, is in `docs/architecture/` (index in its `README.md`). Every subject with a design updates its domain's file in the same PR as the code.
 - Still open in the PRD: product name, open or closed source, reference hardware (Raspberry Pi 5 or x86 mini PC). Update this file and the `topic` skill when one is decided.
 
 ## Stack

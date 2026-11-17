@@ -107,6 +107,8 @@ gh project item-edit --project-id PVT_kwDODd-WqM4Br97_ --id "$item" --field-id P
 
 **Tenir le design juste** : si le développement s'en écarte (une autre approche, un message de plus, un fichier imprévu), mets la section à jour dans l'issue et dis au dev en une ligne ce qui a changé. Un design faux est pire que pas de design.
 
+**Le design vit aussi dans le dépôt** : à la clôture, il est reporté dans le fichier de son domaine sous `docs/architecture/` (voir son `README.md`), dans la même PR que le code, avec son schéma. Un nouveau domaine a son propre fichier et sa ligne dans l'index. L'issue garde l'historique de la décision ; `docs/architecture/` décrit le code tel qu'il est.
+
 ## 3. Worktree
 
 Toujours un worktree, et tu ne demandes rien au dev, ni le choix ni le nom : plusieurs sessions Claude peuvent partager le dossier principal et changer la branche sous tes pieds. Choisis le nom toi-même, `feat/<n>-…` pour une Feature, `fix/<n>-…` pour un Bug, `chore/<n>-…` pour l'outillage et la doc (`<n>` le numéro de l'issue), et crée-le à côté du dossier principal, depuis `origin/main` et sans qu'il suive `main`, pour qu'un `git push` nu ne parte jamais vers `main` :
@@ -165,15 +167,17 @@ Quand il a essayé et arrêté la pile, lis son terminal (outil `read_terminal`,
 
 ## 8. Clôturer, seulement si aucune erreur
 
-1. Commit sur la branche du sujet (message en anglais, Conventional Commits : `feat(drive): …`, sans numéro de version). Jamais de relecture du diff par un agent avant le commit : ses tests et l'essai du dev sont le filet.
-2. Push de la branche, puis PR vers `main` (titre en anglais, Conventional Commits ; corps avec `Closes #<n>`). L'issue passe à **In review**.
-3. Issue : vérifie que la section Design, s'il y en a une, décrit bien le code livré (sinon mets-la à jour), coche les critères que le dev a vérifiés à l'étape 7, ajoute la ligne `**Livré** : \`vX.Y.Z\`` et le label de version. Une fois la PR mergée, le Project passe l'issue à **Done**. Si un critère n'a pas pu être testé, l'issue va à **To test** avec sa case décochée, et tu dis lequel.
-4. **Worktree du sujet, sans le redemander.** Dès que la PR est mergée, supprime le worktree du sujet et sa branche locale. Vérifie d'abord, depuis le dossier principal et non depuis le worktree à supprimer :
+1. **Docs d'architecture** : si le sujet a un design ou change un comportement décrit dans `docs/architecture/`, le fichier du domaine est à jour dans le commit (schéma compris). Un sujet sans design qui ne change rien de décrit n'y touche pas.
+2. Commit sur la branche du sujet (message en anglais, Conventional Commits : `feat(drive): …`, sans numéro de version). Jamais de relecture du diff par un agent avant le commit : ses tests et l'essai du dev sont le filet.
+3. Push de la branche, puis PR vers `main` (titre en anglais, Conventional Commits ; corps avec `Closes #<n>`). L'issue passe à **In review**.
+4. Issue : vérifie que la section Design, s'il y en a une, décrit bien le code livré (sinon mets-la à jour, ainsi que `docs/architecture/`), coche les critères que le dev a vérifiés à l'étape 7, ajoute la ligne `**Livré** : \`vX.Y.Z\`` et le label de version. Une fois la PR mergée, le Project passe l'issue à **Done**. Si un critère n'a pas pu être testé, l'issue va à **To test** avec sa case décochée, et tu dis lequel.
+5. **Merge en squash**, seulement quand le dev le demande et que la CI est verte : `gh pr merge <n> --repo C2-POLY/cloud-os --squash --delete-branch --author-email "$(git config user.email)"`, pour que le commit de `main` porte l'adresse de commit du dépôt et non l'adresse « noreply » de GitHub.
+6. **Worktree du sujet, sans le redemander.** Dès que la PR est mergée, supprime le worktree du sujet et sa branche locale. Vérifie d'abord, depuis le dossier principal et non depuis le worktree à supprimer :
    - `git fetch --prune`, puis la branche est bien dans `origin/main` (`git branch -r --merged origin/main`, ou la PR « merged » si elle a été squashée) ;
    - `git -C <worktree> status --short` ne montre rien.
 
    Puis `git worktree remove <chemin du worktree>` et `git branch -D <branche>` (`-D` seulement si la PR a été squashée et que GitHub la dit mergée). Si le worktree a du travail non commité ou si la branche n'est pas mergée, ne supprime rien : dis ce qui bloque, avec la sortie, et demande.
-5. **Rangement du reste, en un seul message.** Propose tout ce qui reste, jamais la moitié :
+7. **Rangement du reste, en un seul message.** Propose tout ce qui reste, jamais la moitié :
    - la branche distante du sujet, si elle existe encore (`git fetch --prune`) ;
    - `main` du dossier principal à jour (`git merge --ff-only origin/main`, seulement s'il est sur `main` et propre) ;
    - la pile Docker Compose du worktree et ses volumes (`docker compose -p cloud-os-<nom> down -v`, seulement pour ce projet-là) ;
