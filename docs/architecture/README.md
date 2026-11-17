@@ -8,6 +8,7 @@ Comment Cloud OS est construit, domaine par domaine, avec ses schémas. Le besoi
 | Comptes, sessions et accès aux routes | [auth.md](auth.md) | `core/internal/auth`, `core/internal/httpapi` | #6 |
 | Stockage des fichiers, dossiers, déplacements, API, envoi reprenable | [storage.md](storage.md) | `core/internal/storage`, `core/internal/httpapi/files.go`, `uploads.go` | #7, #9, #18 |
 | Interface web : écrans, adresses, drive, file d'envoi | [web.md](web.md) | `web/src/` | #6, #11 |
+| WebDAV : le drive dans le Finder et l'Explorateur | [webdav.md](webdav.md) | `core/internal/davfs`, `auth/basic.go` | #12 |
 
 ## Quand mettre un fichier à jour
 

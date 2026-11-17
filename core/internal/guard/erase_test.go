@@ -27,6 +27,9 @@ var allowedErasers = map[string]string{
 	"storage.removeEmptyTrashDir": "removes an emptied trash folder; os.Remove fails on a folder that is not empty",
 	"storage.removeVersionFile":   "the version retention: erases one version beyond it, strictly at .cloudos/versions/<owner>/<file>/<version>",
 	"storage.removeVersionsDir":   "the trash purge of a file: erases its versions, strictly at .cloudos/versions/<owner>/<file>",
+	"storage.commitPending":       "removes its own temporary file under .cloudos/tmp once linked (WebDAV writes)",
+	"storage.dropPending":         "removes its own temporary file under .cloudos/tmp when a WebDAV write is aborted",
+	"davfs.removeAppleFile":       "erases a Finder file (.DS_Store, ._*) under .cloudos/appledouble/<owner>, never a user document",
 }
 
 // erasing reports whether call can erase or truncate a file.

@@ -25,9 +25,20 @@ var (
 // Login checks a name and password and opens a session. from identifies the
 // client (its IP) for the failed-attempt limit.
 func (s *Service) Login(ctx context.Context, name, password, from string) (string, Account, error) {
+	a, err := s.CheckCredentials(ctx, name, password, from)
+	if err != nil {
+		return "", Account{}, err
+	}
+	token, err := s.NewSession(ctx, a.Name)
+	return token, a, err
+}
+
+// CheckCredentials checks a name and password without opening a session, with
+// the same failed-attempt limit and the same single error as Login.
+func (s *Service) CheckCredentials(ctx context.Context, name, password, from string) (Account, error) {
 	key := name + "|" + from
 	if !s.Limiter.Allow(key) {
-		return "", Account{}, ErrThrottled
+		return Account{}, ErrThrottled
 	}
 
 	var hash string
@@ -36,21 +47,15 @@ func (s *Service) Login(ctx context.Context, name, password, from string) (strin
 	if errors.Is(err, pgx.ErrNoRows) {
 		hash = dummyHash // spend the same time as for a real account
 	} else if err != nil {
-		return "", Account{}, err
+		return Account{}, err
 	}
 	ok, verr := VerifyPassword(password, hash)
 	if err != nil || verr != nil || !ok || disabled != nil {
 		s.Limiter.Fail(key)
-		return "", Account{}, ErrBadCredentials
+		return Account{}, ErrBadCredentials
 	}
 	s.Limiter.Reset(key)
-
-	token, err := s.NewSession(ctx, name)
-	if err != nil {
-		return "", Account{}, err
-	}
-	a, err := s.Get(ctx, name)
-	return token, a, err
+	return s.Get(ctx, name)
 }
 
 // NewSession opens a session for the account and returns its token. Only the

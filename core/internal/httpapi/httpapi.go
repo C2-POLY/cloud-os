@@ -4,6 +4,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -11,8 +12,10 @@ import (
 	"time"
 
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
+	"github.com/C2-POLY/cloud-os/core/internal/davfs"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
+	"golang.org/x/net/webdav"
 )
 
 // WorkerWindow is how recent a heartbeat must be for a worker to count as present.
@@ -109,6 +112,10 @@ func NewHandler(c Config) http.Handler {
 		}
 		mux.Handle(rt.pattern, h)
 	}
+	if c.Auth != nil && c.Files != nil {
+		mux.Handle("/dav/", davHandler(c))
+		mux.Handle("/dav", http.RedirectHandler("/dav/", http.StatusMovedPermanently))
+	}
 	mux.Handle("/api/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such route"})
 	}))
@@ -165,4 +172,20 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		slog.Warn("write response", "err", err)
 	}
+}
+
+// davHandler serves each account's space over WebDAV at /dav/, for the Finder
+// and the Explorer, behind HTTP Basic with the account's password.
+func davHandler(c Config) http.Handler {
+	h := &webdav.Handler{
+		Prefix:     "/dav",
+		FileSystem: &davfs.FS{Store: c.Files, AppleFiles: &davfs.AppleDouble{Root: c.Files.Root}},
+		LockSystem: webdav.NewMemLS(),
+		Logger: func(r *http.Request, err error) {
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				slog.Warn("webdav", "method", r.Method, "path", r.URL.Path, "err", err)
+			}
+		},
+	}
+	return c.Auth.NewBasicAuth("Cloud OS").Require(h)
 }

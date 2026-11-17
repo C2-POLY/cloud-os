@@ -91,6 +91,13 @@ const ClientHeader = "X-Cloudos-Client"
 // preflight, which the core never grants, so this blocks cross-site request forgery.
 func RequireJSON(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// WebDAV clients send PROPFIND, PUT, MOVE… with HTTP Basic. A browser
+		// cannot send those methods cross-site without a CORS preflight, which
+		// the core never grants; a POST to /dav is only a read, like GET.
+		if r.URL.Path == "/dav" || strings.HasPrefix(r.URL.Path, "/dav/") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 		default:
