@@ -93,7 +93,7 @@ func (s *Store) Put(ctx context.Context, owner, p string, r io.Reader, opt PutOp
 		return File{}, fmt.Errorf("set modification time: %w", err)
 	}
 
-	f := File{Owner: owner, Path: p, Size: size, MIME: detectMIME(p, sniff), SHA256: sum, ModifiedAt: mod}
+	f := File{Owner: owner, Path: p, Kind: KindFile, Size: size, MIME: detectMIME(p, sniff), SHA256: sum, ModifiedAt: mod}
 	return s.place(ctx, f, tmp)
 }
 
@@ -142,12 +142,15 @@ func (s *Store) place(ctx context.Context, f File, tmp string) (File, error) {
 	if err := lockOwner(ctx, tx, f.Owner); err != nil {
 		return File{}, err
 	}
-	why, err := conflict(ctx, tx, f.Owner, f.Path)
+	why, err := conflict(ctx, tx, f.Owner, f.Path, "")
 	if err != nil {
 		return File{}, err
 	}
 	if why != "" {
 		return File{}, fmt.Errorf("%w: %s/%s: %s", ErrExists, f.Owner, f.Path, why)
+	}
+	if err := ensureDirs(ctx, tx, f.Owner, f.Path); err != nil {
+		return File{}, err
 	}
 	out, err := insertFile(ctx, tx, f)
 	if err != nil {
@@ -200,15 +203,18 @@ func (s *Store) adopt(ctx context.Context, owner, p string, want []byte) (File, 
 	if err := lockOwner(ctx, tx, owner); err != nil {
 		return File{}, err
 	}
-	why, err := conflict(ctx, tx, owner, p)
+	why, err := conflict(ctx, tx, owner, p, "")
 	if err != nil {
 		return File{}, err
 	}
 	if why != "" {
 		return File{}, fmt.Errorf("%w: %s/%s: %s", ErrExists, owner, p, why)
 	}
+	if err := ensureDirs(ctx, tx, owner, p); err != nil {
+		return File{}, err
+	}
 	out, err := insertFile(ctx, tx, File{
-		Owner: owner, Path: p, Size: info.Size(), MIME: detectMIME(p, sniff), SHA256: sum, ModifiedAt: info.ModTime(),
+		Owner: owner, Path: p, Kind: KindFile, Size: info.Size(), MIME: detectMIME(p, sniff), SHA256: sum, ModifiedAt: info.ModTime(),
 	})
 	if err != nil {
 		return File{}, err

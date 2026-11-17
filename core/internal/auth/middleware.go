@@ -82,16 +82,20 @@ func RequireAdmin(next http.Handler) http.Handler {
 	})
 }
 
-// RequireJSON refuses state-changing requests that are not JSON. A browser
-// cannot send a cross-site JSON request without a CORS preflight, which the
-// core never grants, so this blocks cross-site request forgery.
+// ClientHeader marks a request from a Cloud OS client. A raw upload carries it
+// instead of a JSON body.
+const ClientHeader = "X-Cloudos-Client"
+
+// RequireJSON refuses state-changing requests that are neither JSON nor marked
+// with ClientHeader. A browser cannot send either cross-site without a CORS
+// preflight, which the core never grants, so this blocks cross-site request forgery.
 func RequireJSON(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 		default:
 			ct := r.Header.Get("Content-Type")
-			if ct != "application/json" && !strings.HasPrefix(ct, "application/json;") {
+			if ct != "application/json" && !strings.HasPrefix(ct, "application/json;") && r.Header.Get(ClientHeader) == "" {
 				writeError(w, http.StatusUnsupportedMediaType, "send application/json")
 				return
 			}

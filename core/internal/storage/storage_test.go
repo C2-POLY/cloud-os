@@ -31,10 +31,11 @@ func put(t *testing.T, s *Store, owner, p, content string) File {
 	return f
 }
 
+// count returns the number of indexed files, folders left out.
 func count(t *testing.T, s *Store) int {
 	t.Helper()
 	var n int
-	if err := s.Pool.QueryRow(context.Background(), `SELECT count(*) FROM files`).Scan(&n); err != nil {
+	if err := s.Pool.QueryRow(context.Background(), `SELECT count(*) FROM files WHERE kind = 'file'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n

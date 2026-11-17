@@ -12,6 +12,7 @@ import (
 
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
+	"github.com/C2-POLY/cloud-os/core/internal/storage"
 )
 
 // WorkerWindow is how recent a heartbeat must be for a worker to count as present.
@@ -37,6 +38,7 @@ type Config struct {
 	Version   string
 	Health    HealthStore
 	Auth      *auth.Service
+	Files     *storage.Store
 	StaticDir string // the built web front, served at / when not empty
 }
 
@@ -59,6 +61,7 @@ type route struct {
 // through RequireSession; the access test walks this list.
 func routes(c Config) []route {
 	a := &accountsAPI{auth: c.Auth}
+	f := &filesAPI{store: c.Files}
 	return []route{
 		{"GET /api/health", public, healthHandler(c.Version, c.Health)},
 		{"GET /api/setup", public, a.setupNeeded},
@@ -69,6 +72,11 @@ func routes(c Config) []route {
 		{"GET /api/accounts", admin, a.list},
 		{"POST /api/accounts", admin, a.create},
 		{"PATCH /api/accounts/{name}", admin, a.update},
+		{"GET /api/files", member, f.list},
+		{"POST /api/files/folders", member, f.mkdir},
+		{"POST /api/files/move", member, f.move},
+		{"GET /api/files/content", member, f.download},
+		{"PUT /api/files/content", member, f.upload},
 	}
 }
 

@@ -26,6 +26,9 @@ var tables = []struct {
 	{3, []string{"accounts", "sessions"}, `INSERT INTO accounts (name, display_name, password_hash, role)
 		VALUES ('enzo', 'Enzo', 'x', 'admin');
 		INSERT INTO sessions (token_hash, account, expires_at) VALUES (sha256('t'), 'enzo', now())`},
+	{4, []string{"moves"}, `INSERT INTO files (owner, path, kind, size, mime, modified_at)
+		VALUES ('enzo', 'Photos', 'dir', 0, 'inode/directory', now());
+		INSERT INTO moves (owner, from_path, to_path) VALUES ('enzo', 'a', 'b')`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {
@@ -103,6 +106,57 @@ func TestMigrationsUpDownUp(t *testing.T) {
 		t.Fatalf("up again: %v", err)
 	}
 	check("up again", latest)
+}
+
+// TestFolderBackfill checks that migration 4 gives every existing file's
+// parent folders their own rows, and that undoing it keeps every file row.
+func TestFolderBackfill(t *testing.T) {
+	ctx := context.Background()
+	pool, err := db.Open(ctx, testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	p, err := migrate.NewProvider(db.SQL(pool))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.UpTo(ctx, 3); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO files (owner, path, size, mime, sha256, modified_at) VALUES
+		('enzo', 'Photos/2024/plage.jpg', 1, 'image/jpeg', sha256('a'), now()),
+		('enzo', 'Photos/chien.jpg', 1, 'image/jpeg', sha256('b'), now()),
+		('enzo', 'racine.txt', 1, 'text/plain', sha256('c'), now()),
+		('johan', 'Photos/x.jpg', 1, 'image/jpeg', sha256('d'), now())`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.UpTo(ctx, 4); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := pool.Query(ctx, `SELECT owner || ':' || path FROM files WHERE kind = 'dir' ORDER BY 1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dirs []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			t.Fatal(err)
+		}
+		dirs = append(dirs, d)
+	}
+	want := []string{"enzo:Photos", "enzo:Photos/2024", "johan:Photos"}
+	if fmt.Sprint(dirs) != fmt.Sprint(want) {
+		t.Errorf("folders %v, want %v", dirs, want)
+	}
+	if _, err := p.DownTo(ctx, 3); err != nil {
+		t.Fatal(err)
+	}
+	var files int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM files`).Scan(&files); err != nil || files != 4 {
+		t.Errorf("after down: %d file rows (%v), want the 4 files", files, err)
+	}
 }
 
 func TestHeartbeatQuery(t *testing.T) {
