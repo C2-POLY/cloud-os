@@ -4,7 +4,7 @@ An all-in-one home cloud OS installed on a box: drive, photos, documents and med
 
 ## Project state
 
-- 2026-11-17: repository created, no code yet. The V1 is phases 1 to 3 of the PRD roadmap (Core + Drive, Photos + mobile, AI search + Documents), run in Docker Compose. The OS packaging comes after.
+- 2026-11-17: repository created; phase 1 skeleton in place (Compose stack, health endpoint, worker heartbeat, CI). The V1 is phases 1 to 3 of the PRD roadmap (Core + Drive, Photos + mobile, AI search + Documents), run in Docker Compose. The OS packaging comes after.
 - Decisions are recorded in `docs/decisions/` (one numbered file each, with the why and the options rejected). Stack: `001-stack.md`.
 - Still open in the PRD: product name, open or closed source, reference hardware (Raspberry Pi 5 or x86 mini PC). Update this file and the `topic` skill when one is decided.
 
@@ -24,7 +24,41 @@ Containers first: the whole application runs in Docker Compose, and the OS is on
 
 ## Commands
 
-None yet. Add the build, run, test and lint commands here with the first code, and use the same ones in steps 5 to 7 of the `topic` skill.
+Run from the repository root (or a worktree). Steps 5 to 7 of the `topic` skill use the same commands.
+
+```bash
+# Install Go, Python (uv) and web (npm) dependencies
+make deps
+
+# Build and start db, core, worker and web; wait until healthy
+make up
+# The app (the core serving the built front): http://localhost:8480
+# Vite with hot reload, /api forwarded to the core: http://localhost:5180
+
+# Follow the logs, stop the stack (the database volume is kept)
+make logs
+make down
+
+# Lints, no warning allowed: gofmt, go vet, ruff check and format, tsc, oxlint
+make lint
+
+# Every test suite. Starts the Compose database if needed; each database test
+# creates and drops its own throwaway database.
+make test
+
+# Rewrite Go and Python files in place
+make fmt
+```
+
+Layout: `core/` (Go module, `cmd/core`, `internal/`, SQL migrations in `core/migrations/`, applied by the core at startup with goose), `worker/` (Python, uv), `web/` (React, Vite, npm), `compose.yaml`, `Makefile`, `.github/workflows/ci.yml` (`make lint` and `make test` on every PR and on `main`).
+
+**One stack per worktree.** Give each worktree its own Compose project and, when another stack runs, its own host ports, so stacks never share a database:
+
+```bash
+COMPOSE_PROJECT_NAME=cloud-os-<name> CLOUDOS_DB_PORT=54321 CLOUDOS_CORE_PORT=8481 CLOUDOS_WEB_PORT=5181 make up
+```
+
+Defaults: database `54320`, core `8480`, Vite `5180`, all bound to `127.0.0.1`. The Compose credentials (`cloudos`/`cloudos`) are for the local throwaway database only.
 
 ## Non-negotiable rules
 
@@ -55,7 +89,7 @@ Project ids for `gh project item-edit`: project `PVT_kwDODd-WqM4Br97_`, Status f
 
 ## Versioning
 
-- `MAJOR.MINOR.PATCH`, 0.x until the first box runs at home. The file that holds the version is chosen with the stack; record it here.
+- `MAJOR.MINOR.PATCH`, 0.x until the first box runs at home. The version lives only in `VERSION` at the repository root; the core gets it at build time (`-X main.version`) and `/api/health` returns it. `web/package.json` and `worker/pyproject.toml` keep their own package versions, not the product's.
 - One working day is one minor version. Bump it in the first commit of the day that changes something visible to a user. A day that only fixes bugs bumps the patch instead. Commits that only touch docs or tooling do not bump it.
 - Never put the version number in a commit message.
 
