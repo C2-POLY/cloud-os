@@ -9,6 +9,7 @@ import { folderFromURL, navigate, usePath } from '../router.ts'
 import { SharesPage } from '../share/SharesPage.tsx'
 import { appInfo, apps, type AppId } from './apps.ts'
 import { Palette } from './Palette.tsx'
+import { Widgets } from './Widgets.tsx'
 import { Window } from './Window.tsx'
 import { useGeometries, useWindows, type Win } from './windows.ts'
 
@@ -39,6 +40,7 @@ export function Desktop({ me, onSignedOut }: { me: Account; onSignedOut: () => v
 
       <main className="desk" aria-label="Bureau" onPointerDown={(e) => e.target === e.currentTarget && navigate('/')}>
         <Clock />
+        <Widgets />
       </main>
 
       {windows.map((w, i) => (

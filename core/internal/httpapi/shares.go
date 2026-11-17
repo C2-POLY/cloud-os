@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/C2-POLY/cloud-os/core/internal/activity"
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/share"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
@@ -25,7 +26,8 @@ const GrantCookie = "cloudos_share"
 // sharesAPI serves the owner's links (member routes) and the guest's read-only
 // view through a link (public routes under /api/s/{token}).
 type sharesAPI struct {
-	shares *share.Service
+	shares   *share.Service
+	activity *activity.Log
 }
 
 // failShares maps a share or storage error to its status.
@@ -151,6 +153,8 @@ func (a *sharesAPI) info(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The guest's page asks for this once per visit: one "opened" in the owner's journal.
+	a.activity.Record(r.Context(), sh.Owner, activity.ShareOpened, item.Path)
 	e := entryOf(item)
 	writeJSON(w, http.StatusOK, GuestItem{Name: e.Name, Kind: e.Kind, Size: e.Size, MIME: e.MIME, ModifiedAt: e.ModifiedAt, ExpiresAt: sh.ExpiresAt})
 }
