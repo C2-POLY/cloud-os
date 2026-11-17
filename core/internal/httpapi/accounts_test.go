@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
+	"github.com/C2-POLY/cloud-os/core/internal/share"
+	"github.com/C2-POLY/cloud-os/core/internal/storage"
 	"github.com/C2-POLY/cloud-os/core/internal/testdb"
 )
 
@@ -46,7 +48,8 @@ func (c *client) do(method, path, body string) *httptest.ResponseRecorder {
 func newAPI(t *testing.T) (Config, http.Handler) {
 	t.Helper()
 	pool, p := testdb.Migrated(t)
-	cfg := Config{Version: "test", Auth: auth.NewService(pool), Health: &fakeStore{version: 3}}
+	files := &storage.Store{Root: t.TempDir(), Pool: pool}
+	cfg := Config{Version: "test", Auth: auth.NewService(pool), Health: &fakeStore{version: 3}, Files: files, Shares: share.NewService(pool, files)}
 	_ = p
 	return cfg, NewHandler(cfg)
 }
@@ -144,6 +147,8 @@ func TestEveryRouteIsProtected(t *testing.T) {
 	for _, rt := range routes(cfg) {
 		method, path, _ := strings.Cut(rt.pattern, " ")
 		path = strings.ReplaceAll(path, "{name}", "johan")
+		path = strings.ReplaceAll(path, "{id}", "1")
+		path = strings.ReplaceAll(path, "{token}", strings.Repeat("A", 43))
 		body := ""
 		if method != "GET" {
 			body = `{}`
@@ -170,7 +175,10 @@ func TestEveryRouteIsProtected(t *testing.T) {
 		}
 	}
 	// The public list is deliberate: adding a public route must change this test.
-	want := []string{"GET /api/health", "GET /api/setup", "POST /api/setup", "POST /api/login", "POST /api/logout"}
+	// The share link routes are the guest's: read-only, behind the link's token
+	// (and its password), never a session. See docs/architecture/share.md.
+	want := []string{"GET /api/health", "GET /api/setup", "POST /api/setup", "POST /api/login", "POST /api/logout",
+		"GET /api/s/{token}", "POST /api/s/{token}/unlock", "GET /api/s/{token}/files", "GET /api/s/{token}/content", "GET /api/s/{token}/zip"}
 	if len(publics) != len(want) {
 		t.Errorf("public routes %v, want %v", publics, want)
 	}

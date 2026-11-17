@@ -10,7 +10,7 @@ Issue : #6.
 - **Connexion :**
   - **Message d'erreur :** il est le même que le compte n'existe pas, que le mot de passe soit faux ou que le compte soit désactivé. Un compte inconnu coûte le même temps de calcul.
   - **Limitation :** 5 échecs par minute pour un même compte depuis une même IP, puis 429. Le compteur vit en mémoire et repart à zéro au redémarrage du cœur.
-- **Routes :** aucune n'est accessible sans session, sauf celles marquées `public` (voir « Routes »).
+- **Routes :** aucune n'est accessible sans session, sauf celles marquées `public` (voir « Routes »). Les seules routes publiques qui donnent accès à des fichiers sont celles d'un lien de partage, en lecture seule et derrière son jeton (voir [share.md](share.md)).
 - **Dernier admin :** il y a toujours un admin actif ; le dernier ne peut être ni rétrogradé ni désactivé.
 
 ## Tables
@@ -60,8 +60,8 @@ La table `routes()` de `core/internal/httpapi/httpapi.go` donne à chaque route 
 
 | Niveau | Routes |
 |---|---|
-| `public` | `GET /api/health`, `GET` et `POST /api/setup`, `POST /api/login`, `POST /api/logout` (et plus tard les liens de partage) |
-| `member` | `GET /api/me`, toutes les routes `/api/files…` (voir [storage.md](storage.md)) |
+| `public` | `GET /api/health`, `GET` et `POST /api/setup`, `POST /api/login`, `POST /api/logout`, et les routes de l'invité d'un lien de partage : `GET /api/s/{token}`, `POST /api/s/{token}/unlock`, `GET /api/s/{token}/files`, `/content` et `/zip` (voir [share.md](share.md)) |
+| `member` | `GET /api/me`, toutes les routes `/api/files…` (voir [storage.md](storage.md)), `/api/trash…`, `/api/uploads…`, et `POST`, `GET /api/shares`, `DELETE /api/shares/{id}` |
 | `admin` | `GET` et `POST /api/accounts`, `PATCH /api/accounts/{name}` (rôle, désactivé) |
 
 `TestEveryRouteIsProtected` parcourt cette table :

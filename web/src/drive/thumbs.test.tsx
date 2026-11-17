@@ -32,7 +32,7 @@ describe('thumbURL', () => {
 describe('FileList thumbnails', () => {
   const noop = () => {}
   const list = (entries: Entry[]) =>
-    render(<FileList entries={entries} onRename={noop} onMove={noop} onTrash={noop} onVersions={noop} />)
+    render(<FileList entries={entries} onRename={noop} onMove={noop} onTrash={noop} onVersions={noop} onShare={noop} />)
 
   it('shows the thumbnail lazily, and the icon again when there is none yet', () => {
     const { container } = list([file('a.jpg', 'image/jpeg'), file('notes.txt', 'text/plain')])

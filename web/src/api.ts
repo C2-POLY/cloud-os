@@ -65,12 +65,17 @@ const messages: Record<string, string> = {
     'Le dernier administrateur actif ne peut être ni rétrogradé ni désactivé.',
   'not signed in': 'Session expirée, reconnectez-vous.',
   'admins only': 'Réservé aux administrateurs.',
+  'no such link': 'Ce lien n’existe pas, a expiré ou a été révoqué.',
+  'password required': 'Ce lien est protégé par un mot de passe.',
+  'wrong password': 'Mot de passe incorrect.',
 }
 
 /** The message to show the user for an error from api(). */
 export function messageOf(err: unknown): string {
   if (err instanceof ApiError) {
     if (messages[err.message]) return messages[err.message]
+    if (err.message.startsWith('invalid link: the expiry')) return 'Choisissez une date d’expiration dans le futur.'
+    if (err.message.startsWith('invalid link: the password')) return 'Le mot de passe du lien doit avoir de 6 à 256 caractères.'
     if (err.message.startsWith('the password must have')) return 'Le mot de passe doit avoir de 10 à 256 caractères.'
     if (err.message.startsWith('invalid account')) {
       return 'Identifiant invalide : minuscules, chiffres, - ou _, 64 caractères au plus.'

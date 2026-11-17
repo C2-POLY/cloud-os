@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Download, File, FileImage, FileText, FileVideo, Folder, FolderInput, History, Music, Pencil, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Download, File, FileImage, FileText, FileVideo, Folder, FolderInput, History, Music, Pencil, Share2, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { driveURL, navigate } from '../router.ts'
 import { downloadURL, formatDate, formatSize, sortEntries, thumbURL, type Entry, type SortKey } from './files.ts'
@@ -27,12 +27,14 @@ export function FileList({
   onMove,
   onTrash,
   onVersions,
+  onShare,
 }: {
   entries: Entry[]
   onRename: (entry: Entry) => void
   onMove: (entry: Entry) => void
   onTrash: (entry: Entry) => void
   onVersions: (entry: Entry) => void
+  onShare: (entry: Entry) => void
 }) {
   const [key, setKey] = useState<SortKey>('name')
   const [ascending, setAscending] = useState(true)
@@ -119,6 +121,9 @@ export function FileList({
                 ) : (
                   <span className="icon-button" aria-hidden />
                 )}
+                <button type="button" className="icon-button" title="Partager par un lien" aria-label={`Partager ${e.name}`} onClick={() => onShare(e)}>
+                  <Share2 size={16} aria-hidden />
+                </button>
                 <button type="button" className="icon-button" title="Renommer" aria-label={`Renommer ${e.name}`} onClick={() => onRename(e)}>
                   <Pencil size={16} aria-hidden />
                 </button>
