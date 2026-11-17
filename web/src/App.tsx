@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { ApiError, api, type Account } from './api.ts'
 import { CredentialsForm } from './CredentialsForm.tsx'
+import { SharePage } from './share/SharePage.tsx'
+import { tokenFromURL } from './share/shares.ts'
 import { Shell } from './Shell.tsx'
 
 type Screen =
@@ -12,8 +14,15 @@ type Screen =
 
 type SignedIn = { account: Account }
 
-/** Picks the screen: the first-start wizard, the login, or the home page. */
+/** Picks the screen: a guest's share link, the first-start wizard, the login, or the home page. */
 export function App() {
+  // A share link opens without an account, before any session check.
+  const token = tokenFromURL(window.location.pathname)
+  return token ? <SharePage token={token} /> : <SignedInApp />
+}
+
+/** The box for its accounts: the wizard, the login, then the shell. */
+function SignedInApp() {
   const [screen, setScreen] = useState<Screen>({ kind: 'loading' })
 
   useEffect(() => {

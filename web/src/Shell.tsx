@@ -1,10 +1,11 @@
-import { Cloud, HardDrive, LogOut, Trash2, Users } from 'lucide-react'
+import { Cloud, HardDrive, LogOut, Share2, Trash2, Users } from 'lucide-react'
 import { useEffect } from 'react'
 import { Accounts } from './Accounts.tsx'
 import { api, type Account } from './api.ts'
 import { Drive } from './drive/Drive.tsx'
 import { TrashPage } from './drive/TrashPage.tsx'
 import { Health } from './Health.tsx'
+import { SharesPage } from './share/SharesPage.tsx'
 import { driveURL, folderFromURL, navigate, usePath } from './router.ts'
 
 /** The signed-in app: a top bar and the page the URL names. */
@@ -13,11 +14,12 @@ export function Shell({ me, onSignedOut }: { me: Account; onSignedOut: () => voi
   const folder = folderFromURL(path)
   const onAccounts = path === '/comptes' && me.role === 'admin'
   const onTrash = path === '/corbeille'
+  const onShares = path === '/partages'
 
   // Any other address opens the drive's root.
   useEffect(() => {
-    if (folder === null && !onAccounts && !onTrash) navigate(driveURL(''), true)
-  }, [folder, onAccounts, onTrash])
+    if (folder === null && !onAccounts && !onTrash && !onShares) navigate(driveURL(''), true)
+  }, [folder, onAccounts, onTrash, onShares])
 
   function link(to: string, label: string, Icon: typeof HardDrive, active: boolean) {
     return (
@@ -45,6 +47,7 @@ export function Shell({ me, onSignedOut }: { me: Account; onSignedOut: () => voi
         </span>
         <nav className="tabs">
           {link(driveURL(''), 'Drive', HardDrive, folder !== null)}
+          {link('/partages', 'Partages', Share2, onShares)}
           {link('/corbeille', 'Corbeille', Trash2, onTrash)}
           {me.role === 'admin' && link('/comptes', 'Comptes', Users, onAccounts)}
         </nav>
@@ -67,6 +70,7 @@ export function Shell({ me, onSignedOut }: { me: Account; onSignedOut: () => voi
       <main className="page">
         {folder !== null && <Drive folder={folder} />}
         {onTrash && <TrashPage />}
+        {onShares && <SharesPage />}
         {onAccounts && (
           <>
             <h1>Comptes</h1>

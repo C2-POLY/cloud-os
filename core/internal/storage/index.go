@@ -141,3 +141,17 @@ func (s *Store) Lookup(ctx context.Context, owner, path string) (File, error) {
 	}
 	return f, err
 }
+
+// LookupID returns owner's live file or folder with this id: ErrNotFound when
+// it does not exist, belongs to someone else or is in the trash.
+func (s *Store) LookupID(ctx context.Context, owner string, id int64) (File, error) {
+	owner, err := CleanOwner(owner)
+	if err != nil {
+		return File{}, err
+	}
+	f, err := scanFile(s.Pool.QueryRow(ctx, `SELECT `+fileColumns+` FROM files WHERE id = $1 AND owner = $2 AND trash_id IS NULL`, id, owner))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return File{}, ErrNotFound
+	}
+	return f, err
+}

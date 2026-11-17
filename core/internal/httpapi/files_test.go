@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
+	"github.com/C2-POLY/cloud-os/core/internal/share"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 	"github.com/C2-POLY/cloud-os/core/internal/testdb"
 )
@@ -19,11 +20,13 @@ import (
 func newFilesAPI(t *testing.T) (enzo, johan *client) {
 	t.Helper()
 	pool, _ := testdb.Migrated(t)
+	files := &storage.Store{Root: t.TempDir(), Pool: pool}
 	h := NewHandler(Config{
 		Version: "test",
 		Health:  &fakeStore{},
 		Auth:    auth.NewService(pool),
-		Files:   &storage.Store{Root: t.TempDir(), Pool: pool},
+		Files:   files,
+		Shares:  share.NewService(pool, files),
 	})
 	enzo = &client{t: t, h: h}
 	enzo.do("POST", "/api/setup", `{"name":"enzo","password":"`+pw+`"}`)

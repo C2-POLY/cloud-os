@@ -1,16 +1,18 @@
 # Interface web
 
 Le front React (Vite, TypeScript) que le cœur sert en fichiers statiques : `web/src/`.
-Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (versions).
+Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (versions), #13 (partage par lien).
 
 ## Écrans et adresses
 
-Avant la connexion, `App.tsx` choisit l'écran selon l'état du cœur : l'assistant de premier démarrage si `GET /api/setup` répond `needed`, sinon la connexion si `GET /api/me` répond 401. Une fois connecté, `Shell.tsx` affiche la barre du haut et la page que nomme l'adresse :
+`App.tsx` affiche d'abord la page de l'invité si l'adresse est celle d'un lien de partage (`/s/<jeton>`), sans rien demander au cœur sur la session (voir [share.md](share.md)). Sinon, avant la connexion, il choisit l'écran selon l'état du cœur : l'assistant de premier démarrage si `GET /api/setup` répond `needed`, sinon la connexion si `GET /api/me` répond 401. Une fois connecté, `Shell.tsx` affiche la barre du haut et la page que nomme l'adresse :
 
 | Adresse | Page | Pour |
 |---|---|---|
 | `/drive`, `/drive/<dossier>` | Le drive, sur ce dossier | Tout compte |
+| `/partages` | Ses liens de partage, avec Révoquer | Tout compte |
 | `/corbeille` | La corbeille | Tout compte |
+| `/s/<jeton>` | La page de l'invité d'un lien de partage | Sans compte |
 | `/comptes` | La santé de la box et la gestion des comptes | Admin |
 | Toute autre adresse | Remplacée par `/drive` | |
 
@@ -34,6 +36,7 @@ Avant la connexion, `App.tsx` choisit l'écran selon l'état du cœur : l'assist
 - **Actions :**
   - **Renommer** est un déplacement dans le même dossier (`POST /api/files/move`).
   - **Télécharger** est un lien vers `/api/files/content`, avec le cookie de session.
+  - **Partager** ouvre `ShareDialog` : expiration, mot de passe en option, puis le lien à copier, affiché une seule fois.
   - **Supprimer** met à la corbeille sans confirmation, puisque c'est réversible. Un message « mis à la corbeille » propose Annuler, qui restaure aussitôt.
 - **Versions :** l'action Versions d'un fichier ouvre son historique (date, taille, date de remplacement), avec Télécharger et Restaurer. Restaurer garde le contenu remplacé comme version.
 - **Mobile :** en largeur mobile, les colonnes Taille et Modifié passent sous le nom, et les actions restent visibles.
