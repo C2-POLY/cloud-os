@@ -1,5 +1,6 @@
 import { ArrowDown, ArrowUp, Download, File, FileImage, FileText, FileVideo, Folder, FolderInput, History, Music, Pencil, Share2, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
+import { animatedRows, enter } from '../motion/animate.ts'
 import { driveURL, navigate } from '../router.ts'
 import { downloadURL, formatDate, formatSize, sortEntries, thumbURL, type Entry, type SortKey } from './files.ts'
 
@@ -22,6 +23,7 @@ function KindIcon({ entry }: { entry: Entry }) {
 }
 
 export function FileList({
+  folder = '',
   entries,
   onRename,
   onMove,
@@ -29,6 +31,8 @@ export function FileList({
   onVersions,
   onShare,
 }: {
+  /** The folder the entries belong to: the rows come in when it changes. */
+  folder?: string
   entries: Entry[]
   onRename: (entry: Entry) => void
   onMove: (entry: Entry) => void
@@ -39,6 +43,14 @@ export function FileList({
   const [key, setKey] = useState<SortKey>('name')
   const [ascending, setAscending] = useState(true)
   const sorted = sortEntries(entries, key, ascending)
+  const body = useRef<HTMLTableSectionElement>(null)
+
+  // Only the first rows are animated, so a folder of thousands of files costs
+  // the same as a small one. Sorting or a reload of the same folder animates nothing.
+  useLayoutEffect(() => {
+    const rows = body.current ? Array.from(body.current.rows).slice(0, animatedRows) : []
+    enter(rows, { y: 6, step: 0.015 })
+  }, [folder])
 
   function header(k: SortKey, label: string, className?: string) {
     const active = key === k
@@ -78,7 +90,7 @@ export function FileList({
           </th>
         </tr>
       </thead>
-      <tbody>
+      <tbody ref={body}>
         {sorted.map((e) => (
           <tr key={e.path}>
             <td className="name">

@@ -25,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pressly/goose/v3"
 
+	"github.com/C2-POLY/cloud-os/core/internal/activity"
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
 	"github.com/C2-POLY/cloud-os/core/internal/httpapi"
@@ -141,6 +142,8 @@ func withCore(ctx context.Context, fn func(core) error) error {
 		VersionsKeep: envInt("CLOUDOS_VERSIONS_KEEP"), VersionsMaxAge: time.Duration(envInt("CLOUDOS_VERSIONS_DAYS")) * 24 * time.Hour,
 	}
 	files.AfterStore = queueBackgroundWork(&tasks.Queue{Pool: pool}, tasks.PriorityNew)
+	journal := &activity.Log{Pool: pool}
+	files.Notify = journal.Record
 	return fn(core{pool: pool, provider: provider, files: files})
 }
 
@@ -193,6 +196,7 @@ func serve(ctx context.Context, c core) error {
 			Auth:      auth.NewService(c.pool),
 			Files:     c.files,
 			Shares:    shares,
+			Activity:  &activity.Log{Pool: c.pool},
 			MaxUpload: maxUpload(),
 			StaticDir: os.Getenv("STATIC_DIR"),
 		}),
@@ -293,6 +297,9 @@ func reapTasksEvery(ctx context.Context, q *tasks.Queue, every time.Duration) {
 			}
 			if _, err := meta.Prune(ctx, q.Pool); err != nil {
 				slog.Error("prune metadata", "err", err)
+			}
+			if _, err := (&activity.Log{Pool: q.Pool}).Prune(ctx); err != nil {
+				slog.Error("prune activity", "err", err)
 			}
 		}
 	}

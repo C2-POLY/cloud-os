@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { ApiError, api, type Account } from './api.ts'
 import { CredentialsForm } from './CredentialsForm.tsx'
+import { SmoothScroll } from './motion/SmoothScroll.tsx'
 import { SharePage } from './share/SharePage.tsx'
 import { tokenFromURL } from './share/shares.ts'
-import { Shell } from './Shell.tsx'
+import { Desktop } from './desktop/Desktop.tsx'
 
 type Screen =
   | { kind: 'loading' }
@@ -18,7 +19,7 @@ type SignedIn = { account: Account }
 export function App() {
   // A share link opens without an account, before any session check.
   const token = tokenFromURL(window.location.pathname)
-  return token ? <SharePage token={token} /> : <SignedInApp />
+  return <SmoothScroll>{token ? <SharePage token={token} /> : <SignedInApp />}</SmoothScroll>
 }
 
 /** The box for its accounts: the wizard, the login, then the shell. */
@@ -46,7 +47,7 @@ function SignedInApp() {
 
   switch (screen.kind) {
     case 'home':
-      return <Shell me={screen.me} onSignedOut={() => setScreen({ kind: 'login' })} />
+      return <Desktop me={screen.me} onSignedOut={() => setScreen({ kind: 'login' })} />
     case 'loading':
       return (
         <Narrow>

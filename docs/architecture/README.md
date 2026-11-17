@@ -13,6 +13,7 @@ Comment Cloud OS est construit, domaine par domaine, avec ses schémas. Le besoi
 | Partage par lien : jeton, expiration, mot de passe, page de l'invité | [share.md](share.md) | `core/internal/share`, `core/internal/httpapi/shares.go`, `web/src/share/` | #13 |
 | Miniatures des images | [thumbnails.md](thumbnails.md) | `core/internal/thumbs`, `worker/src/worker/thumbs.py`, `web/src/drive/FileList.tsx` | #14 |
 | Métadonnées des photos : date de prise de vue, GPS, appareil | [metadata.md](metadata.md) | `core/internal/meta`, `worker/src/worker/meta.py` | #34 |
+| Recherche par nom et palette Demander | [search.md](search.md) | `core/internal/storage/search.go`, `web/src/desktop/Palette.tsx` | #48 |
 
 ## Quand mettre un fichier à jour
 

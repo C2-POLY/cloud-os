@@ -1,22 +1,59 @@
 import { ChevronLeft, Download, Folder, RotateCcw } from 'lucide-react'
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { messageOf } from '../api.ts'
+import { enter, leave } from '../motion/animate.ts'
 import { formatDate, formatDateSeconds, formatSize, join, listFolder, listVersions, parentOf, restoreVersion, versionURL, type Entry, type VersionEntry } from './files.ts'
 
-/** A modal panel; Escape or the backdrop closes it. */
+/** Closes the modal around it, after its closing animation. */
+const DismissContext = createContext<() => void>(() => {})
+
+/**
+ * A modal panel; Escape, the backdrop or a DismissButton closes it. It opens and
+ * closes with a short animation, then calls onClose once. A dialog that closes
+ * itself after a successful action calls onClose directly, without waiting.
+ * It is drawn on the document's body: inside a desktop window, whose glass
+ * (backdrop-filter) holds its fixed children, it would be shut in the window.
+ */
 export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  const backdrop = useRef<HTMLDivElement>(null)
+  const panel = useRef<HTMLDivElement>(null)
+  const closing = useRef(false)
+
+  useLayoutEffect(() => {
+    enter(backdrop.current)
+    enter(panel.current, { scale: 0.96 })
+  }, [])
+
+  const dismiss = useCallback(() => {
+    if (closing.current) return
+    closing.current = true
+    void Promise.all([leave(backdrop.current), leave(panel.current, { scale: 0.96 })]).then(onClose)
+  }, [onClose])
+
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && dismiss()
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-  return (
-    <div className="backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
+  }, [dismiss])
+  return createPortal(
+    <div ref={backdrop} className="backdrop" onMouseDown={(e) => e.target === e.currentTarget && dismiss()}>
+      <div ref={panel} className="modal" role="dialog" aria-modal="true" aria-label={title} data-lenis-prevent>
         <h2>{title}</h2>
-        {children}
+        <DismissContext.Provider value={dismiss}>{children}</DismissContext.Provider>
       </div>
-    </div>
+    </div>,
+    document.body,
+  )
+}
+
+/** The Cancel or Close button of a modal: it closes it like Escape does. */
+export function DismissButton({ children, autoFocus }: { children: ReactNode; autoFocus?: boolean }) {
+  const dismiss = useContext(DismissContext)
+  return (
+    <button type="button" className="secondary" onClick={dismiss} autoFocus={autoFocus}>
+      {children}
+    </button>
   )
 }
 
@@ -79,9 +116,9 @@ export function NameDialog({
           </p>
         )}
         <div className="dialog-buttons">
-          <button type="button" className="secondary" onClick={onClose}>
+          <DismissButton>
             Annuler
-          </button>
+          </DismissButton>
           <button type="submit" disabled={busy}>
             {submitLabel}
           </button>
@@ -157,9 +194,9 @@ export function MoveDialog({
         </p>
       )}
       <div className="dialog-buttons">
-        <button type="button" className="secondary" onClick={onClose}>
+        <DismissButton>
           Annuler
-        </button>
+        </DismissButton>
         <button type="button" onClick={move} disabled={busy || here}>
           Déplacer ici
         </button>
@@ -193,9 +230,9 @@ export function ConfirmDialog({
         </p>
       )}
       <div className="dialog-buttons">
-        <button type="button" className="secondary" onClick={onClose} autoFocus>
+        <DismissButton autoFocus>
           Annuler
-        </button>
+        </DismissButton>
         <button
           type="button"
           className="danger"
@@ -291,9 +328,9 @@ export function VersionsDialog({ entry, onRestored, onClose }: { entry: Entry; o
         </p>
       )}
       <div className="dialog-buttons">
-        <button type="button" className="secondary" onClick={onClose}>
+        <DismissButton>
           Fermer
-        </button>
+        </DismissButton>
       </div>
     </Modal>
   )

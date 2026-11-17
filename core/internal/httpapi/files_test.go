@@ -4,13 +4,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/C2-POLY/cloud-os/core/internal/activity"
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/share"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
@@ -30,12 +33,15 @@ func newFilesAPIPool(t *testing.T) (enzo, johan *client, pool *pgxpool.Pool) {
 	t.Helper()
 	pool, _ = testdb.Migrated(t)
 	files := &storage.Store{Root: t.TempDir(), Pool: pool}
+	journal := &activity.Log{Pool: pool}
+	files.Notify = journal.Record
 	h := NewHandler(Config{
-		Version: "test",
-		Health:  &fakeStore{},
-		Auth:    auth.NewService(pool),
-		Files:   files,
-		Shares:  share.NewService(pool, files),
+		Version:  "test",
+		Health:   &fakeStore{},
+		Auth:     auth.NewService(pool),
+		Files:    files,
+		Shares:   share.NewService(pool, files),
+		Activity: journal,
 	})
 	enzo = &client{t: t, h: h}
 	enzo.do("POST", "/api/setup", `{"name":"enzo","password":"`+pw+`"}`)
@@ -225,6 +231,81 @@ func TestThumb(t *testing.T) {
 		if rec := enzo.get("/api/files/thumb?path="+p, nil); rec.Code != http.StatusNotFound {
 			t.Errorf("%s: %d", p, rec.Code)
 		}
+	}
+}
+
+func TestSearch(t *testing.T) {
+	enzo, johan := newFilesAPI(t)
+	enzo.upload("Photos/%C3%89t%C3%A9/plage.jpg", "a", nil)
+	enzo.upload("notes.txt", "b", nil)
+	johan.upload("plage.txt", "c", nil)
+
+	rec := enzo.get("/api/search?q=ETE", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("search: %d %s", rec.Code, rec.Body)
+	}
+	if got := listing(t, rec); strings.Join(got, ",") != "Été/,plage.jpg" {
+		t.Errorf("ete: %v", got)
+	}
+	// Owner-scoped: johan's plage.txt is not enzo's.
+	if got := listing(t, enzo.get("/api/search?q=plage&limit=1", nil)); strings.Join(got, ",") != "plage.jpg" {
+		t.Errorf("plage: %v", got)
+	}
+	if got := listing(t, enzo.get("/api/search?q=", nil)); len(got) != 0 {
+		t.Errorf("empty query: %v", got)
+	}
+	anon := &client{t: t, h: enzo.h}
+	if rec := anon.get("/api/search?q=plage", nil); rec.Code != http.StatusUnauthorized {
+		t.Errorf("signed out: %d", rec.Code)
+	}
+}
+
+func TestDesktopWidgets(t *testing.T) {
+	enzo, johan := newFilesAPI(t)
+	enzo.upload("Photos/a.jpg", "a", nil)
+	enzo.upload("Photos/b.jpg", "b", nil)
+	enzo.upload("notes.txt", "n", nil)
+	johan.upload("Photos/x.jpg", "x", nil)
+
+	if got := listing(t, enzo.get("/api/files/recent?limit=2", nil)); strings.Join(got, ",") != "notes.txt,b.jpg" {
+		t.Errorf("recent: %v", got)
+	}
+
+	// A guest opens a link to Photos: the owner's journal says so.
+	expires := time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339)
+	rec := enzo.do("POST", "/api/shares", `{"path":"Photos","expires_at":"`+expires+`"}`)
+	var created struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil || created.Token == "" {
+		t.Fatalf("share: %d %s", rec.Code, rec.Body)
+	}
+	guest := &client{t: t, h: enzo.h}
+	if rec := guest.get("/api/s/"+created.Token, nil); rec.Code != http.StatusOK {
+		t.Fatalf("guest: %d %s", rec.Code, rec.Body)
+	}
+
+	rec = enzo.get("/api/activity?tz=Europe/Paris", nil)
+	var groups []struct {
+		Kind  string `json:"kind"`
+		Place string `json:"place"`
+		Name  string `json:"name"`
+		Count int    `json:"count"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &groups); err != nil {
+		t.Fatalf("activity: %d %s", rec.Code, rec.Body)
+	}
+	got := map[string]int{}
+	for _, g := range groups {
+		got[g.Kind+" "+g.Place] = g.Count
+	}
+	want := map[string]int{"added Photos": 2, "added ": 1, "share_opened Photos": 1}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("activity %v, want %v", got, want)
+	}
+	// An unknown time zone falls back to UTC instead of failing.
+	if rec := enzo.get("/api/activity?tz=Nowhere/City", nil); rec.Code != http.StatusOK {
+		t.Errorf("bad tz: %d", rec.Code)
 	}
 }
 

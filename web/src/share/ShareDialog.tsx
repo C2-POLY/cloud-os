@@ -1,7 +1,7 @@
 import { Check, Copy } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { messageOf } from '../api.ts'
-import { Modal } from '../drive/Dialogs.tsx'
+import { DismissButton, Modal } from '../drive/Dialogs.tsx'
 import type { Entry } from '../drive/files.ts'
 import { createShare, expiryOf, shareURL } from './shares.ts'
 
@@ -58,9 +58,9 @@ export function ShareDialog({ entry, onClose }: { entry: Entry; onClose: () => v
           <p className="muted hint">Copiez-le maintenant : pour des raisons de sécurité, il ne sera plus affiché.</p>
         </div>
         <div className="dialog-buttons">
-          <button type="button" className="secondary" onClick={onClose}>
+          <DismissButton>
             Fermer
-          </button>
+          </DismissButton>
           <button
             type="button"
             onClick={async () => {
@@ -122,9 +122,9 @@ export function ShareDialog({ entry, onClose }: { entry: Entry; onClose: () => v
           </p>
         )}
         <div className="dialog-buttons">
-          <button type="button" className="secondary" onClick={onClose}>
+          <DismissButton>
             Annuler
-          </button>
+          </DismissButton>
           <button type="submit" disabled={busy}>
             Créer le lien
           </button>

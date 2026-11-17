@@ -164,6 +164,22 @@ func (a *filesAPI) thumb(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, "", t.CreatedAt, bytes.NewReader(t.Bytes))
 }
 
+// search finds the account's files and folders by name and path (q), at most
+// limit of them (storage.DefaultSearchLimit, storage.MaxSearchLimit).
+func (a *filesAPI) search(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	files, err := a.store.Search(r.Context(), owner(r), r.URL.Query().Get("q"), limit)
+	if err != nil {
+		failFiles(w, err)
+		return
+	}
+	entries := make([]Entry, len(files))
+	for i, f := range files {
+		entries[i] = entryOf(f)
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
 // metaJSON is the metadata of a file as the API returns it. TakenAt is the
 // wall-clock time the photo was taken, without a zone ("2024-07-14T18:03:22");
 // TakenOffset is its offset from UTC ("+02:00") when the camera wrote one.
