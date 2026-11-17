@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { messageOf } from '../api.ts'
 import { parentOf, thumbURL } from '../drive/files.ts'
 import { driveURL, navigate } from '../router.ts'
-import { byMonth, fetchMonths, fillMonths, fetchTimeline, monthLabel, startOfMonthAfter, type MonthCount, type TimelineCursor, type TimelineEntry } from './timeline.ts'
+import { byDay, byMonth, dayTitle, fetchMonths, fillMonths, fetchTimeline, monthLabel, startOfMonthAfter, type MonthCount, type TimelineCursor, type TimelineEntry } from './timeline.ts'
+import { Viewer } from './Viewer.tsx'
 
 const dayFormat = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })
 const day = (at: string) => {
@@ -12,10 +13,13 @@ const day = (at: string) => {
 }
 
 /**
- * Fichiers' Chronologie: every file at its date, photos at the date they were
- * taken, newest first, a page at a time; the strip of months jumps.
+ * A timeline, newest first, a page at a time; the strip of months jumps.
+ * Fichiers' Chronologie (every file; a click opens its folder) or, with
+ * `photos`, the Photos app (images and videos by day; a click opens them big).
  */
-export function Timeline() {
+export function Timeline({ photos = false }: { photos?: boolean }) {
+  const filter = photos ? 'media' : undefined
+  const [viewing, setViewing] = useState<number | null>(null)
   const [months, setMonths] = useState<MonthCount[] | null>(null)
   const [items, setItems] = useState<TimelineEntry[]>([])
   const [next, setNext] = useState<TimelineCursor | null>(null)
@@ -29,7 +33,7 @@ export function Timeline() {
   // the top. An answer to an older jump arriving late is dropped.
   const request = useCallback((cursor: TimelineCursor | null, reset: boolean) => {
     const gen = reset ? ++generation.current : generation.current
-    fetchTimeline(cursor)
+    fetchTimeline(cursor, 60, filter)
       .then((page) => {
         if (gen !== generation.current) return
         setItems((prev) => (reset ? page.items : [...prev, ...page.items]))
@@ -39,7 +43,7 @@ export function Timeline() {
       })
       .catch((err: unknown) => gen === generation.current && setError(messageOf(err)))
       .finally(() => gen === generation.current && setLoading(false))
-  }, [])
+  }, [filter])
 
   const load = useCallback(
     (cursor: TimelineCursor | null, reset: boolean) => {
@@ -50,11 +54,11 @@ export function Timeline() {
   )
 
   useEffect(() => {
-    fetchMonths()
+    fetchMonths(filter)
       .then((m) => setMonths(fillMonths(m)))
       .catch(() => setMonths([]))
     request(null, true)
-  }, [request])
+  }, [request, filter])
 
   // The next page loads when the end of the list comes into view.
   useEffect(() => {
@@ -68,9 +72,14 @@ export function Timeline() {
   const groups = byMonth(items)
   const max = Math.max(1, ...(months ?? []).map((m) => m.count))
   const open = (e: TimelineEntry) => navigate(driveURL(parentOf(e.path)))
+  // Stable, so that the viewer does not read its metadata again on each render.
+  const loadMore = useCallback(() => {
+    if (next && !loading) load(next, false)
+  }, [next, loading, load])
+  const show = (e: TimelineEntry) => setViewing(items.indexOf(e))
 
   return (
-    <div className="timeline">
+    <div className={photos ? 'timeline photos' : 'timeline'}>
       {months && months.length > 0 && (
         <nav className="strip" aria-label="Aller à un mois">
           {months.map((m) => (
@@ -95,9 +104,30 @@ export function Timeline() {
       )}
 
       {error && <p className="bad">{error}</p>}
-      {!error && !loading && items.length === 0 && <p className="muted">Aucun fichier pour l'instant.</p>}
+      {!error && !loading && items.length === 0 && <p className="muted">{photos ? "Aucune photo pour l'instant." : "Aucun fichier pour l'instant."}</p>}
 
-      {groups.map((g) => (
+      {photos &&
+        groups.map((g) => (
+          <section key={g.month} className="timeline-month" aria-labelledby={`m-${g.month}`}>
+            <h2 id={`m-${g.month}`}>{monthLabel(g.month)}</h2>
+            {byDay(g.media).map((d) => (
+              <div key={d.day} className="photos-day">
+                <h3>{dayTitle(d.day)}</h3>
+                <ul className="timeline-media">
+                  {d.items.map((e) => (
+                    <li key={e.path}>
+                      <button type="button" onClick={() => show(e)} aria-label={`${e.name}, ${day(e.at)}`}>
+                        <MediaVisual entry={e} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </section>
+        ))}
+
+      {!photos && groups.map((g) => (
         <section key={g.month} className="timeline-month" aria-labelledby={`m-${g.month}`}>
           <h2 id={`m-${g.month}`}>{monthLabel(g.month)}</h2>
           {g.media.length > 0 && (
@@ -135,6 +165,16 @@ export function Timeline() {
           </button>
         )}
       </div>
+
+      {viewing !== null && viewing >= 0 && items[viewing] && (
+        <Viewer
+          items={items}
+          index={viewing}
+          onIndex={setViewing}
+          onClose={() => setViewing(null)}
+          onNearEnd={loadMore}
+        />
+      )}
     </div>
   )
 }

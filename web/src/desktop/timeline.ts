@@ -24,13 +24,18 @@ export interface MonthCount {
 
 const zone = () => encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
 
-export function fetchTimeline(before: TimelineCursor | null, limit = 60): Promise<TimelinePage> {
+/** Narrows the timeline: images and videos only (the Photos app), or everything. */
+export type TimelineFilter = 'media' | undefined
+
+const only = (filter: TimelineFilter) => (filter ? `&filter=${filter}` : '')
+
+export function fetchTimeline(before: TimelineCursor | null, limit = 60, filter?: TimelineFilter): Promise<TimelinePage> {
   const cursor = before ? `&before_at=${encodeURIComponent(before.at)}&before_path=${encodeURIComponent(before.path)}` : ''
-  return api<TimelinePage>('GET', `/api/timeline?tz=${zone()}&limit=${limit}${cursor}`)
+  return api<TimelinePage>('GET', `/api/timeline?tz=${zone()}&limit=${limit}${only(filter)}${cursor}`)
 }
 
-export function fetchMonths(): Promise<MonthCount[]> {
-  return api<MonthCount[]>('GET', `/api/timeline/months?tz=${zone()}`)
+export function fetchMonths(filter?: TimelineFilter): Promise<MonthCount[]> {
+  return api<MonthCount[]>('GET', `/api/timeline/months?tz=${zone()}${only(filter)}`)
 }
 
 /** The cursor that starts the timeline at the first day of the month after `month`: the month and older. */
@@ -81,4 +86,49 @@ export function fillMonths(months: MonthCount[]): MonthCount[] {
     if (month === last) break
   }
   return out
+}
+
+/** Splits items, newest first, into their days, keeping that order. */
+export function byDay(items: TimelineEntry[]): { day: string; items: TimelineEntry[] }[] {
+  const out: { day: string; items: TimelineEntry[] }[] = []
+  for (const it of items) {
+    const day = it.at.slice(0, 10)
+    const group = out.at(-1)
+    if (group && group.day === day) group.items.push(it)
+    else out.push({ day, items: [it] })
+  }
+  return out
+}
+
+const dayName = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })
+
+/** "Dimanche 14 juillet". */
+export function dayTitle(day: string): string {
+  const [y, m, d] = day.split('-').map(Number)
+  const label = dayName.format(new Date(y, m - 1, d))
+  return label.charAt(0).toUpperCase() + label.slice(1)
+}
+
+/** A photo's metadata, as GET /api/files/meta returns it (docs/architecture/metadata.md). */
+export interface MediaMeta {
+  taken_at: string | null
+  taken_offset: string | null
+  latitude: number | null
+  longitude: number | null
+  make: string | null
+  model: string | null
+  lens: string | null
+  width: number | null
+  height: number | null
+}
+
+const when = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+
+/** A wall-clock date "2024-07-14T18:03:22" written out, without any time zone conversion. */
+export function formatWallClock(at: string): string {
+  const [d, t = '00:00:00'] = at.split('T')
+  const [y, m, day] = d.split('-').map(Number)
+  const [h, min] = t.split(':').map(Number)
+  const label = when.format(new Date(y, m - 1, day, h, min))
+  return label.charAt(0).toUpperCase() + label.slice(1)
 }

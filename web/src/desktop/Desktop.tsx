@@ -96,6 +96,8 @@ function AppContent({ win, me }: { win: Win; me: Account }) {
           {win.path === timelinePath ? <Timeline /> : <Drive folder={folderFromURL(win.path) ?? ''} />}
         </>
       )
+    case 'photos':
+      return <Timeline photos />
     case 'shares':
       return <SharesPage />
     case 'trash':
