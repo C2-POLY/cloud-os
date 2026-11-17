@@ -44,6 +44,7 @@ type Upload struct {
 	SHA256     []byte
 	ModifiedAt *time.Time
 	ExpiresAt  time.Time
+	Replace    bool // replace a file already at Path, keeping its content as a version
 }
 
 // uploadLocks serialises the writes of one upload within this core.
@@ -56,7 +57,7 @@ func (s *Store) uploadFile(id string) string { return filepath.Join(s.uploadsDir
 // CreateUpload starts an upload of length bytes to owner/p. It refuses at once
 // a name already taken (ErrExists) and a file larger than maxSize, when
 // positive, or than the free space (ErrTooLarge).
-func (s *Store) CreateUpload(ctx context.Context, owner, p string, length int64, sha []byte, mod *time.Time, maxSize int64) (Upload, error) {
+func (s *Store) CreateUpload(ctx context.Context, owner, p string, length int64, sha []byte, mod *time.Time, maxSize int64, replace bool) (Upload, error) {
 	owner, err := CleanOwner(owner)
 	if err != nil {
 		return Upload{}, err
@@ -76,12 +77,20 @@ func (s *Store) CreateUpload(ctx context.Context, owner, p string, length int64,
 	if free, err := freeBytes(s.uploadsDir()); err == nil && uint64(length) > free {
 		return Upload{}, fmt.Errorf("%w: %d bytes, %d free on the disk", ErrTooLarge, length, free)
 	}
-	why, err := conflict(ctx, s.Pool, owner, p, "")
-	if err != nil {
+	// A replacing upload only needs the path to be a file, if anything.
+	existing, err := s.Lookup(ctx, owner, p)
+	switch {
+	case replace && err == nil && !existing.IsDir():
+	case err != nil && !errors.Is(err, ErrNotFound):
 		return Upload{}, err
-	}
-	if why != "" {
-		return Upload{}, fmt.Errorf("%w: %s/%s: %s", ErrExists, owner, p, why)
+	default:
+		why, err := conflict(ctx, s.Pool, owner, p, "")
+		if err != nil {
+			return Upload{}, err
+		}
+		if why != "" {
+			return Upload{}, fmt.Errorf("%w: %s/%s: %s", ErrExists, owner, p, why)
+		}
 	}
 
 	raw := make([]byte, 16)
@@ -91,11 +100,11 @@ func (s *Store) CreateUpload(ctx context.Context, owner, p string, length int64,
 	id := hex.EncodeToString(raw)
 	// The row comes first: a partial file without a row is an orphan, and
 	// CleanUploads may remove it.
-	u := Upload{ID: id, Owner: owner, Path: p, Length: length, SHA256: sha, ModifiedAt: mod}
+	u := Upload{ID: id, Owner: owner, Path: p, Length: length, SHA256: sha, ModifiedAt: mod, Replace: replace}
 	if err := s.Pool.QueryRow(ctx,
-		`INSERT INTO uploads (id, owner, path, length, sha256, modified_at, expires_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7)) RETURNING expires_at`,
-		id, owner, p, length, sha, mod, UploadTTL.Seconds()).Scan(&u.ExpiresAt); err != nil {
+		`INSERT INTO uploads (id, owner, path, length, sha256, modified_at, expires_at, replace_existing)
+		 VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7), $8) RETURNING expires_at`,
+		id, owner, p, length, sha, mod, UploadTTL.Seconds(), replace).Scan(&u.ExpiresAt); err != nil {
 		return Upload{}, err
 	}
 	f, err := os.OpenFile(s.uploadFile(id), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -125,9 +134,9 @@ func (s *Store) GetUpload(ctx context.Context, owner, id string) (Upload, error)
 	}
 	var u Upload
 	err := s.Pool.QueryRow(ctx,
-		`SELECT id, owner, path, length, sha256, modified_at, expires_at FROM uploads
+		`SELECT id, owner, path, length, sha256, modified_at, expires_at, replace_existing FROM uploads
 		 WHERE id = $1 AND owner = $2 AND expires_at > now()`, id, owner).
-		Scan(&u.ID, &u.Owner, &u.Path, &u.Length, &u.SHA256, &u.ModifiedAt, &u.ExpiresAt)
+		Scan(&u.ID, &u.Owner, &u.Path, &u.Length, &u.SHA256, &u.ModifiedAt, &u.ExpiresAt, &u.Replace)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Upload{}, ErrNotFound
 	}
@@ -213,7 +222,7 @@ func (s *Store) appendBytes(u Upload, r io.Reader) (int64, error) {
 // or name cannot be placed (hash mismatch, name taken) is ended too: sending
 // it again would not change the answer.
 func (s *Store) finishUpload(ctx context.Context, u Upload) (*File, error) {
-	opt := PutOptions{ExpectSize: u.Length, ExpectSHA256: u.SHA256}
+	opt := PutOptions{ExpectSize: u.Length, ExpectSHA256: u.SHA256, Replace: u.Replace}
 	if u.ModifiedAt != nil {
 		opt.ModTime = *u.ModifiedAt
 	}

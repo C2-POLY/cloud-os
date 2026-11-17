@@ -33,6 +33,8 @@ var tables = []struct {
 		VALUES ('0123456789abcdef0123456789abcdef', 'enzo', 'video.mp4', 10, now())`},
 	// Migration 6 refuses to go down while the trash holds anything (TestTrashMigrationKeepsItems).
 	{6, []string{"trash"}, `SELECT 1`},
+	// Migration 7 refuses to go down while versions exist (TestVersionsMigrationKeepsVersions).
+	{7, []string{"file_versions"}, `SELECT 1`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {
@@ -171,10 +173,13 @@ func TestTrashMigrationKeepsItems(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO trash (owner, path, kind, size, expires_at) VALUES ('enzo', 'a.txt', 'file', 1, now())`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := p.DownTo(ctx, 6); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := p.DownTo(ctx, 5); err == nil {
 		t.Fatal("migration 6 went down with an item in the trash")
 	}
-	if v, _ := p.GetDBVersion(ctx); v != int64(len(tables)) {
+	if v, _ := p.GetDBVersion(ctx); v != 6 {
 		t.Errorf("version after the refused down: %d", v)
 	}
 	if _, err := pool.Exec(ctx, `DELETE FROM trash`); err != nil {
@@ -182,6 +187,26 @@ func TestTrashMigrationKeepsItems(t *testing.T) {
 	}
 	if _, err := p.DownTo(ctx, 5); err != nil {
 		t.Errorf("down with an empty trash: %v", err)
+	}
+}
+
+// TestVersionsMigrationKeepsVersions checks that undoing migration 7 is
+// refused while a version exists.
+func TestVersionsMigrationKeepsVersions(t *testing.T) {
+	ctx := context.Background()
+	pool, p := testdb.Migrated(t)
+	if _, err := pool.Exec(ctx, `INSERT INTO files (owner, path, size, mime, sha256, modified_at) VALUES ('enzo', 'a.txt', 1, 'text/plain', sha256('a'), now());
+		INSERT INTO file_versions (file_id, owner, size, mime, sha256, modified_at) SELECT id, owner, size, mime, sha256, modified_at FROM files`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.DownTo(ctx, 6); err == nil {
+		t.Fatal("migration 7 went down with a version")
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM file_versions`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.DownTo(ctx, 6); err != nil {
+		t.Errorf("down without versions: %v", err)
 	}
 }
 

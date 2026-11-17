@@ -15,6 +15,9 @@ export interface UploadItem {
   sent: number
   state: UploadState
   error?: string
+  /** The name was taken: the user may choose to replace the existing file. */
+  canReplace?: boolean
+  replace?: boolean
 }
 
 /** The part of tus.Upload the queue uses, so tests can stand in for it. */
@@ -47,6 +50,20 @@ export function uploadError(err: unknown): string {
     default:
       return 'Envoi impossible pour le moment.'
   }
+}
+
+/**
+ * Whether tus should try again after err. Only a cut connection (no answer),
+ * a server error, a busy upload (423) or a chunk out of step (409 on PATCH)
+ * are worth retrying; a refused creation (name taken, too large, bad name)
+ * fails at once so the panel can explain it and offer Remplacer.
+ */
+export function shouldRetry(err: unknown): boolean {
+  const e = err as tus.DetailedError
+  const status = e?.originalResponse?.getStatus?.()
+  if (status === undefined || status === 0 || status >= 500) return true
+  if (status === 423) return true
+  return status === 409 && e?.originalRequest?.getMethod?.() === 'PATCH'
 }
 
 export class UploadQueue {
@@ -112,12 +129,18 @@ export class UploadQueue {
         chunkSize: CHUNK,
         retryDelays: [1000, 3000, 5000, 10000],
         headers: { 'X-Cloudos-Client': 'web' },
-        metadata: { path: item.path, filename: file.name, mtime: String(Math.floor(file.lastModified / 1000)) },
+        metadata: {
+          path: item.path,
+          filename: file.name,
+          mtime: String(Math.floor(file.lastModified / 1000)),
+          ...(item.replace ? { replace: '1' } : {}),
+        },
         // One fingerprint per destination, so the same file sent to two folders resumes separately.
-        fingerprint: async () => `cloudos:${item.path}:${file.size}:${file.lastModified}`,
+        fingerprint: async () => `cloudos:${item.replace ? 'replace:' : ''}${item.path}:${file.size}:${file.lastModified}`,
         removeFingerprintOnSuccess: true,
         onProgress: (sent) => this.set(id, { sent, state: 'sending' }),
-        onShouldRetry: () => {
+        onShouldRetry: (err) => {
+          if (!shouldRetry(err)) return false
           this.set(id, { state: 'retrying' })
           return true
         },
@@ -130,7 +153,8 @@ export class UploadQueue {
           this.pump()
         },
         onError: (err) => {
-          this.set(id, { state: 'failed', error: uploadError(err) })
+          const conflict = (err as tus.DetailedError)?.originalResponse?.getStatus?.() === 409
+          this.set(id, { state: 'failed', error: uploadError(err), canReplace: conflict && !item.replace })
           this.uploads.delete(id)
           this.pump()
         },
@@ -152,6 +176,14 @@ export class UploadQueue {
 
   resume(id: number) {
     this.set(id, { state: 'waiting' })
+    this.pump()
+  }
+
+  /** Sends a file whose name was taken again, replacing the existing file; its content becomes a version. */
+  replace(id: number) {
+    if (!this.files.has(id)) return
+    this.uploads.delete(id)
+    this.set(id, { state: 'waiting', error: undefined, canReplace: false, replace: true, sent: 0 })
     this.pump()
   }
 

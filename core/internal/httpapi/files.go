@@ -134,7 +134,8 @@ func (a *filesAPI) download(w http.ResponseWriter, r *http.Request) {
 }
 
 // upload stores the request body at path. Content-Length, when sent, and
-// X-Content-SHA256 (hex), when sent, must match the bytes received.
+// X-Content-SHA256 (hex), when sent, must match the bytes received. With
+// replace=1, an existing file is replaced and its content kept as a version.
 func (a *filesAPI) upload(w http.ResponseWriter, r *http.Request) {
 	opt := storage.NoExpectations()
 	if r.ContentLength >= 0 {
@@ -156,6 +157,7 @@ func (a *filesAPI) upload(w http.ResponseWriter, r *http.Request) {
 		}
 		opt.ModTime = time.Unix(sec, 0)
 	}
+	opt.Replace = r.URL.Query().Get("replace") == "1"
 	f, err := a.store.Put(r.Context(), owner(r), r.URL.Query().Get("path"), r.Body, opt)
 	if err != nil {
 		failFiles(w, err)
@@ -177,4 +179,76 @@ func urlPathEscape(s string) string {
 		}
 	}
 	return string(out)
+}
+
+// VersionEntry is one previous content of a file.
+type VersionEntry struct {
+	ID         int64     `json:"id"`
+	Size       int64     `json:"size"`
+	MIME       string    `json:"mime"`
+	SHA256     string    `json:"sha256"`
+	ModifiedAt time.Time `json:"modified_at"` // when this content was last modified
+	ReplacedAt time.Time `json:"replaced_at"`
+}
+
+func versionEntryOf(v storage.Version) VersionEntry {
+	return VersionEntry{ID: v.ID, Size: v.Size, MIME: v.MIME, SHA256: hex.EncodeToString(v.SHA256), ModifiedAt: v.ModifiedAt, ReplacedAt: v.CreatedAt}
+}
+
+func (a *filesAPI) versions(w http.ResponseWriter, r *http.Request) {
+	versions, err := a.store.ListVersions(r.Context(), owner(r), r.URL.Query().Get("path"))
+	if err != nil {
+		failFiles(w, err)
+		return
+	}
+	out := make([]VersionEntry, len(versions))
+	for i, v := range versions {
+		out[i] = versionEntryOf(v)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func versionID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such version"})
+		return 0, false
+	}
+	return id, true
+}
+
+// downloadVersion streams a previous content, named after the file and its date.
+func (a *filesAPI) downloadVersion(w http.ResponseWriter, r *http.Request) {
+	id, ok := versionID(w, r)
+	if !ok {
+		return
+	}
+	file, v, err := a.store.OpenVersion(r.Context(), owner(r), id)
+	if err != nil {
+		failFiles(w, err)
+		return
+	}
+	defer file.Close()
+	name := fmt.Sprintf("version-%d", v.ID)
+	if r.URL.Query().Get("name") != "" {
+		name = r.URL.Query().Get("name")
+	}
+	w.Header().Set("Content-Type", v.MIME)
+	w.Header().Set("ETag", `"`+hex.EncodeToString(v.SHA256)+`"`)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", urlPathEscape(name)))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeContent(w, r, name, v.ModifiedAt, file)
+}
+
+func (a *filesAPI) restoreVersion(w http.ResponseWriter, r *http.Request) {
+	id, ok := versionID(w, r)
+	if !ok {
+		return
+	}
+	f, err := a.store.RestoreVersion(r.Context(), owner(r), id)
+	if err != nil {
+		failFiles(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, entryOf(f))
 }

@@ -1,7 +1,7 @@
 # Interface web
 
 Le front React (Vite, TypeScript) que le cœur sert en fichiers statiques : `web/src/`.
-Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille).
+Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (versions).
 
 ## Écrans et adresses
 
@@ -35,6 +35,7 @@ Avant la connexion, `App.tsx` choisit l'écran selon l'état du cœur : l'assist
   - **Renommer** est un déplacement dans le même dossier (`POST /api/files/move`).
   - **Télécharger** est un lien vers `/api/files/content`, avec le cookie de session.
   - **Supprimer** met à la corbeille sans confirmation, puisque c'est réversible. Un message « mis à la corbeille » propose Annuler, qui restaure aussitôt.
+- **Versions :** l'action Versions d'un fichier ouvre son historique (date, taille, date de remplacement), avec Télécharger et Restaurer. Restaurer garde le contenu remplacé comme version.
 - **Mobile :** en largeur mobile, les colonnes Taille et Modifié passent sous le nom, et les actions restent visibles.
 
 ## Corbeille
@@ -68,5 +69,5 @@ stateDiagram-v2
 
 - **Reprise après rechargement :** `tus-js-client` garde l'adresse de chaque envoi en cours dans le `localStorage`, sous une empreinte propre au dossier de destination (`cloudos:<chemin>:<taille>:<date>`). Si l'utilisateur recharge la page et redépose le même fichier au même endroit, `findPreviousUploads` reprend au bon octet.
 - **Annuler :** l'annulation envoie un `DELETE` tus, qui ne supprime que le fichier partiel côté cœur.
-- **Erreurs :** elles s'affichent en français dans le panneau. Le panneau s'efface une fois tous les envois terminés.
+- **Erreurs :** elles s'affichent en français dans le panneau. Quand le nom est déjà pris (409), le panneau propose **Remplacer** : le fichier repart avec la métadonnée `replace`, et l'ancien contenu devient une version. Le panneau s'efface une fois tous les envois terminés.
 - **Testabilité :** `UploadQueue` reçoit une fabrique de clients tus, ce qui permet aux tests de piloter les envois sans réseau (`drive/drive.test.tsx`).

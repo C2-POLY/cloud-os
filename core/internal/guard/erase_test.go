@@ -25,6 +25,8 @@ var allowedErasers = map[string]string{
 	"storage.CleanUploads":        "removes expired or orphan partial files under .cloudos/uploads",
 	"storage.removeTrashDir":      "the trash purge: erases one item folder, strictly inside .cloudos/trash/<owner>",
 	"storage.removeEmptyTrashDir": "removes an emptied trash folder; os.Remove fails on a folder that is not empty",
+	"storage.removeVersionFile":   "the version retention: erases one version beyond it, strictly at .cloudos/versions/<owner>/<file>/<version>",
+	"storage.removeVersionsDir":   "the trash purge of a file: erases its versions, strictly at .cloudos/versions/<owner>/<file>",
 }
 
 // erasing reports whether call can erase or truncate a file.
