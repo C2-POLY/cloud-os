@@ -27,8 +27,12 @@ services:
       dockerfile: core/Dockerfile
     environment:
       DATABASE_URL: *database-url
+      CLOUDOS_DATA_DIR: /data
     ports:
       - "127.0.0.1:${CLOUDOS_CORE_PORT:-8480}:8080"
+    volumes:
+      # User files, in clear: <data dir>/<owner>/<path>, readable from the host.
+      - ${CLOUDOS_DATA_DIR:-./.data/files}:/data
     depends_on:
       db:
         condition: service_healthy
