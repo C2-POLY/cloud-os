@@ -16,6 +16,8 @@ from typing import Any
 
 import psycopg
 
+from worker.errors import Permanent as Permanent  # re-exported: tasks.Permanent
+
 log = logging.getLogger("worker.tasks")
 
 # Defaults of the contract, the same as in Go.
@@ -33,11 +35,6 @@ COLUMNS = (
 
 class Lost(Exception):
     """The task is no longer held by this worker (its lease expired)."""
-
-
-class Permanent(Exception):
-    """Raised by a handler for an error another attempt cannot fix (an
-    unreadable file): the task is failed at once."""
 
 
 @dataclass
@@ -169,9 +166,9 @@ def selftest(task: Task, conn: psycopg.Connection) -> None:
 
 
 def _handlers() -> dict[str, Handler]:
-    from worker import thumbs
+    from worker import meta, thumbs
 
-    return {"selftest": selftest, thumbs.KIND: thumbs.make}
+    return {"selftest": selftest, thumbs.KIND: thumbs.make, meta.KIND: meta.make}
 
 
 HANDLERS: dict[str, Handler] = _handlers()

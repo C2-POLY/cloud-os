@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -28,6 +29,9 @@ var formats = map[string]bool{"image/jpeg": true, "image/png": true, "image/webp
 
 // imageMIMEs is formats as a list, for SQL.
 var imageMIMEs = []string{"image/jpeg", "image/png", "image/webp"}
+
+// ImageMIMEs returns the MIME types of the images the workers can read.
+func ImageMIMEs() []string { return slices.Clone(imageMIMEs) }
 
 // ErrNotFound is returned when a content has no thumbnail (yet).
 var ErrNotFound = errors.New("no thumbnail")
