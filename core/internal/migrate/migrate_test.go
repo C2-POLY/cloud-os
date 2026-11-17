@@ -31,6 +31,8 @@ var tables = []struct {
 		INSERT INTO moves (owner, from_path, to_path) VALUES ('enzo', 'a', 'b')`},
 	{5, []string{"uploads"}, `INSERT INTO uploads (id, owner, path, length, expires_at)
 		VALUES ('0123456789abcdef0123456789abcdef', 'enzo', 'video.mp4', 10, now())`},
+	// Migration 6 refuses to go down while the trash holds anything (TestTrashMigrationKeepsItems).
+	{6, []string{"trash"}, `SELECT 1`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {
@@ -158,6 +160,28 @@ func TestFolderBackfill(t *testing.T) {
 	var files int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM files`).Scan(&files); err != nil || files != 4 {
 		t.Errorf("after down: %d file rows (%v), want the 4 files", files, err)
+	}
+}
+
+// TestTrashMigrationKeepsItems checks that undoing migration 6 is refused
+// while the trash holds an item, and allowed once it is empty.
+func TestTrashMigrationKeepsItems(t *testing.T) {
+	ctx := context.Background()
+	pool, p := testdb.Migrated(t)
+	if _, err := pool.Exec(ctx, `INSERT INTO trash (owner, path, kind, size, expires_at) VALUES ('enzo', 'a.txt', 'file', 1, now())`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.DownTo(ctx, 5); err == nil {
+		t.Fatal("migration 6 went down with an item in the trash")
+	}
+	if v, _ := p.GetDBVersion(ctx); v != int64(len(tables)) {
+		t.Errorf("version after the refused down: %d", v)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM trash`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.DownTo(ctx, 5); err != nil {
+		t.Errorf("down with an empty trash: %v", err)
 	}
 }
 

@@ -5,7 +5,7 @@ import { driveURL, navigate } from '../router.ts'
 import { Breadcrumb } from './Breadcrumb.tsx'
 import { MoveDialog, NameDialog } from './Dialogs.tsx'
 import { FileList } from './FileList.tsx'
-import { createFolder, join, listFolder, moveEntry, parentOf, type Entry } from './files.ts'
+import { createFolder, join, listFolder, moveEntry, parentOf, restoreTrash, trashEntry, type Entry, type TrashEntry } from './files.ts'
 import { UploadPanel } from './UploadPanel.tsx'
 import { uploadQueue, type UploadQueue } from './uploads.ts'
 
@@ -19,6 +19,8 @@ export function Drive({ folder, queue = uploadQueue }: { folder: string; queue?:
   const [version, setVersion] = useState(0)
   const [dialog, setDialog] = useState<Dialog>(null)
   const [dragging, setDragging] = useState(false)
+  const [trashed, setTrashed] = useState<TrashEntry | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const picker = useRef<HTMLInputElement>(null)
   const reload = () => setVersion((v) => v + 1)
 
@@ -107,7 +109,42 @@ export function Drive({ folder, queue = uploadQueue }: { folder: string; queue?:
           entries={listing.entries}
           onRename={(entry) => setDialog({ kind: 'rename', entry })}
           onMove={(entry) => setDialog({ kind: 'move', entry })}
+          onTrash={async (entry) => {
+            try {
+              setTrashed(await trashEntry(entry.path))
+              setNotice(null)
+              reload()
+            } catch (err) {
+              setNotice(messageOf(err))
+            }
+          }}
         />
+      )}
+      {(trashed || notice) && (
+        <div className="toast" role="status">
+          {trashed ? <>« {trashed.name} » mis à la corbeille.</> : notice}
+          {trashed && (
+            <button
+              type="button"
+              className="link"
+              onClick={async () => {
+                const item = trashed
+                setTrashed(null)
+                try {
+                  await restoreTrash(item.id)
+                  reload()
+                } catch (err) {
+                  setNotice(messageOf(err))
+                }
+              }}
+            >
+              Annuler
+            </button>
+          )}
+          <button type="button" className="icon-button" aria-label="Fermer" onClick={() => { setTrashed(null); setNotice(null) }}>
+            ×
+          </button>
+        </div>
       )}
       {dragging && <div className="drop-hint">Déposez pour envoyer dans « {folder ? folder.split('/').pop() : 'Mon drive'} »</div>}
 

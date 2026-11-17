@@ -28,12 +28,13 @@ type File struct {
 	CreatedAt  time.Time
 	ModifiedAt time.Time
 	IndexedAt  time.Time
+	TrashID    *int64 // set while the row is in the trash
 }
 
 // IsDir reports whether the row is a folder.
 func (f File) IsDir() bool { return f.Kind == KindDir }
 
-const fileColumns = `id, owner, path, kind, size, mime, sha256, created_at, modified_at, indexed_at`
+const fileColumns = `id, owner, path, kind, size, mime, sha256, created_at, modified_at, indexed_at, trash_id`
 
 type queryer interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
@@ -42,7 +43,7 @@ type queryer interface {
 
 func scanFile(row pgx.Row) (File, error) {
 	var f File
-	err := row.Scan(&f.ID, &f.Owner, &f.Path, &f.Kind, &f.Size, &f.MIME, &f.SHA256, &f.CreatedAt, &f.ModifiedAt, &f.IndexedAt)
+	err := row.Scan(&f.ID, &f.Owner, &f.Path, &f.Kind, &f.Size, &f.MIME, &f.SHA256, &f.CreatedAt, &f.ModifiedAt, &f.IndexedAt, &f.TrashID)
 	return f, err
 }
 
@@ -63,7 +64,7 @@ const ownerLockKey = `hashtextextended('cloudos.files:' || $1, 0)`
 // does not conflict with itself, so a rename that only changes case is allowed.
 func conflict(ctx context.Context, q queryer, owner, path, self string) (string, error) {
 	var existing, kind string
-	err := q.QueryRow(ctx, `SELECT path, kind FROM files WHERE owner = $1 AND lower(path) = lower($2)`, owner, path).Scan(&existing, &kind)
+	err := q.QueryRow(ctx, `SELECT path, kind FROM files WHERE owner = $1 AND lower(path) = lower($2) AND trash_id IS NULL`, owner, path).Scan(&existing, &kind)
 	switch {
 	case err == nil && existing == self:
 	case err == nil && existing == path && kind == KindDir:
@@ -77,7 +78,7 @@ func conflict(ctx context.Context, q queryer, owner, path, self string) (string,
 	}
 
 	for _, dir := range ancestors(path) {
-		err := q.QueryRow(ctx, `SELECT path, kind FROM files WHERE owner = $1 AND lower(path) = lower($2)`, owner, dir).Scan(&existing, &kind)
+		err := q.QueryRow(ctx, `SELECT path, kind FROM files WHERE owner = $1 AND lower(path) = lower($2) AND trash_id IS NULL`, owner, dir).Scan(&existing, &kind)
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			// The folder is new; ensureDirs creates it.
@@ -99,7 +100,7 @@ func ensureDirs(ctx context.Context, tx pgx.Tx, owner, path string) error {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO files (owner, path, kind, size, mime, sha256, modified_at)
 			 VALUES ($1, $2, 'dir', 0, 'inode/directory', NULL, now())
-			 ON CONFLICT (owner, lower(path)) DO NOTHING`, owner, dir); err != nil {
+			 ON CONFLICT (owner, lower(path)) WHERE trash_id IS NULL DO NOTHING`, owner, dir); err != nil {
 			return err
 		}
 	}
@@ -134,7 +135,7 @@ func (s *Store) Lookup(ctx context.Context, owner, path string) (File, error) {
 	if err != nil {
 		return File{}, err
 	}
-	f, err := scanFile(s.Pool.QueryRow(ctx, `SELECT `+fileColumns+` FROM files WHERE owner = $1 AND path = $2`, owner, path))
+	f, err := scanFile(s.Pool.QueryRow(ctx, `SELECT `+fileColumns+` FROM files WHERE owner = $1 AND path = $2 AND trash_id IS NULL`, owner, path))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return File{}, ErrNotFound
 	}

@@ -38,6 +38,8 @@ var (
 type Store struct {
 	Root string
 	Pool *pgxpool.Pool
+	// TrashTTL is how long a trashed item is kept; zero means DefaultTrashTTL.
+	TrashTTL time.Duration
 }
 
 // PutOptions are optional checks and metadata for Put.

@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Download, File, FileImage, FileText, FileVideo, Folder, FolderInput, Music, Pencil } from 'lucide-react'
+import { ArrowDown, ArrowUp, Download, File, FileImage, FileText, FileVideo, Folder, FolderInput, Music, Pencil, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { driveURL, navigate } from '../router.ts'
 import { downloadURL, formatDate, formatSize, sortEntries, type Entry, type SortKey } from './files.ts'
@@ -17,10 +17,12 @@ export function FileList({
   entries,
   onRename,
   onMove,
+  onTrash,
 }: {
   entries: Entry[]
   onRename: (entry: Entry) => void
   onMove: (entry: Entry) => void
+  onTrash: (entry: Entry) => void
 }) {
   const [key, setKey] = useState<SortKey>('name')
   const [ascending, setAscending] = useState(true)
@@ -105,6 +107,9 @@ export function FileList({
                 </button>
                 <button type="button" className="icon-button" title="Déplacer vers…" aria-label={`Déplacer ${e.name}`} onClick={() => onMove(e)}>
                   <FolderInput size={16} aria-hidden />
+                </button>
+                <button type="button" className="icon-button" title="Mettre à la corbeille" aria-label={`Supprimer ${e.name}`} onClick={() => onTrash(e)}>
+                  <Trash2 size={16} aria-hidden />
                 </button>
               </span>
             </td>

@@ -76,3 +76,44 @@ export function sortEntries(entries: Entry[], key: SortKey, ascending: boolean):
     return c * dir
   })
 }
+
+/** One item of the trash, as the core's `httpapi.TrashEntry` writes it. */
+export interface TrashEntry {
+  id: number
+  path: string // where it was
+  name: string
+  kind: 'file' | 'dir'
+  size: number
+  deleted_at: string
+  expires_at: string
+}
+
+export function trashEntry(path: string): Promise<TrashEntry> {
+  return api<TrashEntry>('POST', '/api/files/trash', { path })
+}
+
+export function listTrash(): Promise<TrashEntry[]> {
+  return api<TrashEntry[]>('GET', '/api/trash')
+}
+
+export function restoreTrash(id: number): Promise<Entry> {
+  return api<Entry>('POST', `/api/trash/${id}/restore`, {})
+}
+
+/** Erases one trash item for good; the core requires the confirmation. */
+export function purgeTrash(id: number): Promise<void> {
+  return api<void>('POST', `/api/trash/${id}/purge`, { confirm: true })
+}
+
+/** Erases the whole trash for good. */
+export function emptyTrash(): Promise<{ purged: number }> {
+  return api<{ purged: number }>('POST', '/api/trash/empty', { confirm: true })
+}
+
+/** "dans 12 jours", "demain", "aujourd'hui". */
+export function inDays(iso: string, now = Date.now()): string {
+  const days = Math.ceil((Date.parse(iso) - now) / 86_400_000)
+  if (days <= 0) return "aujourd'hui"
+  if (days === 1) return 'demain'
+  return `dans ${days} jours`
+}
