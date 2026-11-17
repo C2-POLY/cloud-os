@@ -227,3 +227,29 @@ func TestThumb(t *testing.T) {
 		}
 	}
 }
+
+func TestSearch(t *testing.T) {
+	enzo, johan := newFilesAPI(t)
+	enzo.upload("Photos/%C3%89t%C3%A9/plage.jpg", "a", nil)
+	enzo.upload("notes.txt", "b", nil)
+	johan.upload("plage.txt", "c", nil)
+
+	rec := enzo.get("/api/search?q=ETE", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("search: %d %s", rec.Code, rec.Body)
+	}
+	if got := listing(t, rec); strings.Join(got, ",") != "Été/,plage.jpg" {
+		t.Errorf("ete: %v", got)
+	}
+	// Owner-scoped: johan's plage.txt is not enzo's.
+	if got := listing(t, enzo.get("/api/search?q=plage&limit=1", nil)); strings.Join(got, ",") != "plage.jpg" {
+		t.Errorf("plage: %v", got)
+	}
+	if got := listing(t, enzo.get("/api/search?q=", nil)); len(got) != 0 {
+		t.Errorf("empty query: %v", got)
+	}
+	anon := &client{t: t, h: enzo.h}
+	if rec := anon.get("/api/search?q=plage", nil); rec.Code != http.StatusUnauthorized {
+		t.Errorf("signed out: %d", rec.Code)
+	}
+}
