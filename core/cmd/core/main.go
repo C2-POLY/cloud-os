@@ -29,6 +29,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/db"
 	"github.com/C2-POLY/cloud-os/core/internal/httpapi"
 	"github.com/C2-POLY/cloud-os/core/internal/migrate"
+	"github.com/C2-POLY/cloud-os/core/internal/share"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 	"github.com/C2-POLY/cloud-os/core/internal/tasks"
 )
@@ -136,7 +137,13 @@ func serve(ctx context.Context, c core) error {
 	} else if n > 0 {
 		slog.Info("removed expired or orphan uploads", "count", n)
 	}
-	go cleanUploadsEvery(ctx, c.files, time.Hour)
+	shares := share.NewService(c.pool, c.files)
+	if n, err := shares.Clean(ctx); err != nil {
+		return fmt.Errorf("clean share links: %w", err)
+	} else if n > 0 {
+		slog.Info("deleted expired share links", "count", n)
+	}
+	go cleanUploadsEvery(ctx, c.files, shares, time.Hour)
 	go reapTasksEvery(ctx, &tasks.Queue{Pool: c.pool}, 30*time.Second)
 	if n, err := c.files.PurgeExpired(ctx); err != nil {
 		return fmt.Errorf("purge the trash: %w", err)
@@ -164,6 +171,7 @@ func serve(ctx context.Context, c core) error {
 			Health:    &db.Store{Pool: c.pool, Migrations: c.provider},
 			Auth:      auth.NewService(c.pool),
 			Files:     c.files,
+			Shares:    shares,
 			MaxUpload: maxUpload(),
 			StaticDir: os.Getenv("STATIC_DIR"),
 		}),
@@ -292,8 +300,9 @@ func selftest(ctx context.Context, c core, n int, out io.Writer) error {
 	}
 }
 
-// cleanUploadsEvery ends abandoned uploads and purges expired trash items until ctx is done.
-func cleanUploadsEvery(ctx context.Context, files *storage.Store, every time.Duration) {
+// cleanUploadsEvery ends abandoned uploads, purges expired trash items, prunes
+// old versions and deletes long-expired share links until ctx is done.
+func cleanUploadsEvery(ctx context.Context, files *storage.Store, shares *share.Service, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -315,6 +324,11 @@ func cleanUploadsEvery(ctx context.Context, files *storage.Store, every time.Dur
 				slog.Error("prune versions", "err", err)
 			} else if n > 0 {
 				slog.Info("pruned old versions", "count", n)
+			}
+			if n, err := shares.Clean(ctx); err != nil {
+				slog.Error("clean share links", "err", err)
+			} else if n > 0 {
+				slog.Info("deleted expired share links", "count", n)
 			}
 		}
 	}

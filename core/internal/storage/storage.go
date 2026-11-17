@@ -337,3 +337,16 @@ func (h *headBuffer) Write(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
+
+// OpenFile opens the bytes of an indexed file row, as returned by Lookup,
+// LookupID or Tree, for reading.
+func (s *Store) OpenFile(f File) (*os.File, error) {
+	if f.IsDir() {
+		return nil, fmt.Errorf("%w: %s is a folder", ErrNotFound, f.Path)
+	}
+	r, err := os.Open(s.diskPath(f.Owner, f.Path))
+	if err != nil {
+		return nil, fmt.Errorf("open %s/%s: %w", f.Owner, f.Path, err)
+	}
+	return r, nil
+}

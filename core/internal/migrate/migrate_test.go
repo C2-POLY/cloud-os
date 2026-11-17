@@ -36,6 +36,9 @@ var tables = []struct {
 	// Migration 7 refuses to go down while versions exist (TestVersionsMigrationKeepsVersions).
 	{7, []string{"file_versions"}, `SELECT 1`},
 	{8, []string{"tasks"}, `INSERT INTO tasks (kind) VALUES ('selftest')`},
+	{9, []string{"shares", "share_grants"}, `INSERT INTO shares (token_hash, owner, file_id, expires_at)
+		SELECT sha256('s'), 'enzo', id, now() FROM files WHERE path = 'a.txt';
+		INSERT INTO share_grants (token_hash, share_id, expires_at) SELECT sha256('g'), id, now() FROM shares`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {
@@ -70,7 +73,7 @@ func TestMigrationsUpDownUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	sources := p.ListSources()
-	latest := int64(len(tables))
+	latest := tables[len(tables)-1].version
 	if len(sources) != len(tables) {
 		t.Fatalf("%d migrations, but the test knows %d: add the new one to tables", len(sources), len(tables))
 	}
@@ -103,11 +106,15 @@ func TestMigrationsUpDownUp(t *testing.T) {
 			t.Fatalf("seed %d: %v", m.version, err)
 		}
 	}
-	for v := latest; v > 0; v-- {
+	for i := len(tables) - 1; i >= 0; i-- {
 		if _, err := p.Down(ctx); err != nil {
-			t.Fatalf("down %d: %v", v, err)
+			t.Fatalf("down %d: %v", tables[i].version, err)
 		}
-		check(fmt.Sprintf("down %d", v), v-1)
+		prev := int64(0)
+		if i > 0 {
+			prev = tables[i-1].version
+		}
+		check(fmt.Sprintf("down %d", tables[i].version), prev)
 	}
 	if _, err := p.Up(ctx); err != nil {
 		t.Fatalf("up again: %v", err)

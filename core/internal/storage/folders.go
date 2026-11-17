@@ -316,3 +316,32 @@ func (s *Store) RecoverMoves(ctx context.Context) (finished, dropped int, err er
 	}
 	return finished, dropped, nil
 }
+
+// Tree returns every live file (not folder) under folder dir, at any depth,
+// ordered by path. It returns ErrNotFound when dir is not a live folder.
+func (s *Store) Tree(ctx context.Context, owner, dir string) ([]File, error) {
+	owner, err := CleanOwner(owner)
+	if err != nil {
+		return nil, err
+	}
+	dir, err = CleanPath(dir)
+	if err != nil {
+		return nil, err
+	}
+	f, err := s.Lookup(ctx, owner, dir)
+	if err != nil {
+		return nil, err
+	}
+	if !f.IsDir() {
+		return nil, fmt.Errorf("%w: %s is a file", ErrNotFound, dir)
+	}
+	rows, err := s.Pool.Query(ctx,
+		`SELECT `+fileColumns+` FROM files
+		 WHERE owner = $1 AND trash_id IS NULL AND kind = 'file' AND path LIKE $2 || '%' ESCAPE '\'
+		 ORDER BY path`,
+		owner, escapeLike(dir+"/"))
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (File, error) { return scanFile(r) })
+}

@@ -6,12 +6,19 @@ import { Breadcrumb } from './Breadcrumb.tsx'
 import { MoveDialog, NameDialog, VersionsDialog } from './Dialogs.tsx'
 import { FileList } from './FileList.tsx'
 import { createFolder, join, listFolder, moveEntry, parentOf, restoreTrash, trashEntry, type Entry, type TrashEntry } from './files.ts'
+import { ShareDialog } from '../share/ShareDialog.tsx'
 import { UploadPanel } from './UploadPanel.tsx'
 import { uploadQueue, type UploadQueue } from './uploads.ts'
 
 type Listing = { kind: 'loading' } | { kind: 'ok'; entries: Entry[] } | { kind: 'missing' } | { kind: 'error'; message: string }
 
-type Dialog = { kind: 'mkdir' } | { kind: 'rename'; entry: Entry } | { kind: 'move'; entry: Entry } | { kind: 'versions'; entry: Entry } | null
+type Dialog =
+  | { kind: 'mkdir' }
+  | { kind: 'rename'; entry: Entry }
+  | { kind: 'move'; entry: Entry }
+  | { kind: 'versions'; entry: Entry }
+  | { kind: 'share'; entry: Entry }
+  | null
 
 /** The drive page for one folder: listing, uploads, and the folder's actions. */
 export function Drive({ folder, queue = uploadQueue }: { folder: string; queue?: UploadQueue }) {
@@ -110,6 +117,7 @@ export function Drive({ folder, queue = uploadQueue }: { folder: string; queue?:
           onRename={(entry) => setDialog({ kind: 'rename', entry })}
           onMove={(entry) => setDialog({ kind: 'move', entry })}
           onVersions={(entry) => setDialog({ kind: 'versions', entry })}
+          onShare={(entry) => setDialog({ kind: 'share', entry })}
           onTrash={async (entry) => {
             try {
               setTrashed(await trashEntry(entry.path))
@@ -175,6 +183,7 @@ export function Drive({ folder, queue = uploadQueue }: { folder: string; queue?:
         />
       )}
       {dialog?.kind === 'versions' && <VersionsDialog entry={dialog.entry} onRestored={reload} onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'share' && <ShareDialog entry={dialog.entry} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'move' && (
         <MoveDialog
           entry={dialog.entry}

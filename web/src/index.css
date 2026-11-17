@@ -713,6 +713,118 @@ button {
   background: var(--hover);
 }
 
+/* Share links */
+
+a.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--bg);
+  background: var(--fg);
+  border: 1px solid var(--fg);
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.85rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.choices legend {
+  padding: 0;
+  margin-bottom: 0.35rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.form label.choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--fg);
+  font-size: 1rem;
+}
+
+.form label.choice input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.hint-text {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.share-result input {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 0.85rem;
+}
+
+.files tr.inactive .name-inner > span:not(.origin) {
+  color: var(--muted);
+}
+
+.guest {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.guest-tag {
+  margin-left: auto;
+  font-size: 0.9rem;
+}
+
+.guest-card {
+  max-width: 32rem;
+  margin: 2rem auto;
+  padding: 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.guest-card h1 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.guest .breadcrumb button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.4rem;
+  text-decoration: none;
+  border-radius: 0.4rem;
+}
+
+.guest .breadcrumb button:hover {
+  background: var(--hover);
+}
+
+.guest .breadcrumb button[aria-current='page'] {
+  font-weight: 600;
+}
+
+.guest .files .name button.link {
+  text-decoration: none;
+  text-align: left;
+}
+
+.guest .files .name button.link:hover {
+  text-decoration: underline;
+}
+
 /* Phones */
 
 @media (max-width: 640px) {
@@ -743,7 +855,8 @@ button {
     width: 100%;
   }
 
-  .toolbar button {
+  .toolbar button,
+  .toolbar a.button {
     flex: 1;
     justify-content: center;
     white-space: nowrap;
@@ -761,6 +874,12 @@ button {
     row-gap: 0;
   }
 
+  /* The name shrinks and wraps beside its icon instead of dropping below it. */
+  .files .name-inner:not(:has(.badge)) > :nth-child(2) {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
   .toast {
     bottom: 5rem;
   }
@@ -774,5 +893,10 @@ button {
 
   .row-actions {
     opacity: 1;
+  }
+
+  .guest-card {
+    margin: 1rem 0;
+    padding: 1.1rem;
   }
 }
