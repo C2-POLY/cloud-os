@@ -42,6 +42,8 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: web/package-lock.json
+      # libheif for the worker's HEIC tests, decoders only, as in worker/Dockerfile.
+      - run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends libheif1 libheif-plugin-libde265
       - run: make deps
       - run: make lint
       - run: make test

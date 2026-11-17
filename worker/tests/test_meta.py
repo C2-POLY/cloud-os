@@ -13,6 +13,8 @@ from PIL.TiffImagePlugin import IFDRational
 
 from worker import meta, tasks
 
+HEIC = (Path(__file__).parent / "fixtures" / "photo.heic").read_bytes()
+
 
 def rationals(*values: float) -> tuple[IFDRational, ...]:
     return tuple(IFDRational(v) for v in values)
@@ -61,6 +63,17 @@ def test_extract_reads_date_place_camera_and_upright_size(fmt: str) -> None:
     assert (m.width, m.height, m.orientation) == (800, 1200, 6)
 
 
+def test_extract_reads_a_heic() -> None:
+    m = meta.extract(HEIC)
+    assert m.taken_at == datetime(2024, 7, 14, 18, 3, 22, 123000)
+    assert m.taken_offset == 120
+    assert m.latitude == pytest.approx(48.85822, abs=1e-4)
+    assert m.longitude == pytest.approx(2.29450, abs=1e-4)
+    assert (m.make, m.model) == ("Apple", "iPhone 15")
+    # libheif turns the pixels upright: the size is as displayed, orientation 1.
+    assert (m.width, m.height, m.orientation) == (64, 48, 1)
+
+
 def test_extract_without_exif_keeps_the_size() -> None:
     m = meta.extract(photo(size=(640, 480)))
     assert (m.width, m.height) == (640, 480)
@@ -106,8 +119,8 @@ def test_gps_out_of_range_is_dropped() -> None:
 
 @pytest.mark.parametrize(
     "data",
-    [b"not an image", photo()[:200], photo(fmt="GIF")],
-    ids=["text", "truncated", "unsupported format"],
+    [b"not an image", photo()[:200], photo(fmt="GIF"), HEIC[:300], HEIC[:40]],
+    ids=["text", "truncated", "unsupported format", "truncated heic", "heic header only"],
 )
 def test_unreadable_images_are_permanent_errors(data: bytes) -> None:
     with pytest.raises(tasks.Permanent):
@@ -120,7 +133,14 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def store(conn: psycopg.Connection, root: Path, owner: str, path: str, data: bytes) -> bytes:
+def store(
+    conn: psycopg.Connection,
+    root: Path,
+    owner: str,
+    path: str,
+    data: bytes,
+    mime: str = "image/jpeg",
+) -> bytes:
     """Put a file on disk and in the index, as core/internal/storage does."""
     disk = root / owner / path
     disk.parent.mkdir(parents=True, exist_ok=True)
@@ -128,8 +148,8 @@ def store(conn: psycopg.Connection, root: Path, owner: str, path: str, data: byt
     sha = hashlib.sha256(data).digest()
     conn.execute(
         """INSERT INTO files (owner, path, size, mime, sha256, modified_at)
-           VALUES (%s, %s, %s, 'image/jpeg', %s, now())""",
-        (owner, path, len(data), sha),
+           VALUES (%s, %s, %s, %s, %s, now())""",
+        (owner, path, len(data), mime, sha),
     )
     return sha
 
@@ -161,6 +181,24 @@ def test_task_writes_the_row_and_never_the_file(conn: psycopg.Connection, root: 
     assert sorted(p.name for p in root.rglob("*")) == ["Photos", "a.jpg", "enzo"]
     # Running it again is a no-op.
     assert run(conn, sha) == ("done", None)
+
+
+def test_task_writes_the_row_of_a_heic(conn: psycopg.Connection, root: Path) -> None:
+    sha = store(conn, root, "enzo", "iPhone/IMG_0001.HEIC", HEIC, "image/heic")
+    assert run(conn, sha) == ("done", None)
+    row = conn.execute(
+        """SELECT taken_at, taken_offset, make, model, width, height, orientation
+           FROM media_meta WHERE sha256 = %s""",
+        (sha,),
+    ).fetchone()
+    assert row == (datetime(2024, 7, 14, 18, 3, 22, 123000), 120, "Apple", "iPhone 15", 64, 48, 1)
+    assert (root / "enzo" / "iPhone" / "IMG_0001.HEIC").read_bytes() == HEIC
+
+
+def test_broken_heic_fails_for_good(conn: psycopg.Connection, root: Path) -> None:
+    sha = store(conn, root, "enzo", "broken.heic", HEIC[:300], "image/heic")
+    state, error = run(conn, sha)
+    assert state == "failed" and error and "unreadable image: HeifError" in error
 
 
 def test_photo_without_exif_still_gets_its_row(conn: psycopg.Connection, root: Path) -> None:

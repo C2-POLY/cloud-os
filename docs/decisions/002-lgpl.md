@@ -33,7 +33,14 @@ La GPL et l'AGPL restent exclues. Un composant qui embarque du code GPL ne passe
 - **Convertir sur le téléphone** (l'app envoie du JPEG et du H.264) : perd l'original, contraire à la règle « aucune perte de données », et ne couvre pas les fichiers déjà sur la box ou venus d'ailleurs.
 - **Décodage matériel ou API du système** (Apple, Android) : n'existe pas sur la box Linux, où tournent les workers.
 
+## Mise en œuvre pour les HEIC (#30)
+
+- **Paquets Debian** : `libheif1` et `libheif-plugin-libde265` (et `libheif-plugin-dav1d`, tiré par `libheif1`), installés avec `--no-install-recommends` dans `worker/Dockerfile`. `libheif1` ne fait que *recommander* `libheif-plugin-x265` et `libheif-plugin-aomenc` : sans les recommandations, aucun encodeur n'entre dans l'image.
+- **Liaison** : `worker/src/worker/heif.py` charge `libheif.so.1` avec `ctypes`, sans rien compiler contre elle : la bibliothèque se remplace en changeant le paquet. pillow-heif est écarté : ses wheels embarquent x265, et compilé depuis ses sources il exige libheif ≥ 1.23.4, absente d'Ubuntu, où tourne la CI.
+- **Vérifié dans l'image du worker** : aucun fichier `*x265*`, `*x264*` ni d'encodeur ; les paquets ajoutés à `python:3.13-slim` sont `libheif1`, `libheif-plugin-libde265`, `libheif-plugin-dav1d`, `libde265-0` (LGPL-3+), `libdav1d7` (BSD-2-Clause), `libsharpyuv0` (BSD-3-Clause) et `libbrotli1` (MIT). La GPL-3+ citée par les fichiers `copyright` de libheif et libde265 couvre l'empaquetage Debian, des scripts, des tests et l'exemple `dec265`, qui ne sont pas dans ces paquets.
+- **Pour revérifier** : `docker run --rm --entrypoint sh <image du worker> -c 'find / -xdev -iname "*x265*"; ls /usr/lib/*/libheif/plugins/'` ne doit lister que `libheif-dav1d.so` et `libheif-libde265.so`.
+
 ## Conséquences
 
 - `CLAUDE.md`, règle des dépendances : renvoie à cet ADR.
-- #30 (miniatures HEIC) et #41 (vidéos) peuvent avancer : libheif et un ffmpeg LGPL entrent dans l'image du worker.
+- #30 (miniatures HEIC) : libheif est dans l'image du worker, voir « Mise en œuvre » ci-dessus. #41 (vidéos) : un ffmpeg LGPL y entrera.

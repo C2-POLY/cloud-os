@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import psycopg
 from PIL import Image, UnidentifiedImageError
 
-from worker import thumbs
+from worker import heif, thumbs
 from worker.content import read_content, sha_of
 from worker.errors import Permanent
 
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from worker.tasks import Task
 
 KIND = "meta"
-FORMATS = thumbs.FORMATS  # the images the core queues: HEIC #30, videos #41
+FORMATS = thumbs.FORMATS  # with HEIF and HEIC, read by worker.heif; videos #41
 MAX_TEXT = 200
 
 # EXIF tags (CIPA DC-008).
@@ -142,14 +142,27 @@ def extract(data: bytes) -> Meta:
     a missing or broken EXIF only leaves its fields None."""
     meta = Meta()
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with Image.open(io.BytesIO(data), formats=FORMATS) as im:
-                width, height = im.size
-                try:
-                    read_exif(im.getexif(), meta)
-                except Exception:  # a broken EXIF must not lose the photo's row
-                    meta = Meta()
+        if heif.is_heif(data):
+            width, height, tiff = heif.probe(data)  # size as displayed
+            try:
+                if tiff:
+                    exif = Image.Exif()
+                    exif.load(tiff)
+                    read_exif(exif, meta)
+            except Exception:  # a broken EXIF must not lose the photo's row
+                meta = Meta()
+            # libheif has turned the pixels upright already: the EXIF
+            # orientation of a HEIC must not be applied again.
+            meta.orientation = 1
+        else:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                with Image.open(io.BytesIO(data), formats=FORMATS) as im:
+                    width, height = im.size
+                    try:
+                        read_exif(im.getexif(), meta)
+                    except Exception:  # a broken EXIF must not lose the photo's row
+                        meta = Meta()
     except (
         UnidentifiedImageError,
         Image.DecompressionBombError,

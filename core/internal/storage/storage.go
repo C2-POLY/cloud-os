@@ -323,11 +323,40 @@ func (s *Store) CleanTmp() (int, error) {
 	return len(entries), nil
 }
 
+// The extensions of iPhone photos, known whatever the system's mime.types
+// holds (Go's own table has none of them).
+func init() {
+	for ext, t := range map[string]string{".heic": "image/heic", ".heif": "image/heif"} {
+		if err := mime.AddExtensionType(ext, t); err != nil {
+			panic(err)
+		}
+	}
+}
+
+// heifBrands are the major brands of HEIF still images (ISO/IEC 23008-12),
+// HEVC-coded (HEIC) or any codec, as worker/src/worker/heif.py BRANDS.
+var heifBrands = map[string]string{
+	"heic": "image/heic", "heix": "image/heic", "heim": "image/heic", "heis": "image/heic",
+	"mif1": "image/heif", "msf1": "image/heif",
+}
+
+// SniffMIME returns the MIME type of a content from its first bytes: HEIF and
+// HEIC by their file-type box (which http.DetectContentType does not know),
+// everything else as http.DetectContentType.
+func SniffMIME(head []byte) string {
+	if len(head) >= 12 && string(head[4:8]) == "ftyp" {
+		if t, ok := heifBrands[string(head[8:12])]; ok {
+			return t
+		}
+	}
+	return http.DetectContentType(head)
+}
+
 func detectMIME(p string, head []byte) string {
 	if t := mime.TypeByExtension(path.Ext(p)); t != "" {
 		return t
 	}
-	return http.DetectContentType(head)
+	return SniffMIME(head)
 }
 
 func hashFile(name string) (sum, head []byte, err error) {
