@@ -5,9 +5,6 @@ import { App } from './App.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <main>
-      <h1>Cloud OS</h1>
-      <App />
-    </main>
+    <App />
   </StrictMode>,
 )

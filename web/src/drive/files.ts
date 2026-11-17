@@ -1,0 +1,78 @@
+import { api } from '../api.ts'
+
+/** One file or folder, as the core's `httpapi.Entry` writes it. */
+export interface Entry {
+  path: string
+  name: string
+  kind: 'file' | 'dir'
+  size: number
+  mime: string
+  sha256?: string
+  modified_at: string
+}
+
+const q = (path: string) => encodeURIComponent(path)
+
+/** The direct children of a folder ("" is the root). */
+export function listFolder(folder: string): Promise<Entry[]> {
+  return api<Entry[]>('GET', `/api/files?path=${q(folder)}`)
+}
+
+export function createFolder(path: string): Promise<Entry> {
+  return api<Entry>('POST', '/api/files/folders', { path })
+}
+
+export function moveEntry(from: string, to: string): Promise<Entry> {
+  return api<Entry>('POST', '/api/files/move', { from, to })
+}
+
+/** The URL that downloads a file with the session cookie. */
+export function downloadURL(path: string): string {
+  return `/api/files/content?path=${q(path)}`
+}
+
+/** "a/b/c.txt" → "a/b"; "c.txt" → "". */
+export function parentOf(path: string): string {
+  const i = path.lastIndexOf('/')
+  return i < 0 ? '' : path.slice(0, i)
+}
+
+/** Joins a folder and a name. */
+export function join(folder: string, name: string): string {
+  return folder ? `${folder}/${name}` : name
+}
+
+const units = ['o', 'Ko', 'Mo', 'Go', 'To']
+
+/** A size in French units: 0 o, 12,4 Ko, 3,1 Go. */
+export function formatSize(bytes: number): string {
+  let n = bytes
+  let u = 0
+  while (n >= 1024 && u < units.length - 1) {
+    n /= 1024
+    u++
+  }
+  const digits = u === 0 || n >= 100 ? 0 : 1
+  return `${n.toLocaleString('fr-FR', { maximumFractionDigits: digits })} ${units[u]}`
+}
+
+/** A date as "17 nov. 2026, 09:12". */
+export function formatDate(iso: string): string {
+  return new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+export type SortKey = 'name' | 'size' | 'modified'
+
+/** Folders first, then the chosen column; names compare as people read them ("2" before "10"). */
+export function sortEntries(entries: Entry[], key: SortKey, ascending: boolean): Entry[] {
+  const collator = new Intl.Collator('fr', { numeric: true, sensitivity: 'base' })
+  const dir = ascending ? 1 : -1
+  return [...entries].sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'dir' ? -1 : 1
+    let c = 0
+    if (key === 'size') c = a.size - b.size
+    if (key === 'modified') c = Date.parse(a.modified_at) - Date.parse(b.modified_at)
+    if (c === 0) c = collator.compare(a.name, b.name)
+    return c * dir
+  })
+}
