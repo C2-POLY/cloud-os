@@ -43,6 +43,10 @@ type Store struct {
 	// VersionsKeep and VersionsMaxAge are the version retention; zero means the defaults.
 	VersionsKeep   int
 	VersionsMaxAge time.Duration
+	// AfterStore, when set, is called once a file is stored (Put, PlaceFile,
+	// a restored version), with its first bytes. The core queues the work a
+	// new content needs there (thumbnails); it must not fail the write.
+	AfterStore func(ctx context.Context, f File, head []byte)
 }
 
 // PutOptions are optional checks and metadata for Put.
@@ -133,10 +137,16 @@ func (s *Store) finish(ctx context.Context, owner, p, tmp string, sum []byte, si
 		return File{}, fmt.Errorf("set modification time: %w", err)
 	}
 	f := File{Owner: owner, Path: p, Kind: KindFile, Size: size, MIME: detectMIME(p, sniff), SHA256: sum, ModifiedAt: mod}
+	var err error
 	if opt.Replace {
-		return s.replace(ctx, f, tmp)
+		f, err = s.replace(ctx, f, tmp)
+	} else {
+		f, err = s.place(ctx, f, tmp)
 	}
-	return s.place(ctx, f, tmp)
+	if err == nil && s.AfterStore != nil {
+		s.AfterStore(ctx, f, sniff)
+	}
+	return f, err
 }
 
 // writeTemp copies r into a new temporary file, synced to disk, and returns

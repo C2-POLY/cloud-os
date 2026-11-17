@@ -16,10 +16,11 @@ Table `tasks` : `kind`, `payload` (JSON), `priority` (plus haut d'abord), `state
 | `Extend` | Repousse le bail ; le worker le fait toutes les 20 s pendant le travail |
 | `Complete` | `done` |
 | `Fail` | Repart en file après 10 s × 2^(tentative − 1), au plus 1 h ; `failed` une fois `max_attempts` atteint |
+| `GiveUp` | `failed` tout de suite : une erreur qu'un nouvel essai ne corrigera pas (fichier illisible). Côté Python : `fail(…, final=True)` |
 | `Reap` | Le cœur, toutes les 30 s : une tâche dont le bail a expiré (worker mort) repart en file, ou passe en `failed` si elle a épuisé ses tentatives |
 | `Prune` | Le cœur supprime les tâches `done` de plus de 7 jours (des lignes, jamais des fichiers) |
 
-`Extend`, `Complete` et `Fail` ne valent que pour le worker qui tient la tâche (`locked_by`) : un worker dont la tâche a été reprise reçoit `ErrLost` / `Lost`, et ne peut pas la terminer à la place d'un autre.
+`Extend`, `Complete`, `Fail` et `GiveUp` ne valent que pour le worker qui tient la tâche (`locked_by`) : un worker dont la tâche a été reprise reçoit `ErrLost` / `Lost`, et ne peut pas la terminer à la place d'un autre.
 
 ```mermaid
 stateDiagram-v2
@@ -41,8 +42,8 @@ stateDiagram-v2
 ## Worker Python
 
 Le worker fait tourner deux fils d'exécution, chacun avec sa propre connexion et sa reconnexion automatique : le battement de vie, et la boucle des tâches (`tasks.work`).
-- **Boucle :** elle prend une tâche des types qu'il sait faire (`HANDLERS`), l'exécute en repoussant son bail, puis la termine ou enregistre l'échec. Une exception dans une tâche est enregistrée, et n'arrête jamais le worker.
-- **Ajouter un type de tâche :** écrire sa fonction et l'ajouter à `HANDLERS`.
+- **Boucle :** elle prend une tâche des types qu'il sait faire (`HANDLERS`), l'exécute en repoussant son bail, puis la termine ou enregistre l'échec. Une exception dans une tâche est enregistrée, et n'arrête jamais le worker ; l'exception `Permanent` fait passer la tâche en `failed` sans nouvel essai.
+- **Ajouter un type de tâche :** écrire sa fonction `(task, conn)` et l'ajouter à `HANDLERS`. Types actuels : `selftest`, `thumb` ([thumbnails.md](thumbnails.md)).
 
 ## Santé et preuve de bout en bout
 

@@ -85,6 +85,7 @@ func routes(c Config) []route {
 		{"POST /api/files/folders", member, f.mkdir},
 		{"POST /api/files/move", member, f.move},
 		{"GET /api/files/content", member, f.download},
+		{"GET /api/files/thumb", member, f.thumb},
 		{"PUT /api/files/content", member, f.upload},
 		{"OPTIONS /api/uploads", member, u.options},
 		{"POST /api/uploads", member, u.create},

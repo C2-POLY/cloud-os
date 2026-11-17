@@ -51,6 +51,7 @@ stateDiagram-v2
 1. **Écriture temporaire :** le fichier va dans `.cloudos/tmp/`, son SHA-256 est calculé pendant la copie, puis `fsync`.
 2. **Contrôle :** la taille et le hash attendus, quand le client les donne, doivent correspondre.
 3. **Mise en place :** `os.Link` vers la place finale. Contrairement à `rename`, il échoue si la cible existe, ce qui rend l'écrasement impossible. Tout se fait dans la transaction qui indexe le fichier et crée les lignes des dossiers parents manquants.
+4. **Après coup :** une fois le fichier indexé, `AfterStore` (s'il est défini) reçoit le fichier et ses premiers octets. Le cœur s'en sert pour mettre en file la miniature d'une image ([thumbnails.md](thumbnails.md)). Il ne peut pas faire échouer l'écriture.
 
 ## Déplacer ou renommer (`Move`)
 

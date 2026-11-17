@@ -31,6 +31,15 @@ export function downloadURL(path: string): string {
   return `/api/files/content?path=${q(path)}`
 }
 
+// Image types the workers make thumbnails of (core/internal/thumbs).
+const thumbnailed = new Set(['image/jpeg', 'image/png', 'image/webp'])
+
+/** The thumbnail URL of an image, keyed by its content so a new version is never stale; null for other files. */
+export function thumbURL(entry: Entry): string | null {
+  if (entry.kind !== 'file' || !entry.sha256 || !thumbnailed.has(entry.mime)) return null
+  return `/api/files/thumb?path=${q(entry.path)}&v=${entry.sha256.slice(0, 16)}`
+}
+
 /** "a/b/c.txt" → "a/b"; "c.txt" → "". */
 export function parentOf(path: string): string {
   const i = path.lastIndexOf('/')

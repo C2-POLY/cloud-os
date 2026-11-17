@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 	"github.com/C2-POLY/cloud-os/core/internal/testdb"
@@ -18,7 +20,14 @@ import (
 // clients for enzo (admin) and johan (member).
 func newFilesAPI(t *testing.T) (enzo, johan *client) {
 	t.Helper()
-	pool, _ := testdb.Migrated(t)
+	enzo, johan, _ = newFilesAPIPool(t)
+	return enzo, johan
+}
+
+// newFilesAPIPool is newFilesAPI with the database, to write what workers write.
+func newFilesAPIPool(t *testing.T) (enzo, johan *client, pool *pgxpool.Pool) {
+	t.Helper()
+	pool, _ = testdb.Migrated(t)
 	h := NewHandler(Config{
 		Version: "test",
 		Health:  &fakeStore{},
@@ -30,7 +39,7 @@ func newFilesAPI(t *testing.T) (enzo, johan *client) {
 	enzo.do("POST", "/api/accounts", `{"name":"johan","password":"`+pw+`"}`)
 	johan = &client{t: t, h: h}
 	johan.do("POST", "/api/login", `{"name":"johan","password":"`+pw+`"}`)
-	return enzo, johan
+	return enzo, johan, pool
 }
 
 // upload sends content raw, as a client does, with the Cloud OS client header.
@@ -180,5 +189,38 @@ func TestRawUploadNeedsTheClientHeader(t *testing.T) {
 	enzo.h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnsupportedMediaType {
 		t.Errorf("upload without the client header: %d, want 415", rec.Code)
+	}
+}
+
+func TestThumb(t *testing.T) {
+	enzo, johan, pool := newFilesAPIPool(t)
+	enzo.upload("a.jpg", "jpeg bytes", nil)
+	if rec := enzo.get("/api/files/thumb?path=a.jpg", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("before the worker: %d", rec.Code)
+	}
+	sum := sha256.Sum256([]byte("jpeg bytes"))
+	if _, err := pool.Exec(t.Context(), `INSERT INTO thumbnails (sha256, size, mime, width, height, bytes) VALUES ($1, 256, 'image/webp', 2, 1, 'webp!')`, sum[:]); err != nil {
+		t.Fatal(err)
+	}
+	rec := enzo.get("/api/files/thumb?path=a.jpg", nil)
+	if rec.Code != http.StatusOK || rec.Body.String() != "webp!" || rec.Header().Get("Content-Type") != "image/webp" {
+		t.Fatalf("thumb: %d %q %v", rec.Code, rec.Body, rec.Header())
+	}
+	etag := rec.Header().Get("ETag")
+	if etag != `"`+hex.EncodeToString(sum[:])+`"` || !strings.Contains(rec.Header().Get("Cache-Control"), "private") {
+		t.Errorf("headers %v", rec.Header())
+	}
+	if rec := enzo.get("/api/files/thumb?path=a.jpg", map[string]string{"If-None-Match": etag}); rec.Code != http.StatusNotModified {
+		t.Errorf("revalidation: %d", rec.Code)
+	}
+	// Owner-scoped like every file route; folders and missing files are 404.
+	if rec := johan.get("/api/files/thumb?path=a.jpg", nil); rec.Code != http.StatusNotFound {
+		t.Errorf("another account: %d", rec.Code)
+	}
+	enzo.do("POST", "/api/files/folders", `{"path":"Photos"}`)
+	for _, p := range []string{"Photos", "missing.jpg"} {
+		if rec := enzo.get("/api/files/thumb?path="+p, nil); rec.Code != http.StatusNotFound {
+			t.Errorf("%s: %d", p, rec.Code)
+		}
 	}
 }

@@ -35,6 +35,11 @@ class Lost(Exception):
     """The task is no longer held by this worker (its lease expired)."""
 
 
+class Permanent(Exception):
+    """Raised by a handler for an error another attempt cannot fix (an
+    unreadable file): the task is failed at once."""
+
+
 @dataclass
 class Task:
     id: int
@@ -125,26 +130,37 @@ def complete(conn: psycopg.Connection, task_id: int, worker: str) -> None:
     )
 
 
-def fail(conn: psycopg.Connection, task_id: int, worker: str, reason: str) -> None:
+def fail(
+    conn: psycopg.Connection, task_id: int, worker: str, reason: str, final: bool = False
+) -> None:
     """Record an error: queued again after a growing delay, or failed once
-    max_attempts is used."""
+    max_attempts is used, or at once when final (Go: Fail and GiveUp)."""
     _held(
         conn.execute(
-            """UPDATE tasks SET last_error = %s, locked_by = NULL, locked_until = NULL,
+            """UPDATE tasks SET last_error = %(reason)s, locked_by = NULL, locked_until = NULL,
                    updated_at = now(),
-                   state = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'queued' END,
-                   finished_at = CASE WHEN attempts >= max_attempts THEN now() END,
-                   run_after = now() + make_interval(secs => least(%s * power(2, attempts - 1), %s))
-               WHERE id = %s AND state = 'running' AND locked_by = %s""",
-            (reason[:2000], BASE_BACKOFF, MAX_BACKOFF, task_id, worker),
+                   state = CASE WHEN attempts >= max_attempts OR %(final)s
+                           THEN 'failed' ELSE 'queued' END,
+                   finished_at = CASE WHEN attempts >= max_attempts OR %(final)s THEN now() END,
+                   run_after = now() + make_interval(
+                       secs => least(%(base)s * power(2, attempts - 1), %(max)s))
+               WHERE id = %(id)s AND state = 'running' AND locked_by = %(worker)s""",
+            {
+                "reason": reason[:2000],
+                "final": final,
+                "base": BASE_BACKOFF,
+                "max": MAX_BACKOFF,
+                "id": task_id,
+                "worker": worker,
+            },
         )
     )
 
 
-Handler = Callable[[Task], None]
+Handler = Callable[[Task, psycopg.Connection], None]
 
 
-def selftest(task: Task) -> None:
+def selftest(task: Task, conn: psycopg.Connection) -> None:
     """Proves the contract end to end: waits payload["sleep"] seconds, and fails
     while attempts <= payload["fail_times"]."""
     time.sleep(float(task.payload.get("sleep", 0)))
@@ -152,7 +168,13 @@ def selftest(task: Task) -> None:
         raise RuntimeError(f"selftest failing on purpose (attempt {task.attempts})")
 
 
-HANDLERS: dict[str, Handler] = {"selftest": selftest}
+def _handlers() -> dict[str, Handler]:
+    from worker import thumbs
+
+    return {"selftest": selftest, thumbs.KIND: thumbs.make}
+
+
+HANDLERS: dict[str, Handler] = _handlers()
 
 
 def run_one(conn: psycopg.Connection, worker: str, handlers: dict[str, Handler]) -> bool:
@@ -177,12 +199,18 @@ def run_one(conn: psycopg.Connection, worker: str, handlers: dict[str, Handler])
     keeper = threading.Thread(target=keep_lease, daemon=True)
     keeper.start()
     try:
-        handlers[task.kind](task)
+        handlers[task.kind](task, conn)
     except Exception as err:  # a failing handler is recorded, never kills the worker
         done.set()
         log.warning("task %s (%s) failed: %s", task.id, task.kind, err)
         try:
-            fail(conn, task.id, worker, f"{type(err).__name__}: {err}")
+            fail(
+                conn,
+                task.id,
+                worker,
+                f"{type(err).__name__}: {err}",
+                final=isinstance(err, Permanent),
+            )
         except Lost:
             log.warning("task %s: lost before recording the failure", task.id)
         return True
