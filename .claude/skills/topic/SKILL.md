@@ -9,8 +9,6 @@ Chaque sujet suit cet ordre, sans en sauter une étape. **Un sujet = une issue =
 
 Le suivi se fait dans GitHub Issues et le Project **Cloud OS**. Les règles du dépôt (commandes, stack, règles non négociables, issues, version) sont dans `CLAUDE.md`, et le besoin produit dans le PRD qu'il cite.
 
-**Stack pas encore choisie.** Tant que `CLAUDE.md` n'a pas de section « Commands » remplie, les étapes 5 à 7 utilisent ce que le sujet a mis en place ; le premier sujet de code ajoute ses commandes à `CLAUDE.md` et met cette skill à jour.
-
 Montre l'avancement avec les chapitres de la section suivante, et rien d'autre : ni barre de progression, ni liste du parcours dans tes messages. Si une étape est incomplète, on ne passe pas à la suivante.
 
 ## Avancement
@@ -117,7 +115,7 @@ Toujours un worktree, et tu ne demandes rien au dev, ni le choix ni le nom : plu
 git fetch --prune && git worktree add -b <type>/<n>-<nom> ../cloud-os-<nom> origin/main && git -C ../cloud-os-<nom> branch --unset-upstream
 ```
 
-Chaque worktree lance sa propre pile Docker Compose : donne-lui un nom de projet à lui (`COMPOSE_PROJECT_NAME=cloud-os-<nom>`) et des ports libres, pour ne jamais partager la base ni les volumes d'un autre worktree. Passe l'issue à **In progress**, dis en une ligne le chemin et la branche, puis passe à l'étape 4. Avant chaque commit, revérifie la branche avec `git branch --show-current`.
+Chaque worktree lance sa propre pile Docker Compose : donne-lui un nom de projet à lui (`COMPOSE_PROJECT_NAME=cloud-os-<nom>`) et, si une autre pile tourne déjà, des ports libres (`CLOUDOS_DB_PORT`, `CLOUDOS_CORE_PORT`, `CLOUDOS_WEB_PORT`, vérifiés avec `lsof -nP -iTCP:<port> -sTCP:LISTEN`), pour ne jamais partager la base ni les volumes d'un autre worktree. Installe ses dépendances une fois : `make deps`. Passe l'issue à **In progress**, dis en une ligne le chemin et la branche, puis passe à l'étape 4. Avant chaque commit, revérifie la branche avec `git branch --show-current`.
 
 ## 4. Travailler
 
@@ -125,14 +123,25 @@ Respecte `CLAUDE.md` (stack, règles non négociables, version) et, s'il y en a 
 
 ## 5. Tester
 
-Depuis le worktree, avec les commandes de « Commands » dans `CLAUDE.md` :
+Depuis le worktree, avec le `COMPOSE_PROJECT_NAME` et les ports de l'étape 3 :
 
-- **Build** de chaque service touché et des images : aucun warning.
-- **Tests unitaires et d'intégration** : tous doivent passer, contre une base jetable de la pile Compose du worktree, jamais celle d'un autre.
-- **Lints et format** : aucun warning.
-- **Migrations** : si le sujet en ajoute une, l'appliquer, la défaire et la réappliquer sur une base qui a déjà des données.
+```bash
+# Lints et format : gofmt, go vet, ruff, tsc, oxlint. Aucun warning.
+make lint
+
+# Tous les tests : Go, Python, front. Démarre la base du worktree si besoin ;
+# chaque test de base crée sa propre base jetable et la supprime.
+make test
+
+# Les images se construisent sans erreur, et la pile démarre saine.
+make up && curl -s localhost:${CLOUDOS_CORE_PORT:-8480}/api/health
+```
+
+Ce que ces tests doivent couvrir pour le sujet :
+
+- **Migrations** : si le sujet en ajoute une, un test l'applique, la défait et la réapplique (voir `core/internal/migrate/migrate_test.go`), sur une base qui a déjà des données.
 - **Données** : si le sujet touche au stockage, à la corbeille, à la déduplication ou à la sauvegarde, un test vérifie que les originaux sont intacts (même hash avant et après).
-- **Tests externes** : seulement si le sujet touche un fournisseur d'IA externe ou GitHub, ceux qui les appellent pour de vrai.
+- **Tests externes** : seulement si le sujet touche un fournisseur d'IA externe ou GitHub, ceux qui les appellent pour de vrai, lancés à part.
 
 Un test qui échoue s'explique par le sujet ou se corrige ; ne le désactive pas. Un warning nouveau se corrige. En cas de doute, lance la même commande dans le dossier principal, sur `main`, pour comparer.
 
@@ -147,6 +156,8 @@ Ne lance pas la pile toi-même pour lui. Donne au dev la commande pour la lancer
 ```bash
 cd <chemin absolu du worktree> && COMPOSE_PROJECT_NAME=cloud-os-<nom> docker compose up --build
 ```
+
+Arrête d'abord ta propre pile du worktree (`docker compose -p cloud-os-<nom> down`) pour libérer ses ports, et ajoute à la commande les variables `CLOUDOS_*_PORT` choisies à l'étape 3 s'il y en a. L'interface est sur `http://localhost:<CLOUDOS_CORE_PORT, 8480 par défaut>`, et Vite en rechargement à chaud sur `<CLOUDOS_WEB_PORT, 5180 par défaut>`.
 
 Le chemin est celui du worktree, vérifié avec `git worktree list` avant l'envoi : ne reprends jamais celui d'une commande précédente. Si son terminal montre un autre chemin, dis-le tout de suite.
 

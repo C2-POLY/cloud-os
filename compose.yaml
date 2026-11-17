@@ -1,0 +1,62 @@
+# Development stack. Credentials here are local-only defaults for a throwaway database.
+# Run several worktrees side by side with their own COMPOSE_PROJECT_NAME and CLOUDOS_*_PORT.
+name: cloud-os
+
+x-database-url: &database-url postgres://cloudos:cloudos@db:5432/cloudos?sslmode=disable
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.1-pg17
+    environment:
+      POSTGRES_USER: cloudos
+      POSTGRES_PASSWORD: cloudos
+      POSTGRES_DB: cloudos
+    ports:
+      - "127.0.0.1:${CLOUDOS_DB_PORT:-54320}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cloudos -d cloudos"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  core:
+    build:
+      context: .
+      dockerfile: core/Dockerfile
+    environment:
+      DATABASE_URL: *database-url
+    ports:
+      - "127.0.0.1:${CLOUDOS_CORE_PORT:-8480}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: worker
+    environment:
+      DATABASE_URL: *database-url
+      WORKER_ID: worker-1
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Vite dev server with hot reload; forwards /api to the core.
+  web:
+    image: node:24-alpine
+    working_dir: /web
+    command: sh -c "npm ci && npm run dev -- --port 5173"
+    environment:
+      VITE_API_TARGET: http://core:8080
+    ports:
+      - "127.0.0.1:${CLOUDOS_WEB_PORT:-5180}:5173"
+    volumes:
+      - ./web:/web
+      - web_node_modules:/web/node_modules
+    depends_on:
+      - core
+
+volumes:
+  pgdata:
+  web_node_modules:
