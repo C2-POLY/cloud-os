@@ -53,6 +53,9 @@ make fmt
 # check every stored file against the index (exit 1 on any difference)
 docker compose run --rm -v "<folder>:/import:ro" core import <owner> /import
 docker compose run --rm core verify
+
+# Set a new password for an account that lost it (read from stdin) and end its sessions
+printf '%s\n' '<new password>' | docker compose run --rm -T core reset-password <account>
 ```
 
 Layout: `core/` (Go module, `cmd/core`, `internal/`, SQL migrations in `core/migrations/`, applied by the core at startup with goose), `worker/` (Python, uv), `web/` (React, Vite, npm), `compose.yaml`, `Makefile`, `.github/workflows/ci.yml` (`make lint` and `make test` on every PR and on `main`).
@@ -70,6 +73,7 @@ Defaults: database `54320`, core `8480`, Vite `5180`, all bound to `127.0.0.1`. 
 - **No data loss, ever.** Indexing never modifies original files; integrity is checked by hash; deletes go to the trash; database migrations are versioned and reversible. A feature that can lose a file does not ship.
 - **Nothing leaves the box by default.** Any call to an external API is explicit and enabled per module.
 - Files are stored in clear, in a readable tree: the data stays usable without the product. Only `core/internal/storage` writes there: it writes to a temporary file, checks it, then links it into place without ever replacing a file; it never deletes or modifies a stored file.
+- **Every API route needs a session** except the ones listed as `public` in `core/internal/httpapi` (health, setup, login, logout, and later share links); `TestEveryRouteIsProtected` fails when that list changes. State-changing requests must be JSON (cross-site request forgery). Passwords are argon2id; only the SHA-256 of a session token is stored.
 - **Dependencies and models have a permissive licence** (MIT, BSD, Apache-2.0, MPL-2.0, ISC). No AGPL or GPL, no non-commercial licence, so the project can still be released as open source.
 
 ## New subjects

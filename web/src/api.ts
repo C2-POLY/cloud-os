@@ -14,3 +14,67 @@ export async function fetchHealth(signal?: AbortSignal): Promise<Health> {
   }
   return (await res.json()) as Health
 }
+
+/** An account, as the core's `auth.Account` writes it. */
+export interface Account {
+  name: string
+  display_name: string
+  role: 'admin' | 'member'
+  disabled_at?: string
+  created_at: string
+}
+
+/** An error answered by the core, with its HTTP status and message. */
+export class ApiError extends Error {
+  readonly status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+  }
+}
+
+/** Calls the core's JSON API; any non-2xx answer becomes an ApiError. */
+export async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method,
+    credentials: 'same-origin',
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`
+    try {
+      message = ((await res.json()) as { error?: string }).error ?? message
+    } catch {
+      // keep the status
+    }
+    throw new ApiError(res.status, message)
+  }
+  return (res.status === 204 ? undefined : await res.json()) as T
+}
+
+/** French wording of the core's known errors; anything else is shown as sent. */
+const messages: Record<string, string> = {
+  'wrong name or password': 'Identifiant ou mot de passe incorrect.',
+  'too many failed attempts, try again in a minute': 'Trop d’essais. Réessayez dans une minute.',
+  'the box is already set up': 'La box est déjà configurée.',
+  'an account already has this name': 'Un compte porte déjà cet identifiant.',
+  'the last active admin cannot be demoted or disabled':
+    'Le dernier administrateur actif ne peut être ni rétrogradé ni désactivé.',
+  'not signed in': 'Session expirée, reconnectez-vous.',
+  'admins only': 'Réservé aux administrateurs.',
+}
+
+/** The message to show the user for an error from api(). */
+export function messageOf(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (messages[err.message]) return messages[err.message]
+    if (err.message.startsWith('the password must have')) return 'Le mot de passe doit avoir de 10 à 256 caractères.'
+    if (err.message.startsWith('invalid account')) {
+      return 'Identifiant invalide : minuscules, chiffres, - ou _, 64 caractères au plus.'
+    }
+    return err.message
+  }
+  return 'Le cœur ne répond pas.'
+}

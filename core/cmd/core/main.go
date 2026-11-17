@@ -3,9 +3,11 @@
 //	core                     migrate the database and serve the API (same as `core serve`)
 //	core import OWNER DIR    copy DIR into OWNER's space; DIR is only read
 //	core verify              check every stored file against the index; exit 1 on any difference
+//	core reset-password NAME set a new password read from stdin and end the account's sessions
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -14,12 +16,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pressly/goose/v3"
 
+	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
 	"github.com/C2-POLY/cloud-os/core/internal/httpapi"
 	"github.com/C2-POLY/cloud-os/core/internal/migrate"
@@ -61,6 +65,11 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		return withCore(ctx, func(c core) error { return importDir(ctx, c, args[0], args[1], out) })
 	case "verify":
 		return withCore(ctx, func(c core) error { return verify(ctx, c, out) })
+	case "reset-password":
+		if len(args) != 1 {
+			return errors.New("usage: core reset-password NAME (the new password is read from stdin)")
+		}
+		return withCore(ctx, func(c core) error { return resetPassword(ctx, c, args[0], os.Stdin, out) })
 	default:
 		return fmt.Errorf("unknown command %q (serve, import, verify)", cmd)
 	}
@@ -111,8 +120,13 @@ func serve(ctx context.Context, c core) error {
 
 	addr := envOr("CORE_ADDR", ":8080")
 	srv := &http.Server{
-		Addr:              addr,
-		Handler:           httpapi.NewHandler(version, &db.Store{Pool: c.pool, Migrations: c.provider}, os.Getenv("STATIC_DIR")),
+		Addr: addr,
+		Handler: httpapi.NewHandler(httpapi.Config{
+			Version:   version,
+			Health:    &db.Store{Pool: c.pool, Migrations: c.provider},
+			Auth:      auth.NewService(c.pool),
+			StaticDir: os.Getenv("STATIC_DIR"),
+		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	errc := make(chan error, 1)
@@ -156,6 +170,18 @@ func verify(ctx context.Context, c core, out io.Writer) error {
 	if !rep.Clean() {
 		return errDiffers
 	}
+	return nil
+}
+
+func resetPassword(ctx context.Context, c core, name string, in io.Reader, out io.Writer) error {
+	line, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	if err := auth.NewService(c.pool).ResetPassword(ctx, name, strings.TrimRight(line, "\r\n")); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "password of %s changed, its sessions ended\n", name)
 	return nil
 }
 
