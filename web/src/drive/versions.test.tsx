@@ -41,7 +41,8 @@ describe('VersionsDialog', () => {
     expect(await screen.findByText(/Version restaurée/)).toBeInTheDocument()
     expect(onRestored).toHaveBeenCalled()
     expect(calls.some((c) => c.key === 'POST /api/files/versions/4/restore')).toBe(true)
-    expect(await screen.findAllByTitle('Restaurer')).toHaveLength(3)
+    // The list reloads: the replaced content is now a version too.
+    await vi.waitFor(() => expect(screen.getAllByTitle('Restaurer')).toHaveLength(3))
   })
 
   it('says when a file was never replaced', async () => {
