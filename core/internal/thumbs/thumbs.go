@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"net/http"
 	"slices"
 	"time"
 
@@ -24,11 +23,18 @@ const Kind = "thumb"
 // Size is the longest side of a thumbnail, in pixels.
 const Size = 256
 
-// formats are the image types the workers can read (HEIC: issue #30).
-var formats = map[string]bool{"image/jpeg": true, "image/png": true, "image/webp": true}
+// imageMIMEs are the image types the workers can read: Pillow for JPEG, PNG
+// and WebP, libheif for HEIF and HEIC (worker/src/worker/heif.py).
+var imageMIMEs = []string{"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
 
-// imageMIMEs is formats as a list, for SQL.
-var imageMIMEs = []string{"image/jpeg", "image/png", "image/webp"}
+// formats is imageMIMEs as a set.
+var formats = func() map[string]bool {
+	m := make(map[string]bool, len(imageMIMEs))
+	for _, t := range imageMIMEs {
+		m[t] = true
+	}
+	return m
+}()
 
 // ImageMIMEs returns the MIME types of the images the workers can read.
 func ImageMIMEs() []string { return slices.Clone(imageMIMEs) }
@@ -39,7 +45,7 @@ var ErrNotFound = errors.New("no thumbnail")
 // IsImage reports whether a file with this MIME type, or whose first bytes
 // are head, is an image the workers can read.
 func IsImage(mime string, head []byte) bool {
-	return formats[mime] || len(head) > 0 && formats[http.DetectContentType(head)]
+	return formats[mime] || len(head) > 0 && formats[storage.SniffMIME(head)]
 }
 
 // Payload is what a thumb task carries: the content to read, wherever it is.

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import psycopg
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from worker import heif
 from worker.content import read_content, sha_of
 from worker.errors import Permanent
 
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 
 KIND = "thumb"
 SIZE = 256  # longest side, as thumbs.Size in Go
-FORMATS = ["JPEG", "PNG", "WEBP"]  # HEIC: issue #30
+FORMATS = ["JPEG", "PNG", "WEBP"]  # read by Pillow; HEIF and HEIC by worker.heif
 MAX_PIXELS = 100_000_000
 QUALITY = 80
 
@@ -35,17 +36,21 @@ def render(data: bytes) -> tuple[bytes, int, int]:
         with warnings.catch_warnings():
             # Between MAX_PIXELS and twice that, Pillow only warns.
             warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with Image.open(io.BytesIO(data), formats=FORMATS) as im:
-                im.draft("RGB", (SIZE * 2, SIZE * 2))  # JPEG: decode at a smaller scale
-                img = ImageOps.exif_transpose(im)
-                img.thumbnail((SIZE, SIZE))
-                if img.mode not in ("RGB", "RGBA"):
-                    img = img.convert(
-                        "RGBA" if "A" in img.getbands() or "transparency" in img.info else "RGB"
-                    )
-                out = io.BytesIO()
-                img.save(out, "WEBP", quality=QUALITY)
-                return out.getvalue(), img.width, img.height
+            if heif.is_heif(data):
+                img = heif.open_image(data)  # already upright
+            else:
+                with Image.open(io.BytesIO(data), formats=FORMATS) as im:
+                    im.draft("RGB", (SIZE * 2, SIZE * 2))  # JPEG: decode at a smaller scale
+                    img = ImageOps.exif_transpose(im)
+                    img.load()
+            img.thumbnail((SIZE, SIZE))
+            if img.mode not in ("RGB", "RGBA"):
+                img = img.convert(
+                    "RGBA" if "A" in img.getbands() or "transparency" in img.info else "RGB"
+                )
+            out = io.BytesIO()
+            img.save(out, "WEBP", quality=QUALITY)
+            return out.getvalue(), img.width, img.height
     except (
         UnidentifiedImageError,
         Image.DecompressionBombError,

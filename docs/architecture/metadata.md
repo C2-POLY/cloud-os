@@ -1,7 +1,7 @@
 # Métadonnées des photos
 
 Chaque image du drive a ses métadonnées en base : date de prise de vue, lieu, appareil et dimensions. Elles sont lues dans l'EXIF par les workers, en tâche de fond. Les originaux ne sont jamais modifiés. Elles servent la Chronologie de Fichiers (#47, `GET /api/timeline`, voir [web.md](web.md)), la timeline de l'app Photos (#35) et la carte (#40).
-Issue : #34 (HEIC : #30, vidéos : #41, qui rempliront la même table).
+Issue : #34, HEIC : #30 (vidéos : #41, qui remplira la même table).
 
 ## Parcours
 
@@ -18,7 +18,7 @@ sequenceDiagram
         K->>DB: Complete (rien à faire)
     else
         K->>K: lit /data en lecture seule, vérifie le sha256
-        K->>K: Image.open (en-tête seulement) et getexif()
+        K->>K: HEIF ou HEIC : heif.probe (taille et bloc Exif) ; sinon Image.open (en-tête) et getexif()
         alt image illisible ou format non couvert
             K->>DB: GiveUp (Permanent)
         else
@@ -33,14 +33,14 @@ sequenceDiagram
 ## Mise en file
 
 - **Quand :** le crochet `AfterStore` du cœur (`queueBackgroundWork` dans `core/cmd/core/main.go`) met en file la miniature et les métadonnées de chaque fichier enregistré : envoi, envoi reprenable, WebDAV, import, remplacement, version restaurée.
-- **Formats :** les mêmes que les miniatures (`thumbs.IsImage`) : JPEG, PNG, WebP, reconnus par leur type MIME ou leurs premiers octets.
+- **Formats :** les mêmes que les miniatures (`thumbs.IsImage`) : JPEG, PNG, WebP, HEIF et HEIC, reconnus par leur type MIME ou leurs premiers octets.
 - **Doublons :** rien n'est mis en file si le contenu a déjà sa ligne, ou si une tâche est en attente pour lui (`dedupe_key`).
 - **Priorités :** `PriorityNew` pour un envoi, `PriorityBackfill` pour un import.
 - **Rattrapage :** `core meta backfill` met en file, à priorité de rattrapage, chaque contenu vivant sans métadonnées.
 
 ## Lecture (worker)
 
-`worker/src/worker/meta.py`, avec Pillow. Le fichier est lu par `worker/src/worker/content.py`, commun avec les miniatures : un fichier vivant avec cette empreinte, lu depuis `/data` **en lecture seule**, vérifié par son SHA-256. Les pixels ne sont pas décodés : Pillow ne lit que l'en-tête et l'EXIF.
+`worker/src/worker/meta.py`, avec Pillow. Le fichier est lu par `worker/src/worker/content.py`, commun avec les miniatures : un fichier vivant avec cette empreinte, lu depuis `/data` **en lecture seule**, vérifié par son SHA-256. Les pixels ne sont pas décodés : Pillow ne lit que l'en-tête et l'EXIF. Pour un HEIF ou un HEIC, `heif.probe` (voir [thumbnails.md](thumbnails.md)) lit avec `libheif` la taille de l'image principale et son bloc `Exif`, que Pillow analyse ensuite comme celui d'un JPEG.
 
 | Champ | Source EXIF |
 |---|---|
@@ -49,11 +49,11 @@ sequenceDiagram
 | `latitude`, `longitude` | IFD GPS, en degrés, signés par `GPSLatitudeRef` (`S`) et `GPSLongitudeRef` (`W`) |
 | `make`, `model`, `lens` | `Make`, `Model`, `LensModel` |
 | `width`, `height` | La taille de l'image, inversée pour les orientations 5 à 8 : la taille affichée |
-| `orientation` | `Orientation`, de 1 à 8 |
+| `orientation` | `Orientation`, de 1 à 8. Toujours 1 pour un HEIF ou un HEIC : `libheif` rend des pixels déjà redressés, à la taille affichée |
 
 - **Valeurs aberrantes, ignorées et non fatales :** une date impossible (`0000:00:00`, 30 février, hors 1900–2200), un décalage au-delà de ±18 h, un GPS hors bornes ou à 0,0 (ce qu'écrivent des appareils sans position), une orientation hors 1–8. Les textes perdent leurs octets nuls et sont coupés à 200 caractères.
 - **Image sans EXIF ou à l'EXIF abîmé :** elle a quand même sa ligne, avec ses dimensions, le reste à NULL. Elle n'est pas retentée.
-- **Erreurs définitives (`Permanent`) :** image illisible, format non couvert, plus de 100 mégapixels, fichier de plus de 200 Mo.
+- **Erreurs définitives (`Permanent`) :** image illisible (en-tête HEIC abîmé compris ; un HEIC tronqué dans ses données garde ses métadonnées, comme un JPEG), format non couvert, plus de 100 mégapixels, fichier de plus de 200 Mo.
 - **Erreurs passagères :** le fichier a bougé ou changé pendant la lecture.
 
 ## Stockage
