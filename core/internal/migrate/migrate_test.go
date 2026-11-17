@@ -43,6 +43,7 @@ var tables = []struct {
 		VALUES (sha256('a'), 256, 'image/webp', 1, 1, '\x00')`},
 	// Migration 12 adds an index and a function, no table.
 	{12, []string{}, `SELECT cloudos_fold('Été')`},
+	{13, []string{"activity"}, `INSERT INTO activity (owner, kind, path) VALUES ('enzo', 'added', 'a.txt')`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {

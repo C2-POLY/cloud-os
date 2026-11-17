@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/C2-POLY/cloud-os/core/internal/activity"
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/davfs"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
@@ -48,8 +49,9 @@ type Config struct {
 	Auth      *auth.Service
 	Files     *storage.Store
 	Shares    *share.Service
-	MaxUpload int64  // bytes; 0 means only the free space limits an upload
-	StaticDir string // the built web front, served at / when not empty
+	Activity  *activity.Log // nil: no journal (tests that do not need it)
+	MaxUpload int64         // bytes; 0 means only the free space limits an upload
+	StaticDir string        // the built web front, served at / when not empty
 }
 
 // access says who may call a route.
@@ -74,7 +76,8 @@ func routes(c Config) []route {
 	f := &filesAPI{store: c.Files}
 	u := &uploadsAPI{store: c.Files, maxSize: c.MaxUpload}
 	t := &trashAPI{store: c.Files}
-	s := &sharesAPI{shares: c.Shares}
+	s := &sharesAPI{shares: c.Shares, activity: c.Activity}
+	d := &desktopAPI{files: c.Files, activity: c.Activity}
 	return []route{
 		{"GET /api/health", public, healthHandler(c.Version, c.Health)},
 		{"GET /api/setup", public, a.setupNeeded},
@@ -91,6 +94,8 @@ func routes(c Config) []route {
 		{"GET /api/files/content", member, f.download},
 		{"GET /api/files/thumb", member, f.thumb},
 		{"GET /api/search", member, f.search},
+		{"GET /api/files/recent", member, d.recent},
+		{"GET /api/activity", member, d.events},
 		{"PUT /api/files/content", member, f.upload},
 		{"OPTIONS /api/uploads", member, u.options},
 		{"POST /api/uploads", member, u.create},

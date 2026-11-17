@@ -47,6 +47,16 @@ type Store struct {
 	// a restored version), with its first bytes. The core queues the work a
 	// new content needs there (thumbnails); it must not fail the write.
 	AfterStore func(ctx context.Context, f File, head []byte)
+	// Notify, when set, is told what happened once it is done: "added" or
+	// "replaced" (a stored file), "trashed", "restored", with the path. The
+	// core keeps it in the activity journal; it must not fail the operation.
+	Notify func(ctx context.Context, owner, kind, path string)
+}
+
+func (s *Store) notify(ctx context.Context, owner, kind, path string) {
+	if s.Notify != nil {
+		s.Notify(ctx, owner, kind, path)
+	}
 }
 
 // PutOptions are optional checks and metadata for Put.
@@ -138,13 +148,21 @@ func (s *Store) finish(ctx context.Context, owner, p, tmp string, sum []byte, si
 	}
 	f := File{Owner: owner, Path: p, Kind: KindFile, Size: size, MIME: detectMIME(p, sniff), SHA256: sum, ModifiedAt: mod}
 	var err error
+	kind := "added"
 	if opt.Replace {
+		// For the journal only: whether there was a file to keep as a version.
+		if _, lookErr := s.Lookup(ctx, owner, p); lookErr == nil {
+			kind = "replaced"
+		}
 		f, err = s.replace(ctx, f, tmp)
 	} else {
 		f, err = s.place(ctx, f, tmp)
 	}
 	if err == nil && s.AfterStore != nil {
 		s.AfterStore(ctx, f, sniff)
+	}
+	if err == nil {
+		s.notify(ctx, owner, kind, f.Path)
 	}
 	return f, err
 }

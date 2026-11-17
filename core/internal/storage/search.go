@@ -64,3 +64,36 @@ func (s *Store) Search(ctx context.Context, owner, q string, limit int) ([]File,
 	}
 	return out, rows.Err()
 }
+
+// DefaultRecent is how many files Recent returns by default (and at most 4 times as many).
+const DefaultRecent = 8
+
+// Recent returns the owner's live files most recently added or modified,
+// whichever came last, newest first.
+func (s *Store) Recent(ctx context.Context, owner string, limit int) ([]File, error) {
+	owner, err := CleanOwner(owner)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = DefaultRecent
+	}
+	limit = min(limit, 4*DefaultRecent)
+	rows, err := s.Pool.Query(ctx, `SELECT `+fileColumns+` FROM files
+		WHERE owner = $1 AND trash_id IS NULL AND kind = 'file'
+		ORDER BY greatest(modified_at, created_at) DESC, path
+		LIMIT $2`, owner, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []File{}
+	for rows.Next() {
+		f, err := scanFile(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}

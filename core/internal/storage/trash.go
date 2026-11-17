@@ -134,6 +134,9 @@ func (s *Store) Trash(ctx context.Context, owner, p string) (TrashItem, error) {
 		// 3. Mark the rows and clear the intention, together.
 		return applyTrash(ctx, conn, moveID, owner, p, item.ID)
 	})
+	if err == nil {
+		s.notify(ctx, owner, "trashed", p)
+	}
 	return item, err
 }
 
@@ -238,6 +241,7 @@ func (s *Store) Restore(ctx context.Context, owner string, id int64) (File, erro
 	if err != nil {
 		return File{}, err
 	}
+	s.notify(ctx, owner, "restored", target)
 	return s.Lookup(ctx, owner, target)
 }
 
