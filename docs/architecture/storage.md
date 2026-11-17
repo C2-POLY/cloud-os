@@ -75,6 +75,20 @@ stateDiagram-v2
 - **Casse seule :** un renommage qui ne change que la casse est autorisé.
 - **Reprise au démarrage :** `RecoverMoves` tourne avant que le serveur accepte des requêtes. Une intention dont les deux extrémités existent reste dans le journal et est signalée : elle n'est jamais devinée.
 
+## Déduplication à l'envoi
+
+Pour qu'un téléphone ne renvoie pas une photo que la box a déjà. Issue : #36. Le web ne s'en sert pas encore : calculer le hash d'une grosse vidéo dans le navigateur coûte cher. C'est l'app mobile (#38) qui en a besoin.
+
+- **`POST /api/files/known` `{"sha256": [hex, …]}` → `{"known": [hex, …]}` :** les empreintes que le compte connecté a déjà dans un fichier vivant (`storage.Known`, 1 000 au plus par appel). Le client sait d'un coup quoi sauter.
+- **`POST /api/files/dedupe` `{"path", "sha256", "modified_at"}` :** `storage.Dedupe` crée le fichier au chemin voulu sans aucun octet envoyé.
+  - **201 :** le contenu est copié depuis un fichier vivant du compte qui a cette empreinte. La copie passe par `Put` avec `ExpectSize` et `ExpectSHA256`, si bien que la source est relue et vérifiée pendant la copie. Une source modifiée hors de Cloud OS est écartée, et on essaie la suivante (5 au plus).
+  - **200 :** le chemin a déjà exactement ce contenu. Rien n'est fait, et une sauvegarde relancée ne crée rien en double.
+  - **404 :** le compte n'a pas ce contenu (ou aucune source n'est intacte). Le client envoie le fichier normalement.
+  - **409 :** le chemin est pris par un autre contenu.
+- **Comptes :** on ne cherche que dans les fichiers vivants du compte connecté. Une empreinte d'un autre compte, ou seulement en corbeille, répond comme une empreinte inconnue.
+- **Copie, pas lien dur :** chaque fichier reste indépendant sur le disque (inodes distincts), et un lien dur ferait qu'une modification faite hors du produit touche les deux. Le partage de place entre doublons pourra venir plus tard.
+- **Hooks :** la copie passe par `Put`, donc par les mêmes hooks qu'un envoi : miniature et métadonnées (déjà là pour ce contenu, rien n'est refait), et « ajouté » dans le journal d'activité.
+
 ## Vérifier et importer
 
 - **`core verify` :** il classe chaque entrée en *ok*, *modifié*, *disparu* ou *non indexé*, ne change rien, et sort avec le code 1 au premier écart.
