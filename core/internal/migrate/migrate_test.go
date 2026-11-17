@@ -39,6 +39,8 @@ var tables = []struct {
 	{9, []string{"shares", "share_grants"}, `INSERT INTO shares (token_hash, owner, file_id, expires_at)
 		SELECT sha256('s'), 'enzo', id, now() FROM files WHERE path = 'a.txt';
 		INSERT INTO share_grants (token_hash, share_id, expires_at) SELECT sha256('g'), id, now() FROM shares`},
+	{10, []string{"thumbnails"}, `INSERT INTO thumbnails (sha256, size, mime, width, height, bytes)
+		VALUES (sha256('a'), 256, 'image/webp', 1, 1, '\x00')`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {

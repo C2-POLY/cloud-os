@@ -1,7 +1,15 @@
 import { ArrowDown, ArrowUp, Download, File, FileImage, FileText, FileVideo, Folder, FolderInput, History, Music, Pencil, Share2, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { driveURL, navigate } from '../router.ts'
-import { downloadURL, formatDate, formatSize, sortEntries, type Entry, type SortKey } from './files.ts'
+import { downloadURL, formatDate, formatSize, sortEntries, thumbURL, type Entry, type SortKey } from './files.ts'
+
+/** The image's thumbnail once a worker has made it; the icon until then, or if it never comes. */
+function Thumb({ entry }: { entry: Entry }) {
+  const url = thumbURL(entry)
+  const [failed, setFailed] = useState<string | null>(null)
+  if (!url || failed === url) return <KindIcon entry={entry} />
+  return <img className="thumb" src={url} alt="" loading="lazy" decoding="async" onError={() => setFailed(url)} />
+}
 
 function KindIcon({ entry }: { entry: Entry }) {
   const props = { size: 18, 'aria-hidden': true }
@@ -75,7 +83,7 @@ export function FileList({
           <tr key={e.path}>
             <td className="name">
               <div className="name-inner">
-                <KindIcon entry={e} />
+                <Thumb entry={e} />
                 {e.kind === 'dir' ? (
                   <a
                     href={driveURL(e.path)}

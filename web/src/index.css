@@ -434,6 +434,12 @@ button {
   overflow-wrap: anywhere;
 }
 
+/* Icons take a thumbnail's width, so every name starts at the same place. */
+.files .name-inner > svg {
+  flex: none;
+  margin-inline: 5px;
+}
+
 .files .name a {
   text-decoration: none;
 }
@@ -444,6 +450,16 @@ button {
 
 .files .meta {
   display: none;
+}
+
+.thumb {
+  width: 28px;
+  height: 28px;
+  margin: -5px 0;
+  flex: none;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--hover);
 }
 
 .icon-folder {

@@ -11,6 +11,7 @@ Comment Cloud OS est construit, domaine par domaine, avec ses schémas. Le besoi
 | WebDAV : le drive dans le Finder et l'Explorateur | [webdav.md](webdav.md) | `core/internal/davfs`, `auth/basic.go` | #12 |
 | File de tâches : travail de fond partagé par le cœur et les workers | [tasks.md](tasks.md) | `core/internal/tasks`, `worker/src/worker/tasks.py` | #8 |
 | Partage par lien : jeton, expiration, mot de passe, page de l'invité | [share.md](share.md) | `core/internal/share`, `core/internal/httpapi/shares.go`, `web/src/share/` | #13 |
+| Miniatures des images | [thumbnails.md](thumbnails.md) | `core/internal/thumbs`, `worker/src/worker/thumbs.py`, `web/src/drive/FileList.tsx` | #14 |
 
 ## Quand mettre un fichier à jour
 

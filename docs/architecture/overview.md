@@ -25,14 +25,14 @@ flowchart LR
 ```
 
 - **Les clients ne parlent qu'au cœur.** Le cœur sert aussi le front compilé (`STATIC_DIR`). En développement, Vite le sert avec rechargement à chaud et renvoie `/api` vers le cœur.
-- **Le cœur et les workers ne se parlent que par Postgres** : le battement, et la file de tâches (voir [tasks.md](tasks.md)). Un worker n'écrit jamais dans les fichiers des utilisateurs.
+- **Le cœur et les workers ne se parlent que par Postgres** : le battement, et la file de tâches (voir [tasks.md](tasks.md)). Un worker n'écrit jamais dans les fichiers des utilisateurs : il les lit depuis `/data`, monté en lecture seule, et écrit ses résultats en base (par exemple les miniatures, voir [thumbnails.md](thumbnails.md)).
 - **Seul le cœur applique les migrations**, au démarrage, sous un verrou Postgres (goose). Un worker attend que les tables dont il a besoin existent.
 
 | Service | Image | Port hôte (défaut) |
 |---|---|---|
 | `db` | `pgvector/pgvector:0.8.1-pg17` | 54320 |
 | `core` | `core/Dockerfile` (front compilé + binaire Go, distroless, non root) | 8480 |
-| `worker` | `worker/Dockerfile` (Python 3.13, uv) | aucun |
+| `worker` | `worker/Dockerfile` (Python 3.13, uv) | aucun ; `/data` en lecture seule |
 | `web` | `node:24-alpine`, Vite en développement | 5180 |
 
 Tous les ports sont liés à `127.0.0.1` et réglables (`CLOUDOS_*_PORT`), pour qu'une pile par worktree tourne sans conflit.
@@ -48,7 +48,7 @@ sequenceDiagram
     C->>DB: goose up (verrou), migrations embarquées
     C->>FS: CleanTmp : écritures interrompues
     C->>DB: RecoverMoves : déplacements interrompus
-    C->>C: toutes les 30 s, Reap et Prune de la file de tâches
+    C->>C: toutes les 30 s, Reap et Prune de la file de tâches, Prune des miniatures
     C->>C: écoute sur :8080
 ```
 

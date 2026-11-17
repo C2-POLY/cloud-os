@@ -14,7 +14,7 @@ An all-in-one home cloud OS installed on a box: drive, photos, documents and med
 Containers first: the whole application runs in Docker Compose, and the OS is only a wrapper around it. Daily development happens on a Mac with Docker Desktop; OS image tests in a QEMU/UTM VM; real-hardware tests on the box.
 
 - Core (accounts, storage, index, API, WebDAV, sharing, task queue): Go.
-- AI workers (text and image embeddings, OCR, speech, classification): Python, models run with ONNX Runtime, no PyTorch in the image. They read the task queue and write results to the database; they never modify user files.
+- AI workers (text and image embeddings, OCR, speech, classification): Python, models run with ONNX Runtime, no PyTorch in the image. They read the task queue and write results to the database; they read user files from a read-only mount and never modify them.
 - Task queue: a PostgreSQL table (`SELECT … FOR UPDATE SKIP LOCKED`), no Redis.
 - Database: PostgreSQL with pgvector (HNSW index, one table per embedding model, model name and version stored with each vector).
 - LLM: Ollama or llama.cpp, behind the AI provider interface.
@@ -57,6 +57,9 @@ docker compose run --rm core verify
 
 # Queue N selftest tasks and wait for the workers to run them (the queue, end to end)
 docker compose run --rm core selftest 20
+
+# Queue the thumbnail of every stored image that has none (catch-up)
+docker compose run --rm core thumbs backfill
 
 # The drive as a network disk: Finder › Se connecter au serveur › http://localhost:8480/dav/
 

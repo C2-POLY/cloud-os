@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
+	"github.com/C2-POLY/cloud-os/core/internal/thumbs"
 )
 
 // filesAPI serves the signed-in account's own space: owner is always the
@@ -131,6 +133,34 @@ func (a *filesAPI) download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", urlPathEscape(name)))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeContent(w, r, name, f.ModifiedAt, file)
+}
+
+// thumb serves the thumbnail of a file, 404 while it has none (not an image,
+// or not made yet). The ETag is the content's hash; the web front adds
+// ?v=<sha256> to the URL so that a new version is never served from cache.
+func (a *filesAPI) thumb(w http.ResponseWriter, r *http.Request) {
+	f, err := a.store.Lookup(r.Context(), owner(r), r.URL.Query().Get("path"))
+	if err == nil && f.IsDir() {
+		err = storage.ErrNotFound
+	}
+	if err != nil {
+		failFiles(w, err)
+		return
+	}
+	t, err := thumbs.Get(r.Context(), a.store.Pool, f.SHA256)
+	if errors.Is(err, thumbs.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no thumbnail"})
+		return
+	}
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", t.MIME)
+	w.Header().Set("ETag", `"`+hex.EncodeToString(f.SHA256)+`"`)
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeContent(w, r, "", t.CreatedAt, bytes.NewReader(t.Bytes))
 }
 
 // upload stores the request body at path. Content-Length, when sent, and

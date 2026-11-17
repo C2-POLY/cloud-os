@@ -218,3 +218,21 @@ func TestConcurrentWorkersNeverShareATask(t *testing.T) {
 		t.Errorf("left: %+v", s)
 	}
 }
+
+func TestGiveUpFailsAtOnce(t *testing.T) {
+	q := newQueue(t)
+	ctx := context.Background()
+	id := mustEnqueue(t, q, "thumb", EnqueueOptions{MaxAttempts: 5})
+	if _, err := q.Claim(ctx, "w", []string{"thumb"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.GiveUp(ctx, id, "w2", "unreadable"); !errors.Is(err, ErrLost) {
+		t.Errorf("another worker gives up: %v", err)
+	}
+	if err := q.GiveUp(ctx, id, "w", "unreadable"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := q.Get(ctx, id); got.State != "failed" || got.Attempts != 1 || *got.LastError != "unreadable" {
+		t.Errorf("after give up: %+v", got)
+	}
+}

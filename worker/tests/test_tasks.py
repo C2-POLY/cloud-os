@@ -1,47 +1,12 @@
 """The worker's side of the task queue, against a throwaway database built from
-the core's own migration, with the same cases as core/internal/tasks."""
+the core's own migrations, with the same cases as core/internal/tasks."""
 
-import os
 import threading
-import uuid
-from collections.abc import Iterator
-from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
 
 import psycopg
 import pytest
 
 from worker import tasks
-
-MIGRATION = Path(__file__).resolve().parents[2] / "core" / "migrations" / "0008_tasks.sql"
-
-
-def migration_up() -> str:
-    sql = MIGRATION.read_text()
-    return sql.split("-- +goose Up", 1)[1].split("-- +goose Down", 1)[0]
-
-
-@pytest.fixture
-def db_url() -> Iterator[str]:
-    admin = os.environ.get("CLOUDOS_TEST_DATABASE_URL")
-    if not admin:
-        pytest.skip("CLOUDOS_TEST_DATABASE_URL is not set: run `make test`")
-    name = f"cloudos_test_{uuid.uuid4().hex[:12]}"
-    with psycopg.connect(admin, autocommit=True) as root:
-        root.execute(f"CREATE DATABASE {name}")
-        try:
-            url = urlunsplit(urlsplit(admin)._replace(path=f"/{name}"))
-            with psycopg.connect(url, autocommit=True) as c:
-                c.execute(migration_up())
-            yield url
-        finally:
-            root.execute(f"DROP DATABASE {name} WITH (FORCE)")
-
-
-@pytest.fixture
-def conn(db_url: str) -> Iterator[psycopg.Connection]:
-    with psycopg.connect(db_url, autocommit=True) as c:
-        yield c
 
 
 def state(conn: psycopg.Connection, task_id: int) -> str:
@@ -123,6 +88,16 @@ def test_run_one_records_success_and_failure(conn: psycopg.Connection) -> None:
     row = conn.execute("SELECT state, last_error FROM tasks WHERE id = %s", (bad,)).fetchone()
     assert row and row[0] == "queued" and "failing on purpose" in row[1]
     assert not tasks.run_one(conn, "w", tasks.HANDLERS)  # waiting for its backoff
+
+
+def test_permanent_error_fails_at_once(conn: psycopg.Connection) -> None:
+    def broken(task: tasks.Task, c: psycopg.Connection) -> None:
+        raise tasks.Permanent("unreadable")
+
+    task_id = tasks.enqueue(conn, "broken", max_attempts=5)
+    assert tasks.run_one(conn, "w", {"broken": broken})
+    row = conn.execute("SELECT state, attempts FROM tasks WHERE id = %s", (task_id,)).fetchone()
+    assert row == ("failed", 1)
 
 
 def test_concurrent_workers_never_share_a_task(db_url: str, conn: psycopg.Connection) -> None:

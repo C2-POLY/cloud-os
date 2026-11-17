@@ -150,13 +150,23 @@ func (q *Queue) Complete(ctx context.Context, id int64, worker string) error {
 // Fail records an error on a held task: it is queued again after a growing
 // delay, or marked failed once it has used max_attempts.
 func (q *Queue) Fail(ctx context.Context, id int64, worker, reason string) error {
+	return q.fail(ctx, id, worker, reason, false)
+}
+
+// GiveUp records an error that another attempt cannot fix (an unreadable
+// file): the task is failed at once, whatever its attempts left.
+func (q *Queue) GiveUp(ctx context.Context, id int64, worker, reason string) error {
+	return q.fail(ctx, id, worker, reason, true)
+}
+
+func (q *Queue) fail(ctx context.Context, id int64, worker, reason string, final bool) error {
 	return q.held(q.Pool.Exec(ctx,
 		`UPDATE tasks SET last_error = $3, locked_by = NULL, locked_until = NULL, updated_at = now(),
-		     state = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'queued' END,
-		     finished_at = CASE WHEN attempts >= max_attempts THEN now() END,
+		     state = CASE WHEN attempts >= max_attempts OR $6 THEN 'failed' ELSE 'queued' END,
+		     finished_at = CASE WHEN attempts >= max_attempts OR $6 THEN now() END,
 		     run_after = now() + make_interval(secs => least($4 * power(2, attempts - 1), $5))
 		 WHERE id = $1 AND state = 'running' AND locked_by = $2`,
-		id, worker, reason, BaseBackoff.Seconds(), MaxBackoff.Seconds()))
+		id, worker, reason, BaseBackoff.Seconds(), MaxBackoff.Seconds(), final))
 }
 
 func (q *Queue) held(tag interface{ RowsAffected() int64 }, err error) error {
