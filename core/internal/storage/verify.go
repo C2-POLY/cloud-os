@@ -111,6 +111,10 @@ func (s *Store) Verify(ctx context.Context) (Report, error) {
 		rep.OK++
 	}
 
+	if err := s.verifyVersions(ctx, &rep); err != nil {
+		return rep, err
+	}
+
 	err = filepath.WalkDir(s.Root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err

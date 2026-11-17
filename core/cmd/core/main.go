@@ -105,7 +105,10 @@ func withCore(ctx context.Context, fn func(core) error) error {
 	for _, r := range results {
 		slog.Info("migration applied", "version", r.Source.Version, "file", r.Source.Path, "duration", r.Duration)
 	}
-	files := &storage.Store{Root: envOr("CLOUDOS_DATA_DIR", "/data"), Pool: pool, TrashTTL: trashTTL()}
+	files := &storage.Store{
+		Root: envOr("CLOUDOS_DATA_DIR", "/data"), Pool: pool, TrashTTL: trashTTL(),
+		VersionsKeep: envInt("CLOUDOS_VERSIONS_KEEP"), VersionsMaxAge: time.Duration(envInt("CLOUDOS_VERSIONS_DAYS")) * 24 * time.Hour,
+	}
 	return fn(core{pool: pool, provider: provider, files: files})
 }
 
@@ -128,6 +131,11 @@ func serve(ctx context.Context, c core) error {
 		return fmt.Errorf("purge the trash: %w", err)
 	} else if n > 0 {
 		slog.Info("purged expired trash items", "count", n)
+	}
+	if n, err := c.files.PruneVersions(ctx); err != nil {
+		return fmt.Errorf("prune versions: %w", err)
+	} else if n > 0 {
+		slog.Info("pruned old versions", "count", n)
 	}
 	finished, dropped, err := c.files.RecoverMoves(ctx)
 	if err != nil {
@@ -225,6 +233,11 @@ func cleanUploadsEvery(ctx context.Context, files *storage.Store, every time.Dur
 			} else if n > 0 {
 				slog.Info("purged expired trash items", "count", n)
 			}
+			if n, err := files.PruneVersions(ctx); err != nil {
+				slog.Error("prune versions", "err", err)
+			} else if n > 0 {
+				slog.Info("pruned old versions", "count", n)
+			}
 		}
 	}
 }
@@ -236,6 +249,15 @@ func trashTTL() time.Duration {
 		return storage.DefaultTrashTTL
 	}
 	return time.Duration(days) * 24 * time.Hour
+}
+
+// envInt reads a positive integer variable; unset or invalid means 0 (the default applies).
+func envInt(key string) int {
+	n, err := strconv.Atoi(os.Getenv(key))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // maxUpload reads CLOUDOS_MAX_UPLOAD (bytes); 0 or unset means no limit but the free space.

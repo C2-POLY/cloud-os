@@ -33,7 +33,7 @@ func TestUploadInChunksWithAnInterruption(t *testing.T) {
 	sum := sha256.Sum256([]byte(content))
 	mod := time.Date(2025, 8, 1, 10, 0, 0, 0, time.UTC)
 
-	u, err := s.CreateUpload(ctx, "enzo", "Vidéos/plage.mp4", int64(len(content)), sum[:], &mod, 0)
+	u, err := s.CreateUpload(ctx, "enzo", "Vidéos/plage.mp4", int64(len(content)), sum[:], &mod, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,20 +78,20 @@ func TestUploadRefusals(t *testing.T) {
 	ctx := context.Background()
 	put(t, s, "enzo", "pris.txt", "already here")
 
-	if _, err := s.CreateUpload(ctx, "enzo", "pris.txt", 3, nil, nil, 0); !errors.Is(err, ErrExists) {
+	if _, err := s.CreateUpload(ctx, "enzo", "pris.txt", 3, nil, nil, 0, false); !errors.Is(err, ErrExists) {
 		t.Errorf("name taken: %v", err)
 	}
-	if _, err := s.CreateUpload(ctx, "enzo", "gros.bin", 101, nil, nil, 100); !errors.Is(err, ErrTooLarge) {
+	if _, err := s.CreateUpload(ctx, "enzo", "gros.bin", 101, nil, nil, 100, false); !errors.Is(err, ErrTooLarge) {
 		t.Errorf("over the limit: %v", err)
 	}
-	if _, err := s.CreateUpload(ctx, "enzo", "disque.bin", 1<<62, nil, nil, 0); !errors.Is(err, ErrTooLarge) {
+	if _, err := s.CreateUpload(ctx, "enzo", "disque.bin", 1<<62, nil, nil, 0, false); !errors.Is(err, ErrTooLarge) {
 		t.Errorf("larger than the disk: %v", err)
 	}
-	if _, err := s.CreateUpload(ctx, "enzo", "../x", 3, nil, nil, 0); !errors.Is(err, ErrInvalidPath) {
+	if _, err := s.CreateUpload(ctx, "enzo", "../x", 3, nil, nil, 0, false); !errors.Is(err, ErrInvalidPath) {
 		t.Errorf("bad path: %v", err)
 	}
 
-	u, err := s.CreateUpload(ctx, "enzo", "a.bin", 5, nil, nil, 0)
+	u, err := s.CreateUpload(ctx, "enzo", "a.bin", 5, nil, nil, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestUploadWrongHashOrTakenNameEndsTheUpload(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 	wrong := sha256.Sum256([]byte("not this"))
-	u, err := s.CreateUpload(ctx, "enzo", "faux.bin", 3, wrong[:], nil, 0)
+	u, err := s.CreateUpload(ctx, "enzo", "faux.bin", 3, wrong[:], nil, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestUploadWrongHashOrTakenNameEndsTheUpload(t *testing.T) {
 	}
 
 	// The name gets taken while the upload runs: the original is kept.
-	u, err = s.CreateUpload(ctx, "enzo", "course.txt", 3, nil, nil, 0)
+	u, err = s.CreateUpload(ctx, "enzo", "course.txt", 3, nil, nil, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestUploadWrongHashOrTakenNameEndsTheUpload(t *testing.T) {
 func TestConcurrentChunksOfOneUpload(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	u, err := s.CreateUpload(ctx, "enzo", "a.bin", 6, nil, nil, 0)
+	u, err := s.CreateUpload(ctx, "enzo", "a.bin", 6, nil, nil, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestConcurrentChunksOfOneUpload(t *testing.T) {
 func TestEmptyUploadAndCleanUploads(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	empty, err := s.CreateUpload(ctx, "enzo", "vide.txt", 0, nil, nil, 0)
+	empty, err := s.CreateUpload(ctx, "enzo", "vide.txt", 0, nil, nil, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,11 +191,11 @@ func TestEmptyUploadAndCleanUploads(t *testing.T) {
 		t.Fatalf("empty upload: %+v, %v", f, err)
 	}
 
-	stale, err := s.CreateUpload(ctx, "enzo", "abandon.bin", 10, nil, nil, 0)
+	stale, err := s.CreateUpload(ctx, "enzo", "abandon.bin", 10, nil, nil, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	live, err := s.CreateUpload(ctx, "enzo", "en-cours.bin", 10, nil, nil, 0)
+	live, err := s.CreateUpload(ctx, "enzo", "en-cours.bin", 10, nil, nil, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}

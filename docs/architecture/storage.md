@@ -1,11 +1,11 @@
 # Stockage des fichiers
 
 Le domaine qui écrit, range et vérifie les fichiers des utilisateurs : `core/internal/storage`, et l'API qui l'expose, `core/internal/httpapi/files.go`.
-Issues : #7 (écriture et index), #9 (dossiers, déplacements, API), #18 (envoi reprenable), #10 (corbeille).
+Issues : #7 (écriture et index), #9 (dossiers, déplacements, API), #18 (envoi reprenable), #10 (corbeille), #24 (versions).
 
 ## Ce qui est garanti
 
-- **Aucune perte, aucun écrasement.** Seul ce paquet écrit dans le dossier de données. Il n'écrase jamais un fichier existant, indexé ou non. Supprimer, c'est mettre à la corbeille : seule la purge de la corbeille efface des octets, à l'expiration ou sur confirmation.
+- **Aucune perte, aucun écrasement.** Seul ce paquet écrit dans le dossier de données. Il n'écrase jamais un fichier existant, indexé ou non. Remplacer un fichier, sur demande explicite, garde d'abord son contenu comme version. Supprimer, c'est mettre à la corbeille : seule la purge de la corbeille efface des octets, à l'expiration ou sur confirmation.
 - **Garde-fou dans les tests.** `core/internal/guard/erase_test.go` analyse tout le code Go du cœur et échoue si une fonction hors de la liste fermée `allowedErasers` appelle `os.Remove`, `os.RemoveAll` ou `Truncate`. Ajouter une fonction à cette liste est une décision de design, à relire comme telle.
 - **Lisible sans le produit.** Les fichiers sont en clair sous `<données>/<compte>/<chemin>`, avec leurs vrais noms.
 - **Disque et index d'accord.** Une écriture ou un déplacement interrompu ne laisse ni fichier à moitié écrit ni index faux. `core verify` le contrôle à tout moment, sans rien réparer.
@@ -17,6 +17,7 @@ Issues : #7 (écriture et index), #9 (dossiers, déplacements, API), #18 (envoi 
 ├── .cloudos/tmp/              écritures en cours, vidées au démarrage du serveur
 ├── .cloudos/uploads/<id>      envois reprenables en cours (tus), supprimés à la fin ou après 24 h
 ├── .cloudos/trash/<compte>/<id>/<nom>   éléments mis à la corbeille, effacés après 30 jours
+├── .cloudos/versions/<compte>/<fichier>/<version>   contenus remplacés
 ├── enzo/                      un dossier par compte (nom du compte = nom du dossier)
 │   ├── Documents/contrat.pdf
 │   └── Photos/2024/plage.jpg
@@ -108,6 +109,33 @@ stateDiagram-v2
 - **Purger :** `PurgeExpired` tourne au démarrage puis toutes les heures ; `Purge` et `EmptyTrash` répondent à une demande confirmée. Les octets partent d'abord (`removeTrashDir`, qui refuse tout dossier qui n'est pas exactement `.cloudos/trash/<compte>/<id>`), puis les lignes : un crash entre les deux est fini par la purge suivante. Un élément dont une opération est encore dans le journal n'est pas purgé.
 - **Migration :** la partie « down » de 0006 refuse de s'exécuter tant que la corbeille n'est pas vide.
 
+## Versions
+
+Remplacer un fichier (`PutOptions.Replace`, uniquement sur demande explicite : `replace=1` à l'envoi simple, métadonnée tus `replace`) garde son contenu précédent comme version, dans la table `file_versions` et sous `.cloudos/versions/<compte>/<fichier>/<version>`. Sans `Replace`, un chemin existant est toujours refusé.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Ecrit: nouveau contenu dans .cloudos/tmp, haché
+    Ecrit --> Intention: verrou du compte, INSERT file_versions + moves(op=version), COMMIT
+    Intention --> AncienRange: rename(fichier, .cloudos/versions/compte/fichier/version)
+    AncienRange --> NouveauEnPlace: link(tmp, fichier), fsync
+    NouveauEnPlace --> Fini: UPDATE files (taille, hash, dates), DELETE moves, COMMIT
+    Intention --> Reprise: crash
+    AncienRange --> Reprise: crash
+    NouveauEnPlace --> Reprise: crash
+    Reprise --> Oublie: version absente, ancien contenu en place
+    Reprise --> AncienRemis: version présente, fichier absent, ancien contenu remis en place
+    Reprise --> Fini: version et fichier présents, on hache le nouveau contenu
+    Fini --> [*]
+```
+
+- **Reprise** (`recoverVersion`) : un crash ne perd jamais l'ancien contenu. Au pire, l'envoi interrompu est perdu et l'ancien contenu est remis en place.
+- **Restaurer une version** remplace le fichier par une copie de la version : la version reste, et le contenu courant devient lui-même une version.
+- **Ménage** (`PruneVersions`, au démarrage, toutes les heures et après chaque remplacement) : on garde les 10 dernières versions de chaque fichier et toutes celles de moins de 30 jours (`CLOUDOS_VERSIONS_KEEP`, `CLOUDOS_VERSIONS_DAYS`). `removeVersionFile` n'efface qu'exactement `.cloudos/versions/<compte>/<fichier>/<version>`.
+- **Corbeille :** un fichier à la corbeille garde ses versions, qui reviennent avec lui. Le purger efface aussi ses versions (`removeVersionsDir`).
+- **Intégrité :** `core verify` contrôle aussi le hash de chaque version.
+- **Migration :** la partie « down » de 0007 refuse de s'exécuter tant qu'il reste des versions.
+
 ## API
 
 Toutes les routes exigent une session, et chacun ne voit que son propre espace : le compte vient de la session, jamais d'un paramètre.
@@ -118,7 +146,10 @@ Toutes les routes exigent une session, et chacun ne voit que son propre espace :
 | `POST /api/files/folders` `{path}` | Crée un dossier et ses parents |
 | `POST /api/files/move` `{from, to}` | Renomme ou déplace un fichier ou un dossier |
 | `GET /api/files/content?path=` | Télécharge ; `Range`, `If-None-Match` (ETag = SHA-256) et `If-Modified-Since` gérés |
-| `PUT /api/files/content?path=` | Envoi en une requête ; `Content-Length` et `X-Content-SHA256` vérifiés, `X-Modified-At` en option |
+| `PUT /api/files/content?path=` | Envoi en une requête ; `Content-Length` et `X-Content-SHA256` vérifiés, `X-Modified-At` en option ; `replace=1` remplace un fichier existant (son contenu devient une version) |
+| `GET /api/files/versions?path=` | Les versions d'un fichier, la plus récente d'abord |
+| `GET /api/files/versions/{id}/content` | Télécharge une version (`name=` pour le nom du fichier) |
+| `POST /api/files/versions/{id}/restore` | Restaure une version |
 | `POST /api/files/trash` `{path}` | Met à la corbeille |
 | `GET /api/trash` | Liste la corbeille, la plus récente d'abord |
 | `POST /api/trash/{id}/restore` | Restaure ; renvoie l'emplacement retrouvé |
@@ -144,7 +175,7 @@ Les gros fichiers passent par le protocole [tus 1.0](https://tus.io/protocols/re
 | Route | Effet |
 |---|---|
 | `OPTIONS /api/uploads` | Versions, extensions et `Tus-Max-Size` (si `CLOUDOS_MAX_UPLOAD` est réglé) |
-| `POST /api/uploads` | `Upload-Length` et `Upload-Metadata` (`path` obligatoire ; `sha256` en hex et `mtime` en secondes Unix en option). 409 si le nom est pris, 413 si c'est trop gros pour la limite ou pour la place libre. Répond 201 avec `Location` et `Upload-Expires` |
+| `POST /api/uploads` | `Upload-Length` et `Upload-Metadata` (`path` obligatoire ; `sha256` en hex, `mtime` en secondes Unix et `replace` = `1` en option). 409 si le nom est pris, 413 si c'est trop gros pour la limite ou pour la place libre. Répond 201 avec `Location` et `Upload-Expires` |
 | `HEAD /api/uploads/{id}` | `Upload-Offset` (où reprendre) et `Upload-Length` |
 | `PATCH /api/uploads/{id}` | Ajoute un morceau (`application/offset+octet-stream`) à `Upload-Offset`, qui doit être exact (sinon 409). 423 si un autre `PATCH` écrit le même envoi, 413 si le morceau dépasse la longueur |
 | `DELETE /api/uploads/{id}` | Abandonne l'envoi : supprime son fichier partiel, jamais un fichier stocké |

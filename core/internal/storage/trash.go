@@ -363,6 +363,20 @@ func (s *Store) purgeItem(ctx context.Context, conn *pgxpool.Conn, owner string,
 	if err := s.removeTrashDir(owner, id); err != nil {
 		return err
 	}
+	// The versions of the purged files go too (their rows follow by cascade).
+	rows, err := conn.Query(ctx, `SELECT id FROM files WHERE trash_id = $1 AND kind = 'file'`, id)
+	if err != nil {
+		return err
+	}
+	fileIDs, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil {
+		return err
+	}
+	for _, fid := range fileIDs {
+		if err := s.removeVersionsDir(owner, fid); err != nil {
+			return err
+		}
+	}
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return err

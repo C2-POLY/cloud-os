@@ -42,6 +42,14 @@ function Row({ item, queue }: { item: UploadItem; queue: UploadQueue }) {
       <progress max={100} value={pct} aria-label={`Progression de ${item.name}`} />
       <div className="upload-status muted">
         {item.error ?? labels[item.state]}
+        {item.canReplace && (
+          <>
+            {' '}
+            <button type="button" className="link" onClick={() => queue.replace(item.id)}>
+              Remplacer
+            </button>
+          </>
+        )}
         {item.state !== 'failed' && item.state !== 'cancelled' && ` · ${formatSize(item.sent)} sur ${formatSize(item.size)}`}
       </div>
     </li>

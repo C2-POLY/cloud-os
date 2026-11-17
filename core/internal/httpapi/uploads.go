@@ -85,8 +85,9 @@ func parseMetadata(h string) (map[string]string, bool) {
 	return meta, true
 }
 
-// create starts an upload. Upload-Metadata must give "path"; "sha256" (hex)
-// and "mtime" (Unix seconds) are optional.
+// create starts an upload. Upload-Metadata must give "path"; "sha256" (hex),
+// "mtime" (Unix seconds) and "replace" ("1": replace an existing file, whose
+// content is kept as a version) are optional.
 func (a *uploadsAPI) create(w http.ResponseWriter, r *http.Request) {
 	if !tusRequest(w, r) {
 		return
@@ -119,7 +120,7 @@ func (a *uploadsAPI) create(w http.ResponseWriter, r *http.Request) {
 		mod = &t
 	}
 
-	u, err := a.store.CreateUpload(r.Context(), owner(r), meta["path"], length, sum, mod, a.maxSize)
+	u, err := a.store.CreateUpload(r.Context(), owner(r), meta["path"], length, sum, mod, a.maxSize, meta["replace"] == "1")
 	if err != nil {
 		tusFail(w, err)
 		return

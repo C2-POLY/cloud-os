@@ -40,6 +40,9 @@ type Store struct {
 	Pool *pgxpool.Pool
 	// TrashTTL is how long a trashed item is kept; zero means DefaultTrashTTL.
 	TrashTTL time.Duration
+	// VersionsKeep and VersionsMaxAge are the version retention; zero means the defaults.
+	VersionsKeep   int
+	VersionsMaxAge time.Duration
 }
 
 // PutOptions are optional checks and metadata for Put.
@@ -50,6 +53,9 @@ type PutOptions struct {
 	ExpectSize int64
 	// ExpectSHA256, when set, must equal the hash of the bytes written.
 	ExpectSHA256 []byte
+	// Replace, when set, replaces a file already at the path; its content is
+	// kept as a version first. Without it, an existing path is ErrExists.
+	Replace bool
 }
 
 // NoExpectations returns PutOptions that check nothing.
@@ -127,6 +133,9 @@ func (s *Store) finish(ctx context.Context, owner, p, tmp string, sum []byte, si
 		return File{}, fmt.Errorf("set modification time: %w", err)
 	}
 	f := File{Owner: owner, Path: p, Kind: KindFile, Size: size, MIME: detectMIME(p, sniff), SHA256: sum, ModifiedAt: mod}
+	if opt.Replace {
+		return s.replace(ctx, f, tmp)
+	}
 	return s.place(ctx, f, tmp)
 }
 

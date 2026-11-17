@@ -229,7 +229,7 @@ func applyMove(ctx context.Context, db beginner, moveID int64, owner, from, to s
 // gone is finished; one whose source is still there and target is not is
 // dropped; anything else is left in the journal and logged, never guessed.
 func (s *Store) RecoverMoves(ctx context.Context) (finished, dropped int, err error) {
-	rows, err := s.Pool.Query(ctx, `SELECT id, owner, from_path, to_path, op, trash_id FROM moves ORDER BY id`)
+	rows, err := s.Pool.Query(ctx, `SELECT id, owner, from_path, to_path, op, trash_id, version_id FROM moves ORDER BY id`)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -238,11 +238,12 @@ func (s *Store) RecoverMoves(ctx context.Context) (finished, dropped int, err er
 		owner, from, to string
 		op              string
 		trashID         *int64
+		versionID       *int64
 	}
 	var moves []move
 	for rows.Next() {
 		var m move
-		if err := rows.Scan(&m.id, &m.owner, &m.from, &m.to, &m.op, &m.trashID); err != nil {
+		if err := rows.Scan(&m.id, &m.owner, &m.from, &m.to, &m.op, &m.trashID, &m.versionID); err != nil {
 			rows.Close()
 			return 0, 0, err
 		}
@@ -254,6 +255,19 @@ func (s *Store) RecoverMoves(ctx context.Context) (finished, dropped int, err er
 	}
 
 	for _, m := range moves {
+		if m.op == "version" && m.versionID != nil {
+			fin, drop, err := s.recoverVersion(ctx, m.id, m.owner, m.from, *m.versionID)
+			if err != nil {
+				return finished, dropped, err
+			}
+			if fin {
+				finished++
+			}
+			if drop {
+				dropped++
+			}
+			continue
+		}
 		src, dst := s.diskPath(m.owner, m.from), s.diskPath(m.owner, m.to)
 		var trashID int64
 		if m.trashID != nil {

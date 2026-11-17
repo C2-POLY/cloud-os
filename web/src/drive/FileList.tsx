@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Download, File, FileImage, FileText, FileVideo, Folder, FolderInput, Music, Pencil, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Download, File, FileImage, FileText, FileVideo, Folder, FolderInput, History, Music, Pencil, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { driveURL, navigate } from '../router.ts'
 import { downloadURL, formatDate, formatSize, sortEntries, type Entry, type SortKey } from './files.ts'
@@ -18,11 +18,13 @@ export function FileList({
   onRename,
   onMove,
   onTrash,
+  onVersions,
 }: {
   entries: Entry[]
   onRename: (entry: Entry) => void
   onMove: (entry: Entry) => void
   onTrash: (entry: Entry) => void
+  onVersions: (entry: Entry) => void
 }) {
   const [key, setKey] = useState<SortKey>('name')
   const [ascending, setAscending] = useState(true)
@@ -99,6 +101,13 @@ export function FileList({
                   <a className="icon-button" href={downloadURL(e.path)} download={e.name} title="Télécharger" aria-label={`Télécharger ${e.name}`}>
                     <Download size={16} aria-hidden />
                   </a>
+                ) : (
+                  <span className="icon-button" aria-hidden />
+                )}
+                {e.kind === 'file' ? (
+                  <button type="button" className="icon-button" title="Versions" aria-label={`Versions de ${e.name}`} onClick={() => onVersions(e)}>
+                    <History size={16} aria-hidden />
+                  </button>
                 ) : (
                   <span className="icon-button" aria-hidden />
                 )}

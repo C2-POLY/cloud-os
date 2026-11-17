@@ -61,6 +61,11 @@ export function formatDate(iso: string): string {
   return new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })
 }
 
+/** A date to the second, "17 nov. 2026, 09:12:05", to tell close versions apart. */
+export function formatDateSeconds(iso: string): string {
+  return new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'medium' })
+}
+
 export type SortKey = 'name' | 'size' | 'modified'
 
 /** Folders first, then the chosen column; names compare as people read them ("2" before "10"). */
@@ -116,4 +121,28 @@ export function inDays(iso: string, now = Date.now()): string {
   if (days <= 0) return "aujourd'hui"
   if (days === 1) return 'demain'
   return `dans ${days} jours`
+}
+
+/** A previous content of a file, as the core's `httpapi.VersionEntry` writes it. */
+export interface VersionEntry {
+  id: number
+  size: number
+  mime: string
+  sha256: string
+  modified_at: string
+  replaced_at: string
+}
+
+export function listVersions(path: string): Promise<VersionEntry[]> {
+  return api<VersionEntry[]>('GET', `/api/files/versions?path=${encodeURIComponent(path)}`)
+}
+
+/** The URL that downloads a version under the file's name. */
+export function versionURL(id: number, name: string): string {
+  return `/api/files/versions/${id}/content?name=${encodeURIComponent(name)}`
+}
+
+/** Makes a version the file's content again; the current content becomes a version. */
+export function restoreVersion(id: number): Promise<Entry> {
+  return api<Entry>('POST', `/api/files/versions/${id}/restore`, {})
 }
