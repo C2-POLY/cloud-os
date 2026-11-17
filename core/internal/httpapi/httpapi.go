@@ -39,6 +39,7 @@ type Config struct {
 	Health    HealthStore
 	Auth      *auth.Service
 	Files     *storage.Store
+	MaxUpload int64  // bytes; 0 means only the free space limits an upload
 	StaticDir string // the built web front, served at / when not empty
 }
 
@@ -62,6 +63,7 @@ type route struct {
 func routes(c Config) []route {
 	a := &accountsAPI{auth: c.Auth}
 	f := &filesAPI{store: c.Files}
+	u := &uploadsAPI{store: c.Files, maxSize: c.MaxUpload}
 	return []route{
 		{"GET /api/health", public, healthHandler(c.Version, c.Health)},
 		{"GET /api/setup", public, a.setupNeeded},
@@ -77,6 +79,11 @@ func routes(c Config) []route {
 		{"POST /api/files/move", member, f.move},
 		{"GET /api/files/content", member, f.download},
 		{"PUT /api/files/content", member, f.upload},
+		{"OPTIONS /api/uploads", member, u.options},
+		{"POST /api/uploads", member, u.create},
+		{"HEAD /api/uploads/{id}", member, u.head},
+		{"PATCH /api/uploads/{id}", member, u.patch},
+		{"DELETE /api/uploads/{id}", member, u.terminate},
 	}
 }
 
