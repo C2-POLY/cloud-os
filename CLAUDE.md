@@ -5,14 +5,21 @@ An all-in-one home cloud OS installed on a box: drive, photos, documents and med
 ## Project state
 
 - 2026-11-17: repository created, no code yet. The V1 is phases 1 to 3 of the PRD roadmap (Core + Drive, Photos + mobile, AI search + Documents), run in Docker Compose. The OS packaging comes after.
-- Still open in the PRD: product name, core stack (Go or Python), mobile app (React Native or Flutter), open or closed source, reference hardware (Raspberry Pi 5 or x86 mini PC). Update this file and the `topic` skill when one is decided.
+- Decisions are recorded in `docs/decisions/` (one numbered file each, with the why and the options rejected). Stack: `001-stack.md`.
+- Still open in the PRD: product name, open or closed source, reference hardware (Raspberry Pi 5 or x86 mini PC). Update this file and the `topic` skill when one is decided.
 
 ## Stack
 
 Containers first: the whole application runs in Docker Compose, and the OS is only a wrapper around it. Daily development happens on a Mac with Docker Desktop; OS image tests in a QEMU/UTM VM; real-hardware tests on the box.
 
+- Core (accounts, storage, index, API, WebDAV, sharing, task queue): Go.
+- AI workers (text and image embeddings, OCR, speech, classification): Python, models run with ONNX Runtime, no PyTorch in the image. They read the task queue and write results to the database; they never modify user files.
+- Task queue: a PostgreSQL table (`SELECT … FOR UPDATE SKIP LOCKED`), no Redis.
 - Database: PostgreSQL with pgvector (HNSW index, one table per embedding model, model name and version stored with each vector).
-- AI: local by default (embeddings, OCR, speech, LLM), behind one provider interface; an external API key is opt-in per module.
+- LLM: Ollama or llama.cpp, behind the AI provider interface.
+- AI is local by default; an external API key is opt-in per module.
+- Web front: React with Vite, in TypeScript, served as static files by the core.
+- Mobile: React Native, in TypeScript, sharing API types with the web front.
 - Images are built for ARM64 (Apple Silicon, Raspberry Pi) and AMD64 (x86 mini PCs).
 
 ## Commands
