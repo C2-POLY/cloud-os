@@ -97,6 +97,8 @@ func routes(c Config) []route {
 		{"GET /api/search", member, f.search},
 		{"GET /api/files/recent", member, d.recent},
 		{"GET /api/activity", member, d.events},
+		{"GET /api/timeline", member, d.timeline},
+		{"GET /api/timeline/months", member, d.timelineMonths},
 		{"PUT /api/files/content", member, f.upload},
 		{"OPTIONS /api/uploads", member, u.options},
 		{"POST /api/uploads", member, u.create},

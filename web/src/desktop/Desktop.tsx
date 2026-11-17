@@ -5,9 +5,10 @@ import { api, type Account, type Health as HealthReport } from '../api.ts'
 import { Drive } from '../drive/Drive.tsx'
 import { TrashPage } from '../drive/TrashPage.tsx'
 import { Health } from '../Health.tsx'
-import { folderFromURL, navigate, usePath } from '../router.ts'
+import { driveURL, folderFromURL, navigate, usePath } from '../router.ts'
 import { SharesPage } from '../share/SharesPage.tsx'
-import { appInfo, apps, type AppId } from './apps.ts'
+import { appInfo, apps, timelinePath, type AppId } from './apps.ts'
+import { Timeline } from './Timeline.tsx'
 import { Palette } from './Palette.tsx'
 import { Widgets } from './Widgets.tsx'
 import { Window } from './Window.tsx'
@@ -89,7 +90,12 @@ export function Desktop({ me, onSignedOut }: { me: Account; onSignedOut: () => v
 function AppContent({ win, me }: { win: Win; me: Account }) {
   switch (win.id) {
     case 'files':
-      return <Drive folder={folderFromURL(win.path) ?? ''} />
+      return (
+        <>
+          <FilesViews path={win.path} />
+          {win.path === timelinePath ? <Timeline /> : <Drive folder={folderFromURL(win.path) ?? ''} />}
+        </>
+      )
     case 'shares':
       return <SharesPage />
     case 'trash':
@@ -102,6 +108,30 @@ function AppContent({ win, me }: { win: Win; me: Account }) {
         </>
       )
   }
+}
+
+/** Fichiers' two views: its folders, or everything on one timeline. */
+function FilesViews({ path }: { path: string }) {
+  const onTimeline = path === timelinePath
+  const link = (to: string, label: string, active: boolean) => (
+    <a
+      href={to}
+      className={active ? 'seg on' : 'seg'}
+      aria-current={active ? 'page' : undefined}
+      onClick={(e) => {
+        e.preventDefault()
+        navigate(to)
+      }}
+    >
+      {label}
+    </a>
+  )
+  return (
+    <nav className="files-views" aria-label="Vue de Fichiers">
+      {link(driveURL(''), 'Dossiers', !onTimeline)}
+      {link(timelinePath, 'Chronologie', onTimeline)}
+    </nav>
+  )
 }
 
 function DockButton({

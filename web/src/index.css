@@ -1479,6 +1479,160 @@ html:has(.desktop) body {
   border-left-color: var(--folder);
 }
 
+/* Fichiers: its two views, and the Chronologie */
+
+.files-views {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: 1rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+}
+
+.files-views .seg {
+  padding: 0.3rem 0.85rem;
+  border-radius: 8px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.files-views .seg.on {
+  color: var(--fg);
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  font-weight: 600;
+}
+
+.strip {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 56px;
+}
+
+.strip-bar {
+  flex: 1;
+  min-width: 2px;
+  max-width: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px 3px 1px 1px;
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  cursor: pointer;
+}
+
+.strip-bar:hover:not(:disabled),
+.strip-bar:focus-visible {
+  background: var(--accent);
+}
+
+.strip-bar.empty {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  cursor: default;
+}
+
+.strip-years {
+  display: flex;
+  justify-content: space-between;
+  margin: 0.3rem 0 1.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.timeline-month {
+  margin-bottom: 1.75rem;
+}
+
+.timeline-month h2 {
+  margin: 0 0 0.6rem;
+  font-size: 1.3rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.timeline-media {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 4px;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline-media button {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  cursor: pointer;
+}
+
+.timeline-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.timeline-media button:hover img,
+.timeline-media button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.timeline-media-icon {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: var(--muted);
+}
+
+.timeline-docs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline-docs button {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.45rem 0.5rem;
+  border: 0;
+  border-radius: 8px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.timeline-docs button:hover {
+  background: var(--hover);
+}
+
+.timeline-doc-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.timeline-end {
+  display: flex;
+  justify-content: center;
+  padding: 1rem 0 2rem;
+}
+
 /* On a phone: one window at a time, full screen, the dock below. */
 @media (max-width: 767px) {
   .menubar-who,

@@ -1,7 +1,7 @@
 # Interface web
 
 Le front React (Vite, TypeScript) que le cœur sert en fichiers statiques : `web/src/`.
-Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (versions), #13 (partage par lien), #31 (animations et défilement), #46 (le bureau), #48 (la palette Demander), #49 (les widgets du bureau).
+Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (versions), #13 (partage par lien), #31 (animations et défilement), #46 (le bureau), #48 (la palette Demander), #49 (les widgets du bureau), #47 (la Chronologie de Fichiers).
 
 ## Écrans et adresses
 
@@ -10,7 +10,8 @@ Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (
 | Adresse | Fenêtre | Pour |
 |---|---|---|
 | `/` | Aucune : le bureau | Tout compte |
-| `/drive`, `/drive/<dossier>` | Fichiers, sur ce dossier | Tout compte |
+| `/drive`, `/drive/<dossier>` | Fichiers, vue Dossiers, sur ce dossier | Tout compte |
+| `/chronologie` | Fichiers, vue Chronologie | Tout compte |
 | `/partages` | Partages : ses liens, avec Révoquer | Tout compte |
 | `/corbeille` | Corbeille | Tout compte |
 | `/s/<jeton>` | Hors du bureau : la page de l'invité d'un lien de partage | Sans compte |
@@ -32,12 +33,19 @@ Le compte connecté arrive sur un bureau : fond d'écran vivant, barre de menus,
 | `Desktop.tsx` | Le bureau : fond, barre de menus, horloge, fenêtres, dock, raccourci ⌘K |
 | `Palette.tsx`, `search.ts` | La palette Demander ([search.md](search.md)) |
 | `Widgets.tsx`, `widgets.ts` | Les widgets Reprendre et Ce qui s'est passé |
+| `Timeline.tsx`, `timeline.ts` | La vue Chronologie de Fichiers |
 
 - **L'adresse fait foi :** aller à l'adresse d'une app l'ouvre, ou la met au premier plan à cette adresse. Les autres fenêtres restent ouvertes, chacune à l'adresse qu'elle montrait (Fichiers garde son dossier). Fermer la fenêtre du premier plan donne la main à la suivante, ou au bureau (`/`). Précédent et Suivant marchent comme avant.
 - **Fenêtres :** elles se déplacent par la barre de titre, sans pouvoir passer sous la barre de menus ni sortir de l'écran (`clampPosition`). Le double-clic ou le bouton agrandit la fenêtre à tout le bureau. Une place se garde par app dans ce navigateur ; sans stockage (navigation privée), elle dure jusqu'à la fermeture de la page. Le contenu d'une fenêtre défile seul (`data-lenis-prevent`), la page jamais.
 - **Widgets** (sous l'horloge, en verre, en colonne sur téléphone) : relus toutes les 30 s et quand l'onglet redevient visible. Un widget garde sa dernière valeur si le cœur ne répond pas.
   - **Reprendre :** `GET /api/files/recent` (`storage.Recent`) donne les 8 fichiers vivants les plus récemment ajoutés ou modifiés, selon la plus tardive des deux dates, avec leur miniature. Un clic ouvre leur dossier dans Fichiers.
   - **Ce qui s'est passé :** `GET /api/activity?days=7&tz=<fuseau du navigateur>` lit le journal d'activité, regroupé par jour (dans ce fuseau, UTC s'il est inconnu), par type et par dossier. Par exemple « 46 fichiers ajoutés dans Photos », ou « Lien « Vacances » ouvert 3 fois ». Un clic ouvre le dossier, la corbeille ou les partages.
+- **Fichiers, deux vues :** un sélecteur en haut de la fenêtre, Dossiers (`/drive/…`) ou Chronologie (`/chronologie`).
+  - **Ce que montre la Chronologie :** tous les fichiers vivants, du plus récent au plus ancien. Une photo est à sa date de prise de vue (`media_meta.taken_at`, voir [metadata.md](metadata.md)), un autre fichier, ou une photo sans EXIF, à sa date de modification, dans le fuseau du navigateur.
+  - **Affichage :** chaque mois montre les photos et vidéos en grille de miniatures, puis les documents en lignes. Un clic ouvre le dossier de l'élément.
+  - **Frise :** une barre par mois, du premier au dernier, les mois vides compris. Un clic charge la liste à partir de ce mois.
+  - **Pages :** 60 éléments à la fois, la suivante quand la fin de liste devient visible (bouton Plus ancien sinon). Une réponse à un saut plus ancien qui arrive en retard est ignorée.
+  - **API, partagée avec la timeline de l'app Photos (#35) :** `GET /api/timeline?tz=&filter=media|docs&limit=&before_at=&before_path=` renvoie `{items, next}`. Le curseur est la date et le chemin du dernier élément, ce qui garantit des pages sans doublon ni trou même à date égale. `GET /api/timeline/months?tz=&filter=` donne le nombre de fichiers par mois. Le tri se fait à la volée (`storage.Timeline`), sans index dédié ; à revoir pour une très grande photothèque.
 - **Journal d'activité** (`core/internal/activity`, table `activity`, migration 0013) :
   - **Ce qu'il retient :** `storage.Store.Notify` signale `added` et `replaced` (fichier enregistré, version gardée ou non), `trashed` et `restored`. La page d'un invité signale `share_opened` à chaque visite (`GET /api/s/{jeton}`).
   - **Ce qu'il ne retient pas :** les téléchargements, qui compteraient chaque morceau d'une vidéo lue.
@@ -128,7 +136,7 @@ Motion anime l'interface et Lenis fait défiler la page, tous deux sous MIT ; GS
 
 Ce qui s'anime :
 
-- **Fenêtres du bureau** (`desktop/Window.tsx`) : une fenêtre entre en grandissant de 0,97 à 1, avec une montée de 8 px, et sort en rétrécissant avant d'être retirée. Pas d'animation d'un dossier à l'autre. Le fond d'écran dérive et change de teinte en CSS, et s'arrête avec le mouvement réduit.
+- **Fenêtres du bureau** (`desktop/Window.tsx`) : une fenêtre entre en grandissant de 0,97 à 1, avec une montée de 8 px, et sort en rétrécissant avant d'être retirée. Si le navigateur retient les animations (onglet en arrière-plan, horloge d'images en pause), `enter()` termine l'animation 300 ms après sa fin prévue : un élément ne reste jamais invisible. Pas d'animation d'un dossier à l'autre. Le fond d'écran dérive et change de teinte en CSS, et s'arrête avec le mouvement réduit.
 - **Liste du drive** (`FileList.tsx`) : quand le dossier affiché change, les `animatedRows` (30) premières lignes entrent l'une après l'autre (6 px, 15 ms d'écart). Les suivantes s'affichent telles quelles, si bien qu'un dossier de milliers de fichiers ne coûte pas plus cher qu'un petit. Un tri, un renommage ou un envoi ne relance rien : `Drive.tsx` passe à `FileList` le dossier auquel appartient la liste reçue (`listing.folder`), pas celui de l'adresse.
 - **Fenêtres** (`Modal`, `Dialogs.tsx`) : le fond entre en fondu et le panneau grandit de 0,96 à 1. Échap, un clic sur le fond ou un `DismissButton` (Annuler, Fermer) lancent la sortie, puis appellent `onClose` une seule fois, même après plusieurs demandes. Une fenêtre qui se ferme après une action réussie appelle `onClose` directement.
 - **Panneau d'envoi** (`UploadPanel.tsx`) : il monte de 16 px quand le premier envoi commence, et chaque nouvel envoi entre en fondu. La progression ne relance rien.

@@ -1,6 +1,9 @@
 import { HardDrive, Share2, Trash2, Users, type LucideIcon } from 'lucide-react'
 import { folderFromURL } from '../router.ts'
 
+/** The address of Fichiers' Chronologie view. */
+export const timelinePath = '/chronologie'
+
 export type AppId = 'files' | 'shares' | 'trash' | 'accounts'
 
 /** An app of the desktop: it opens in a window, at its own addresses. */
@@ -28,7 +31,7 @@ export function appInfo(id: AppId): AppInfo {
 
 /** The app an address belongs to; null for the desktop itself and unknown addresses. */
 export function appOf(path: string): AppId | null {
-  if (folderFromURL(path) !== null) return 'files'
+  if (folderFromURL(path) !== null || path === timelinePath) return 'files'
   if (path === '/partages') return 'shares'
   if (path === '/corbeille') return 'trash'
   if (path === '/comptes') return 'accounts'

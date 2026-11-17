@@ -122,6 +122,18 @@ describe('Desktop', () => {
     expect(windowNamed('Corbeille')).not.toHaveClass('max')
   })
 
+  it('switches Fichiers between its folders and its timeline', () => {
+    api()
+    window.history.replaceState(null, '', '/drive')
+    render(<Desktop me={enzo} onSignedOut={() => {}} />)
+    const views = screen.getByRole('navigation', { name: 'Vue de Fichiers' })
+    fireEvent.click(within(views).getByRole('link', { name: 'Chronologie' }))
+    expect(window.location.pathname).toBe('/chronologie')
+    expect(windowNamed('Fichiers')).toHaveClass('front')
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Vue de Fichiers' })).getByRole('link', { name: 'Dossiers' }))
+    expect(window.location.pathname).toBe('/drive')
+  })
+
   it('works without browser storage', () => {
     api()
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
