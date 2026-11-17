@@ -76,7 +76,7 @@ func (s *Store) List(ctx context.Context, owner, dir string) ([]File, error) {
 	}
 	rows, err := s.Pool.Query(ctx,
 		`SELECT `+fileColumns+` FROM files
-		 WHERE owner = $1 AND path LIKE $2 || '%' ESCAPE '\' AND position('/' in substr(path, $3)) = 0
+		 WHERE owner = $1 AND trash_id IS NULL AND path LIKE $2 || '%' ESCAPE '\' AND position('/' in substr(path, $3)) = 0
 		 ORDER BY kind = 'file', lower(path)`,
 		owner, escapeLike(prefix), len(prefix)+1)
 	if err != nil {
@@ -129,7 +129,7 @@ func (s *Store) Move(ctx context.Context, owner, from, to string) (File, error) 
 		return File{}, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // a no-op after Commit
-	if _, err := scanFile(tx.QueryRow(ctx, `SELECT `+fileColumns+` FROM files WHERE owner = $1 AND path = $2`, owner, from)); err != nil {
+	if _, err := scanFile(tx.QueryRow(ctx, `SELECT `+fileColumns+` FROM files WHERE owner = $1 AND path = $2 AND trash_id IS NULL`, owner, from)); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return File{}, fmt.Errorf("%w: %s/%s", ErrNotFound, owner, from)
 		}
@@ -214,7 +214,7 @@ func applyMove(ctx context.Context, db beginner, moveID int64, owner, from, to s
 	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE files SET path = CASE WHEN path = $2 THEN $3 ELSE $3 || substr(path, length($2) + 1) END
-		 WHERE owner = $1 AND (path = $2 OR path LIKE $4 || '/%' ESCAPE '\')`,
+		 WHERE owner = $1 AND trash_id IS NULL AND (path = $2 OR path LIKE $4 || '/%' ESCAPE '\')`,
 		owner, from, to, escapeLike(from)); err != nil {
 		return err
 	}
@@ -224,23 +224,25 @@ func applyMove(ctx context.Context, db beginner, moveID int64, owner, from, to s
 	return tx.Commit(ctx)
 }
 
-// RecoverMoves settles the moves left by a crash. Call it at startup, before
-// serving. A move whose target is on disk and source is gone is finished; one
-// whose source is still there and target is not is dropped; anything else is
-// left in the journal and logged, never guessed.
+// RecoverMoves settles the moves, trashes and restores left by a crash. Call
+// it at startup, before serving. One whose target is on disk and source is
+// gone is finished; one whose source is still there and target is not is
+// dropped; anything else is left in the journal and logged, never guessed.
 func (s *Store) RecoverMoves(ctx context.Context) (finished, dropped int, err error) {
-	rows, err := s.Pool.Query(ctx, `SELECT id, owner, from_path, to_path FROM moves ORDER BY id`)
+	rows, err := s.Pool.Query(ctx, `SELECT id, owner, from_path, to_path, op, trash_id FROM moves ORDER BY id`)
 	if err != nil {
 		return 0, 0, err
 	}
 	type move struct {
 		id              int64
 		owner, from, to string
+		op              string
+		trashID         *int64
 	}
 	var moves []move
 	for rows.Next() {
 		var m move
-		if err := rows.Scan(&m.id, &m.owner, &m.from, &m.to); err != nil {
+		if err := rows.Scan(&m.id, &m.owner, &m.from, &m.to, &m.op, &m.trashID); err != nil {
 			rows.Close()
 			return 0, 0, err
 		}
@@ -252,12 +254,33 @@ func (s *Store) RecoverMoves(ctx context.Context) (finished, dropped int, err er
 	}
 
 	for _, m := range moves {
-		_, srcErr := os.Lstat(s.diskPath(m.owner, m.from))
-		_, dstErr := os.Lstat(s.diskPath(m.owner, m.to))
+		src, dst := s.diskPath(m.owner, m.from), s.diskPath(m.owner, m.to)
+		var trashID int64
+		if m.trashID != nil {
+			trashID = *m.trashID
+		}
+		switch m.op {
+		case "trash":
+			dst = s.trashDisk(m.owner, trashID, m.from)
+		case "restore":
+			src = s.trashDisk(m.owner, trashID, m.from)
+		}
+		_, srcErr := os.Lstat(src)
+		_, dstErr := os.Lstat(dst)
 		srcThere, dstThere := srcErr == nil, dstErr == nil
 		switch {
 		case !srcThere && dstThere:
-			if err := applyMove(ctx, s.Pool, m.id, m.owner, m.from, m.to); err != nil {
+			var err error
+			switch m.op {
+			case "trash":
+				err = applyTrash(ctx, s.Pool, m.id, m.owner, m.from, trashID)
+			case "restore":
+				removeEmptyTrashDir(s.trashDir(m.owner, trashID))
+				err = applyRestore(ctx, s.Pool, m.id, m.owner, m.from, m.to, trashID)
+			default:
+				err = applyMove(ctx, s.Pool, m.id, m.owner, m.from, m.to)
+			}
+			if err != nil {
 				return finished, dropped, err
 			}
 			finished++
@@ -265,9 +288,15 @@ func (s *Store) RecoverMoves(ctx context.Context) (finished, dropped int, err er
 			if _, err := s.Pool.Exec(ctx, `DELETE FROM moves WHERE id = $1`, m.id); err != nil {
 				return finished, dropped, err
 			}
+			if m.op == "trash" {
+				// The item never reached the trash: its trash row goes too.
+				if _, err := s.Pool.Exec(ctx, `DELETE FROM trash WHERE id = $1`, trashID); err != nil {
+					return finished, dropped, err
+				}
+			}
 			dropped++
 		default:
-			slog.Error("move left in the journal: check the disk by hand",
+			slog.Error("operation left in the journal: check the disk by hand", "op", m.op,
 				"owner", m.owner, "from", m.from, "to", m.to, "source_on_disk", srcThere, "target_on_disk", dstThere)
 		}
 	}

@@ -55,12 +55,34 @@ func (s *Store) Verify(ctx context.Context) (Report, error) {
 		return rep, err
 	}
 
+	// Trashed rows live under .cloudos/trash/<owner>/<id>/, below the item's name.
+	trashPaths := map[int64]string{}
+	trows, err := s.Pool.Query(ctx, `SELECT id, path FROM trash`)
+	if err != nil {
+		return rep, err
+	}
+	for trows.Next() {
+		var id int64
+		var p string
+		if err := trows.Scan(&id, &p); err != nil {
+			trows.Close()
+			return rep, err
+		}
+		trashPaths[id] = p
+	}
+	trows.Close()
+
 	for _, f := range files {
 		if err := ctx.Err(); err != nil {
 			return rep, err
 		}
-		indexed[f.Owner+"/"+f.Path] = true
 		disk := s.diskPath(f.Owner, f.Path)
+		if f.TrashID != nil {
+			original := trashPaths[*f.TrashID]
+			disk = s.trashDisk(f.Owner, *f.TrashID, original) + filepath.FromSlash(strings.TrimPrefix(f.Path, original))
+		} else {
+			indexed[f.Owner+"/"+f.Path] = true
+		}
 		info, err := os.Lstat(disk)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):

@@ -1,7 +1,7 @@
 # Interface web
 
 Le front React (Vite, TypeScript) que le cœur sert en fichiers statiques : `web/src/`.
-Issues : #6 (assistant, connexion, comptes), #11 (drive).
+Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille).
 
 ## Écrans et adresses
 
@@ -10,6 +10,7 @@ Avant la connexion, `App.tsx` choisit l'écran selon l'état du cœur : l'assist
 | Adresse | Page | Pour |
 |---|---|---|
 | `/drive`, `/drive/<dossier>` | Le drive, sur ce dossier | Tout compte |
+| `/corbeille` | La corbeille | Tout compte |
 | `/comptes` | La santé de la box et la gestion des comptes | Admin |
 | Toute autre adresse | Remplacée par `/drive` | |
 
@@ -33,8 +34,14 @@ Avant la connexion, `App.tsx` choisit l'écran selon l'état du cœur : l'assist
 - **Actions :**
   - **Renommer** est un déplacement dans le même dossier (`POST /api/files/move`).
   - **Télécharger** est un lien vers `/api/files/content`, avec le cookie de session.
-  - **Pas de suppression :** la suppression vers la corbeille vient avec #10.
+  - **Supprimer** met à la corbeille sans confirmation, puisque c'est réversible. Un message « mis à la corbeille » propose Annuler, qui restaure aussitôt.
 - **Mobile :** en largeur mobile, les colonnes Taille et Modifié passent sous le nom, et les actions restent visibles.
+
+## Corbeille
+
+`drive/TrashPage.tsx` liste la corbeille : nom, dossier d'origine, taille, date de suppression et date d'effacement.
+- **Restaurer :** l'élément revient, et le message dit où, et sous quel nom si le nom d'origine était pris.
+- **Supprimer définitivement et Vider la corbeille :** chacun passe par une confirmation (`ConfirmDialog`) qui dit ce qui sera effacé et que c'est sans retour. L'API exige de toute façon `{"confirm": true}`.
 
 ## File d'envoi
 

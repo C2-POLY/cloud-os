@@ -167,3 +167,55 @@ export function MoveDialog({
     </Modal>
   )
 }
+
+/** Asks before an action that cannot be undone. */
+export function ConfirmDialog({
+  title,
+  message,
+  confirmLabel,
+  onConfirm,
+  onClose,
+}: {
+  title: string
+  message: string
+  confirmLabel: string
+  onConfirm: () => Promise<void>
+  onClose: () => void
+}) {
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  return (
+    <Modal title={title} onClose={onClose}>
+      <p>{message}</p>
+      {error && (
+        <p className="bad" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="dialog-buttons">
+        <button type="button" className="secondary" onClick={onClose} autoFocus>
+          Annuler
+        </button>
+        <button
+          type="button"
+          className="danger"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true)
+            setError(null)
+            try {
+              await onConfirm()
+              onClose()
+            } catch (err) {
+              setError(messageOf(err))
+            } finally {
+              setBusy(false)
+            }
+          }}
+        >
+          {confirmLabel}
+        </button>
+      </div>
+    </Modal>
+  )
+}

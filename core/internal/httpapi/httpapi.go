@@ -64,6 +64,7 @@ func routes(c Config) []route {
 	a := &accountsAPI{auth: c.Auth}
 	f := &filesAPI{store: c.Files}
 	u := &uploadsAPI{store: c.Files, maxSize: c.MaxUpload}
+	t := &trashAPI{store: c.Files}
 	return []route{
 		{"GET /api/health", public, healthHandler(c.Version, c.Health)},
 		{"GET /api/setup", public, a.setupNeeded},
@@ -84,6 +85,11 @@ func routes(c Config) []route {
 		{"HEAD /api/uploads/{id}", member, u.head},
 		{"PATCH /api/uploads/{id}", member, u.patch},
 		{"DELETE /api/uploads/{id}", member, u.terminate},
+		{"POST /api/files/trash", member, t.trash},
+		{"GET /api/trash", member, t.list},
+		{"POST /api/trash/{id}/restore", member, t.restore},
+		{"POST /api/trash/{id}/purge", member, t.purge},
+		{"POST /api/trash/empty", member, t.empty},
 	}
 }
 

@@ -1,11 +1,12 @@
 # Stockage des fichiers
 
 Le domaine qui écrit, range et vérifie les fichiers des utilisateurs : `core/internal/storage`, et l'API qui l'expose, `core/internal/httpapi/files.go`.
-Issues : #7 (écriture et index), #9 (dossiers, déplacements, API), #18 (envoi reprenable).
+Issues : #7 (écriture et index), #9 (dossiers, déplacements, API), #18 (envoi reprenable), #10 (corbeille).
 
 ## Ce qui est garanti
 
-- **Aucune perte, aucun écrasement.** Seul ce paquet écrit dans le dossier de données. Il n'écrase jamais un fichier existant, indexé ou non, et ne supprime jamais un fichier stocké.
+- **Aucune perte, aucun écrasement.** Seul ce paquet écrit dans le dossier de données. Il n'écrase jamais un fichier existant, indexé ou non. Supprimer, c'est mettre à la corbeille : seule la purge de la corbeille efface des octets, à l'expiration ou sur confirmation.
+- **Garde-fou dans les tests.** `core/internal/guard/erase_test.go` analyse tout le code Go du cœur et échoue si une fonction hors de la liste fermée `allowedErasers` appelle `os.Remove`, `os.RemoveAll` ou `Truncate`. Ajouter une fonction à cette liste est une décision de design, à relire comme telle.
 - **Lisible sans le produit.** Les fichiers sont en clair sous `<données>/<compte>/<chemin>`, avec leurs vrais noms.
 - **Disque et index d'accord.** Une écriture ou un déplacement interrompu ne laisse ni fichier à moitié écrit ni index faux. `core verify` le contrôle à tout moment, sans rien réparer.
 
@@ -15,6 +16,7 @@ Issues : #7 (écriture et index), #9 (dossiers, déplacements, API), #18 (envoi 
 <CLOUDOS_DATA_DIR>/            /data dans le conteneur du cœur
 ├── .cloudos/tmp/              écritures en cours, vidées au démarrage du serveur
 ├── .cloudos/uploads/<id>      envois reprenables en cours (tus), supprimés à la fin ou après 24 h
+├── .cloudos/trash/<compte>/<id>/<nom>   éléments mis à la corbeille, effacés après 30 jours
 ├── enzo/                      un dossier par compte (nom du compte = nom du dossier)
 │   ├── Documents/contrat.pdf
 │   └── Photos/2024/plage.jpg
@@ -76,6 +78,36 @@ stateDiagram-v2
 - **`core verify` :** il classe chaque entrée en *ok*, *modifié*, *disparu* ou *non indexé*, ne change rien, et sort avec le code 1 au premier écart.
 - **`core import <compte> <dossier>` :** il ne fait que lire la source et garde les dates de modification. Il ignore les liens et les fichiers spéciaux, laisse en place un fichier déjà présent avec le même contenu, et adopte un fichier laissé non indexé par un crash quand son hash correspond.
 
+## Corbeille
+
+Supprimer un fichier ou un dossier l'envoie à la corbeille ; rien n'est effacé.
+
+- **Disque :** les octets de l'élément, enfants compris, vont dans `.cloudos/trash/<compte>/<id>/<nom>`.
+- **Index :** les lignes restent dans `files`, marquées `trash_id`. L'index unique ne porte que sur les lignes hors corbeille : le chemin d'origine se libère tout de suite. Toutes les requêtes sur les fichiers vivants filtrent `trash_id IS NULL`.
+- **Table `trash` :** chemin d'origine, type, taille, date de suppression, expiration (`CLOUDOS_TRASH_DAYS`, 30 jours par défaut).
+
+Mettre à la corbeille et restaurer suivent le même chemin journalisé qu'un déplacement (`moves.op` vaut `trash` ou `restore`), sous le verrou du compte tenu de bout en bout. `RecoverMoves` les termine ou les annule au démarrage.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Intention: verrou du compte, INSERT trash + moves(op=trash), COMMIT
+    Intention --> AuDisque: rename(chemin, .cloudos/trash/compte/id/nom)
+    Intention --> Annule: rename impossible, DELETE moves + trash
+    AuDisque --> EnCorbeille: UPDATE files SET trash_id (élément et enfants), DELETE moves, COMMIT
+    Intention --> Reprise: crash
+    AuDisque --> Reprise: crash
+    Reprise --> EnCorbeille: au démarrage, l'élément est dans la corbeille
+    Reprise --> Annule: au démarrage, l'élément est encore à sa place
+    EnCorbeille --> Restaure: restore (même chemin journalisé, en sens inverse)
+    EnCorbeille --> Purge: expiré ou confirmé, RemoveAll dans .cloudos/trash, puis DELETE des lignes
+    Restaure --> [*]
+    Purge --> [*]
+```
+
+- **Restaurer :** l'élément revient à son chemin d'origine. Si le chemin est pris, il revient à côté sous « nom (restauré).ext », puis « nom (restauré 2).ext ». Si son dossier est devenu un fichier, il revient à la racine. Les dossiers parents manquants sont recréés.
+- **Purger :** `PurgeExpired` tourne au démarrage puis toutes les heures ; `Purge` et `EmptyTrash` répondent à une demande confirmée. Les octets partent d'abord (`removeTrashDir`, qui refuse tout dossier qui n'est pas exactement `.cloudos/trash/<compte>/<id>`), puis les lignes : un crash entre les deux est fini par la purge suivante. Un élément dont une opération est encore dans le journal n'est pas purgé.
+- **Migration :** la partie « down » de 0006 refuse de s'exécuter tant que la corbeille n'est pas vide.
+
 ## API
 
 Toutes les routes exigent une session, et chacun ne voit que son propre espace : le compte vient de la session, jamais d'un paramètre.
@@ -87,6 +119,11 @@ Toutes les routes exigent une session, et chacun ne voit que son propre espace :
 | `POST /api/files/move` `{from, to}` | Renomme ou déplace un fichier ou un dossier |
 | `GET /api/files/content?path=` | Télécharge ; `Range`, `If-None-Match` (ETag = SHA-256) et `If-Modified-Since` gérés |
 | `PUT /api/files/content?path=` | Envoi en une requête ; `Content-Length` et `X-Content-SHA256` vérifiés, `X-Modified-At` en option |
+| `POST /api/files/trash` `{path}` | Met à la corbeille |
+| `GET /api/trash` | Liste la corbeille, la plus récente d'abord |
+| `POST /api/trash/{id}/restore` | Restaure ; renvoie l'emplacement retrouvé |
+| `POST /api/trash/{id}/purge` `{confirm: true}` | Efface un élément pour de bon (400 sans la confirmation) |
+| `POST /api/trash/empty` `{confirm: true}` | Vide la corbeille |
 
 - **En-tête client :** l'envoi brut porte l'en-tête `X-Cloudos-Client` à la place d'un corps JSON. Comme le JSON, il force la vérification préalable CORS, que le cœur n'accorde jamais.
 - **Codes d'erreur :**
