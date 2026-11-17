@@ -68,6 +68,12 @@ func (s *Store) Verify(ctx context.Context) (Report, error) {
 			continue
 		case err != nil:
 			return rep, err
+		case f.IsDir() && info.IsDir():
+			rep.OK++
+			continue
+		case f.IsDir():
+			rep.Problems = append(rep.Problems, Problem{Kind: "modified", Owner: f.Owner, Path: f.Path, Note: "no longer a folder"})
+			continue
 		case !info.Mode().IsRegular():
 			rep.Problems = append(rep.Problems, Problem{Kind: "modified", Owner: f.Owner, Path: f.Path, Note: "no longer a regular file"})
 			continue

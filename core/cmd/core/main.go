@@ -117,6 +117,13 @@ func serve(ctx context.Context, c core) error {
 	if n > 0 {
 		slog.Warn("removed temporary files left by interrupted writes", "count", n)
 	}
+	finished, dropped, err := c.files.RecoverMoves(ctx)
+	if err != nil {
+		return fmt.Errorf("recover moves: %w", err)
+	}
+	if finished+dropped > 0 {
+		slog.Warn("settled moves left by a crash", "finished", finished, "dropped", dropped)
+	}
 
 	addr := envOr("CORE_ADDR", ":8080")
 	srv := &http.Server{
@@ -125,6 +132,7 @@ func serve(ctx context.Context, c core) error {
 			Version:   version,
 			Health:    &db.Store{Pool: c.pool, Migrations: c.provider},
 			Auth:      auth.NewService(c.pool),
+			Files:     c.files,
 			StaticDir: os.Getenv("STATIC_DIR"),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
