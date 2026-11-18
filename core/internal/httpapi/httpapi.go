@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/C2-POLY/cloud-os/core/internal/activity"
+	"github.com/C2-POLY/cloud-os/core/internal/albums"
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/davfs"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
@@ -49,6 +50,7 @@ type Config struct {
 	Auth      *auth.Service
 	Files     *storage.Store
 	Shares    *share.Service
+	Albums    *albums.Service
 	Activity  *activity.Log // nil: no journal (tests that do not need it)
 	MaxUpload int64         // bytes; 0 means only the free space limits an upload
 	StaticDir string        // the built web front, served at / when not empty
@@ -78,6 +80,7 @@ func routes(c Config) []route {
 	t := &trashAPI{store: c.Files}
 	s := &sharesAPI{shares: c.Shares, activity: c.Activity}
 	d := &desktopAPI{files: c.Files, activity: c.Activity}
+	al := &albumsAPI{albums: c.Albums}
 	return []route{
 		{"GET /api/health", public, healthHandler(c.Version, c.Health)},
 		{"GET /api/setup", public, a.setupNeeded},
@@ -115,6 +118,14 @@ func routes(c Config) []route {
 		{"POST /api/trash/{id}/restore", member, t.restore},
 		{"POST /api/trash/{id}/purge", member, t.purge},
 		{"POST /api/trash/empty", member, t.empty},
+		{"GET /api/albums", member, al.list},
+		{"POST /api/albums", member, al.create},
+		{"GET /api/albums/{id}", member, al.get},
+		{"PATCH /api/albums/{id}", member, al.rename},
+		{"DELETE /api/albums/{id}", member, al.remove},
+		{"GET /api/albums/{id}/items", member, al.items},
+		{"POST /api/albums/{id}/items", member, al.change(true)},
+		{"POST /api/albums/{id}/items/remove", member, al.change(false)},
 		{"POST /api/shares", member, s.create},
 		{"GET /api/shares", member, s.list},
 		{"DELETE /api/shares/{id}", member, s.revoke},

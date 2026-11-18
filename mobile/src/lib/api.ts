@@ -1,4 +1,4 @@
-import type { Account, Entry, MediaMeta, MonthCount, SignedIn, TimelineCursor, TimelinePage } from '../../../shared/api-types'
+import type { Account, Album, Entry, MediaMeta, MonthCount, SignedIn, TimelineCursor, TimelinePage } from '../../../shared/api-types'
 
 /** An error answered by the box, with its HTTP status. */
 export class ApiError extends Error {
@@ -69,6 +69,9 @@ export function client(c: Connection) {
     timeline: (before: TimelineCursor | null) =>
       get<TimelinePage>(`/api/timeline?tz=${zone}&limit=90&filter=media${before ? `&before_at=${q(before.at)}&before_path=${q(before.path)}` : ''}`),
     known: async (sums: string[]) => (await call<{ known: string[] }>(c.box, c.token, 'POST', '/api/files/known', { sha256: sums })).known,
+    albums: () => get<Album[]>('/api/albums'),
+    albumItems: (id: number, before: TimelineCursor | null) =>
+      get<TimelinePage>(`/api/albums/${id}/items?tz=${zone}&limit=90${before ? `&before_at=${q(before.at)}&before_path=${q(before.path)}` : ''}`),
     months: () => get<MonthCount[]>(`/api/timeline/months?tz=${zone}&filter=media`),
     meta: (path: string) => get<MediaMeta>(`/api/files/meta?path=${q(path)}`),
     contentURL: (path: string) => `${c.box}/api/files/content?path=${q(path)}`,

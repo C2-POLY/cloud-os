@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -65,6 +66,16 @@ func timelineBase(filter TimelineFilter) string {
 // Timeline returns a page of the owner's live files, newest first, after the
 // cursor when one is given. tz is an IANA time zone name the caller checked.
 func (s *Store) Timeline(ctx context.Context, owner, tz string, filter TimelineFilter, after *TimelineCursor, limit int) ([]TimelineItem, error) {
+	return s.timeline(ctx, owner, tz, filter, after, limit, 0)
+}
+
+// AlbumTimeline is Timeline narrowed to the live files of an album, which the
+// caller checked belongs to owner (internal/albums).
+func (s *Store) AlbumTimeline(ctx context.Context, owner, tz string, album int64, after *TimelineCursor, limit int) ([]TimelineItem, error) {
+	return s.timeline(ctx, owner, tz, TimelineAll, after, limit, album)
+}
+
+func (s *Store) timeline(ctx context.Context, owner, tz string, filter TimelineFilter, after *TimelineCursor, limit int, album int64) ([]TimelineItem, error) {
 	owner, err := CleanOwner(owner)
 	if err != nil {
 		return nil, err
@@ -74,12 +85,18 @@ func (s *Store) Timeline(ctx context.Context, owner, tz string, filter TimelineF
 	}
 	limit = min(limit, MaxTimelinePage)
 	args := []any{owner, tz, limit}
+	base := timelineBase(filter)
+	if album != 0 {
+		args = append(args, album)
+		base += ` AND f.id IN (SELECT file_id FROM album_items WHERE album_id = $4)`
+	}
 	cursor := ""
 	if after != nil {
+		n := len(args)
 		args = append(args, after.At.Format("2006-01-02T15:04:05.999999"), after.Path)
-		cursor = ` WHERE (t.at, t.path) < ($4::timestamp, $5)`
+		cursor = fmt.Sprintf(` WHERE (t.at, t.path) < ($%d::timestamp, $%d)`, n+1, n+2)
 	}
-	rows, err := s.Pool.Query(ctx, `SELECT * FROM (`+timelineBase(filter)+`) t`+cursor+`
+	rows, err := s.Pool.Query(ctx, `SELECT * FROM (`+base+`) t`+cursor+`
 		ORDER BY t.at DESC, t.path DESC LIMIT $3`, args...)
 	if err != nil {
 		return nil, err
