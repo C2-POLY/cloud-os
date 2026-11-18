@@ -28,11 +28,14 @@ services:
     environment:
       DATABASE_URL: *database-url
       CLOUDOS_DATA_DIR: /data
+      MAPS_DIR: /maps
     ports:
       - "127.0.0.1:${CLOUDOS_CORE_PORT:-8480}:8080"
     volumes:
       # User files, in clear: <data dir>/<owner>/<path>, readable from the host.
       - ${CLOUDOS_DATA_DIR:-./.data/files}:/data
+      # The Photos map's tiles: a .pmtiles file, read only (docs/architecture/map.md).
+      - ${CLOUDOS_MAPS_DIR:-./.data/maps}:/maps:ro
     depends_on:
       db:
         condition: service_healthy

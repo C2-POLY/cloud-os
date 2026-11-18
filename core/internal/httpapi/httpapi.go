@@ -44,11 +44,13 @@ type Health struct {
 
 // Config is what the core's routes need.
 type Config struct {
-	Version   string
-	Health    HealthStore
-	Auth      *auth.Service
-	Files     *storage.Store
-	Shares    *share.Service
+	Version string
+	Health  HealthStore
+	Auth    *auth.Service
+	Files   *storage.Store
+	Shares  *share.Service
+	// MapsDir holds the .pmtiles file of the Photos map; "" when none.
+	MapsDir   string
 	Activity  *activity.Log // nil: no journal (tests that do not need it)
 	MaxUpload int64         // bytes; 0 means only the free space limits an upload
 	StaticDir string        // the built web front, served at / when not empty
@@ -78,6 +80,7 @@ func routes(c Config) []route {
 	t := &trashAPI{store: c.Files}
 	s := &sharesAPI{shares: c.Shares, activity: c.Activity}
 	d := &desktopAPI{files: c.Files, activity: c.Activity}
+	m := &mapAPI{dir: c.MapsDir, files: c.Files}
 	return []route{
 		{"GET /api/health", public, healthHandler(c.Version, c.Health)},
 		{"GET /api/setup", public, a.setupNeeded},
@@ -115,6 +118,9 @@ func routes(c Config) []route {
 		{"POST /api/trash/{id}/restore", member, t.restore},
 		{"POST /api/trash/{id}/purge", member, t.purge},
 		{"POST /api/trash/empty", member, t.empty},
+		{"GET /api/map", member, m.info},
+		{"GET /api/map/tiles.pmtiles", member, m.tileFile},
+		{"GET /api/map/points", member, m.points},
 		{"POST /api/shares", member, s.create},
 		{"GET /api/shares", member, s.list},
 		{"DELETE /api/shares/{id}", member, s.revoke},
