@@ -87,6 +87,7 @@ Table `document_text` (migration `0017_document_text.sql`), clé `sha256` : deux
 | `truncated` | Le document en avait plus : plafond ou délai atteint |
 | `pages` | Pages d'un PDF, diapositives, feuilles ; NULL pour un texte, un docx, un odt, ou un classeur ODF coupé avant la fin |
 | `has_text` | Faux pour un scan ou un document vide (ci-dessus) |
+| `tsv` | Le `tsvector` du texte (`cloudos_doc_tsv`, configuration `cloudos_fr`), colonne générée pour la recherche dans le contenu ([search.md](search.md)) |
 
 Postgres compresse le texte (TOAST) : 10 000 documents d'une vingtaine de pages font environ 200 Mo avant compression.
 
@@ -94,4 +95,4 @@ Pas de clé étrangère vers `files` : toutes les 30 s, avec `Reap`, `thumbs.Pru
 
 ## API
 
-Aucune pour l'instant : la recherche dans le contenu et ses routes viennent avec #69.
+Le texte n'a pas de route à lui : il sert la recherche dans le contenu, `GET /api/search/content` (#69). La migration 0018 lui ajoute la colonne générée `tsv` et son index GIN ; tout est dans [search.md](search.md).

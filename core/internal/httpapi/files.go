@@ -180,6 +180,30 @@ func (a *filesAPI) search(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, entries)
 }
 
+// ContentHit is a file whose text holds the words searched, with an extract
+// of the text around them (GET /api/search/content).
+type ContentHit struct {
+	Entry
+	Snippet []storage.SnippetPart `json:"snippet"`
+}
+
+// searchContent finds the account's files whose text holds the words of q
+// (storage.Store.SearchContent), at most limit of them
+// (storage.DefaultContentLimit, storage.MaxSearchLimit).
+func (a *filesAPI) searchContent(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	hits, err := a.store.SearchContent(r.Context(), owner(r), r.URL.Query().Get("q"), limit)
+	if err != nil {
+		failFiles(w, err)
+		return
+	}
+	out := make([]ContentHit, len(hits))
+	for i, h := range hits {
+		out[i] = ContentHit{Entry: entryOf(h.File), Snippet: h.Snippet}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // metaJSON is the metadata of a file as the API returns it. TakenAt is the
 // wall-clock time the photo was taken, without a zone ("2024-07-14T18:03:22");
 // TakenOffset is its offset from UTC ("+02:00") when the camera wrote one.

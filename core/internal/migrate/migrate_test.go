@@ -51,6 +51,8 @@ var tables = []struct {
 	{16, []string{"albums", "album_items"}, `INSERT INTO albums (owner, name) SELECT name, 'Bretagne' FROM accounts LIMIT 1`},
 	{17, []string{"document_text"}, `INSERT INTO document_text (sha256, source, text, chars, truncated, pages, has_text)
 		VALUES (sha256('a'), 'pdf', 'Contrat de location', 19, false, 1, false)`},
+	// Migration 18 adds a generated column and its index to document_text, no table.
+	{18, []string{}, `SELECT 1 FROM document_text WHERE tsv @@ websearch_to_tsquery('public.cloudos_fr', 'contrats')`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {
@@ -182,6 +184,52 @@ func TestFolderBackfill(t *testing.T) {
 	var files int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM files`).Scan(&files); err != nil || files != 4 {
 		t.Errorf("after down: %d file rows (%v), want the 4 files", files, err)
+	}
+}
+
+// TestDocumentSearchMigration checks that migration 18 indexes the text
+// already extracted, and that undoing it keeps every text.
+func TestDocumentSearchMigration(t *testing.T) {
+	ctx := context.Background()
+	pool, err := db.Open(ctx, testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	p, err := migrate.NewProvider(db.SQL(pool))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.UpTo(ctx, 17); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO document_text (sha256, source, text, chars, truncated, pages, has_text)
+		VALUES (sha256('a'), 'text', 'Facture d''ÉLECTRICITÉ', 21, false, NULL, true)`); err != nil {
+		t.Fatal(err)
+	}
+	found := func() bool {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM document_text
+			WHERE tsv @@ websearch_to_tsquery('public.cloudos_fr', 'factures electricite')`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n == 1
+	}
+	for _, step := range []string{"up", "up again"} {
+		if _, err := p.UpTo(ctx, 18); err != nil {
+			t.Fatalf("%s: %v", step, err)
+		}
+		if !found() {
+			t.Errorf("%s: the text already there is not indexed", step)
+		}
+		if _, err := p.DownTo(ctx, 17); err != nil {
+			t.Fatalf("down: %v", err)
+		}
+		var text string
+		if err := pool.QueryRow(ctx, `SELECT text FROM document_text`).Scan(&text); err != nil || text != "Facture d'ÉLECTRICITÉ" {
+			t.Errorf("after down: %q (%v)", text, err)
+		}
 	}
 }
 

@@ -23,6 +23,17 @@ export interface Entry {
   modified_at: string
 }
 
+/** A piece of an extract: a word found (hit) or the text around it, as the core's `storage.SnippetPart` writes it. */
+export interface SnippetPart {
+  text: string
+  hit?: boolean
+}
+
+/** A file whose text holds the words searched, with an extract, as the core's `httpapi.ContentHit` writes it (GET /api/search/content). */
+export interface ContentHit extends Entry {
+  snippet: SnippetPart[]
+}
+
 /** A file on the timeline, as the core's `httpapi.TimelineEntry` writes it. */
 export interface TimelineEntry extends Entry {
   at: string // wall-clock date, "2024-07-14T18:03:22", no zone

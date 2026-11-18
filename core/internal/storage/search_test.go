@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -135,5 +136,232 @@ func TestRecentListsTheNewestFiles(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].Path != "c.txt" || got[1].Path != "b.txt" {
 		t.Errorf("recent %+v", got)
+	}
+}
+
+// withText stores a file and the text the workers would have extracted from it
+// (document_text, keyed by the file's content).
+func withText(t *testing.T, s *Store, owner, p, text string) File {
+	t.Helper()
+	f := put(t, s, owner, p, text)
+	if _, err := s.Pool.Exec(context.Background(),
+		`INSERT INTO document_text (sha256, source, text, chars, truncated, pages, has_text)
+		 VALUES ($1, 'text', $2, length($2), false, NULL, true) ON CONFLICT DO NOTHING`, f.SHA256, text); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func searchContent(t *testing.T, s *Store, owner, q string, limit int) []ContentHit {
+	t.Helper()
+	hits, err := s.SearchContent(context.Background(), owner, q, limit)
+	if err != nil {
+		t.Fatalf("search content %q: %v", q, err)
+	}
+	return hits
+}
+
+func hitPaths(hits []ContentHit) []string {
+	out := make([]string, len(hits))
+	for i, h := range hits {
+		out[i] = h.Path
+	}
+	return out
+}
+
+// marked writes an extract with its words found in brackets: "le [contrat] de".
+func marked(parts []SnippetPart) string {
+	var b strings.Builder
+	for _, p := range parts {
+		if p.Hit {
+			b.WriteString("[" + p.Text + "]")
+		} else {
+			b.WriteString(p.Text)
+		}
+	}
+	return b.String()
+}
+
+func TestSearchContentFollowsFrenchRulesAccentsAndCase(t *testing.T) {
+	s := newStore(t)
+	withText(t, s, "enzo", "Bail.txt", "Le contrat de location de l'appartement est conclu pour trois ans.")
+	withText(t, s, "enzo", "EDF.txt", "Facture d'ÉLECTRICITÉ du mois de mars.\nMontant facturé : 42 euros.")
+	withText(t, s, "enzo", "Courses.txt", "Pain, lait, œufs.")
+	put(t, s, "enzo", "contrat.txt", "") // a name is not a content
+
+	cases := map[string][]string{
+		"contrats":               {"Bail.txt"}, // French stem
+		"CONTRAT":                {"Bail.txt"},
+		"electricite":            {"EDF.txt"}, // accents ignored
+		"Électricité":            {"EDF.txt"},
+		"factures":               {"EDF.txt"}, // "Facture" and "facturé"
+		"oeufs":                  {"Courses.txt"},
+		"appartements location":  {"Bail.txt"}, // every word, in any order
+		"contrat electricite":    {},
+		`"contrat de location"`:  {"Bail.txt"}, // a phrase
+		`"location de contrat"`:  {},
+		"contrat -appartement":   {},
+		"contrat -vente":         {"Bail.txt"},
+		"-vente":                 {}, // nothing to look for
+		"le la de":               {}, // only stop words
+		"":                       {},
+		"   ":                    {},
+		"introuvable":            {},
+		"contrat or electricite": {"Bail.txt", "EDF.txt"},
+	}
+	for q, want := range cases {
+		got := hitPaths(searchContent(t, s, "enzo", q, 0))
+		slices.Sort(got)
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("search content %q = %q, want %q", q, got, want)
+		}
+	}
+}
+
+func TestSearchContentRanksDenseContentsFirst(t *testing.T) {
+	s := newStore(t)
+	filler := strings.Repeat("une phrase sans rapport avec la recherche. ", 300)
+	withText(t, s, "enzo", "Relevé.txt", filler+"Virement au notaire. "+filler)
+	withText(t, s, "enzo", "Acte.txt", "Acte de vente signé chez le notaire. Le notaire a lu l'acte.")
+	withText(t, s, "enzo", "Lettre.txt", "Lettre du notaire, puis "+strings.Repeat("des nouvelles. ", 40))
+	if got := hitPaths(searchContent(t, s, "enzo", "notaire", 0)); fmt.Sprint(got) != "[Acte.txt Lettre.txt Relevé.txt]" {
+		t.Errorf("order %q", got)
+	}
+	if got := searchContent(t, s, "enzo", "notaire", 2); len(got) != 2 {
+		t.Errorf("limit 2: %d hits", len(got))
+	}
+}
+
+func TestSearchContentMarksTheWordsInTheExtract(t *testing.T) {
+	s := newStore(t)
+	filler := strings.Repeat("lorem ipsum dolor sit amet ", 15000) // 405 000 characters
+	withText(t, s, "enzo", "EDF.txt", "Facture d'ÉLECTRICITÉ\n\f\ndu mois de mars.")
+	withText(t, s, "enzo", "Manuel.txt", filler+"Le notaire a signé l'acte de vente. "+filler)
+	withText(t, s, "enzo", "Haras.txt", "Visite du haras : les chevaux dorment.")
+
+	for q, want := range map[string]string{
+		// Original case and accents, page break folded into a space.
+		"electricite": "Facture d'[ÉLECTRICITÉ] du mois de mars",
+		// Far into a long text: the window around the first word found.
+		"notaire vente": "dolor sit amet Le [notaire] a signé l'acte de [vente]. lorem ipsum dolor",
+		// 'cheval' does not start "chevaux": the whole text is read instead.
+		"cheval": "Visite du haras : les [chevaux] dorment",
+	} {
+		hits := searchContent(t, s, "enzo", q, 0)
+		if len(hits) != 1 {
+			t.Fatalf("%q: %d hits", q, len(hits))
+		}
+		if got := marked(hits[0].Snippet); got != want {
+			t.Errorf("%q extract\n got %q\nwant %q", q, got, want)
+		}
+	}
+}
+
+func TestSearchContentSkipsTheTrashAndOtherAccounts(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	withText(t, s, "enzo", "Plombier.txt", "Facture du plombier")
+	withText(t, s, "johan", "Copie.txt", "Facture du plombier") // the same content, one row
+	withText(t, s, "johan", "Garage.txt", "Facture du garagiste")
+
+	check := func(owner string, want ...string) {
+		t.Helper()
+		got := hitPaths(searchContent(t, s, owner, "facture", 0))
+		slices.Sort(got)
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("%s finds %q, want %q", owner, got, want)
+		}
+	}
+	check("enzo", "Plombier.txt")
+	check("johan", "Copie.txt", "Garage.txt")
+
+	item, err := s.Trash(ctx, "enzo", "Plombier.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("enzo")
+	check("johan", "Copie.txt", "Garage.txt")
+	if _, err := s.Restore(ctx, "enzo", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	check("enzo", "Plombier.txt")
+}
+
+func TestSearchContentListsEveryFileOfAContent(t *testing.T) {
+	s := newStore(t)
+	withText(t, s, "enzo", "Contrats/bail.txt", "Le bail de l'appartement")
+	withText(t, s, "enzo", "Archives/bail copie.txt", "Le bail de l'appartement")
+	hits := searchContent(t, s, "enzo", "bail", 0)
+	got := hitPaths(hits)
+	slices.Sort(got)
+	if fmt.Sprint(got) != "[Archives/bail copie.txt Contrats/bail.txt]" {
+		t.Fatalf("hits %q", got)
+	}
+	for _, h := range hits {
+		if marked(h.Snippet) != "[bail] de l'appartement" { // a short word drops at the edge
+			t.Errorf("%s extract %q", h.Path, marked(h.Snippet))
+		}
+	}
+}
+
+func TestSearchContentIndexesAHugeSheet(t *testing.T) {
+	s := newStore(t)
+	f := put(t, s, "enzo", "Relevés.csv", "x")
+	// 1 000 000 characters of distinct numbers: their tsvector would exceed
+	// 1 MB, so only the start is indexed, and the worker's INSERT still works.
+	if _, err := s.Pool.Exec(context.Background(),
+		`INSERT INTO document_text (sha256, source, text, chars, truncated, pages, has_text)
+		 SELECT $1, 'text', t, length(t), false, NULL, true
+		 FROM (SELECT string_agg(g::text, E'\t') AS t FROM generate_series(100000, 242856) g) x`, f.SHA256); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if got := hitPaths(searchContent(t, s, "enzo", "100042", 0)); fmt.Sprint(got) != "[Relevés.csv]" {
+		t.Errorf("a number near the start: %q", got)
+	}
+	if got := searchContent(t, s, "enzo", "242000", 0); len(got) != 0 {
+		t.Errorf("a number past the indexed start: %q", hitPaths(got))
+	}
+}
+
+func TestFirstWordPatternFindsTheWordWithItsAccents(t *testing.T) {
+	s := newStore(t)
+	for _, c := range []struct {
+		lexemes []string
+		text    string
+		at      int
+	}{
+		{[]string{"electricit"}, "La facture d'ÉLECTRICITÉ", 14},
+		{[]string{"coeur"}, "Au cœur du sujet", 4},
+		{[]string{"contrat", "locat"}, "Une location, un contrat", 5},
+		{[]string{"port"}, "Les portefeuilles, la porte", 23}, // at most 8 letters after the stem
+		{[]string{"a.b"}, "axb puis a.b", 10},                 // metacharacters taken literally
+		{[]string{"rien"}, "aucun mot", 0},
+	} {
+		var at int
+		if err := s.Pool.QueryRow(context.Background(), `SELECT regexp_instr($1, $2, 1, 1, 0, 'i')`,
+			c.text, firstWordPattern(c.lexemes)).Scan(&at); err != nil {
+			t.Fatalf("%v: %v", c.lexemes, err)
+		}
+		if at != c.at {
+			t.Errorf("%v in %q at %d, want %d", c.lexemes, c.text, at, c.at)
+		}
+	}
+}
+
+func TestWantedWordsDropsExclusionsAndOr(t *testing.T) {
+	got := wantedWords(strings.Fields(`or contrat -vente "bail loyer" or quittance -"acte de vente" fin or`))
+	if want := `[or contrat "bail loyer" quittance fin or]`; fmt.Sprint(got) != want {
+		t.Errorf("wanted %v, want %s", got, want)
+	}
+}
+
+func TestSplitSnippetSetsTheWordsFoundApart(t *testing.T) {
+	got := splitSnippet("\x01Le\x02 contrat\n\f\nde  \x01location\x02 … \x01bail\x02")
+	want := []SnippetPart{{"Le", true}, {" contrat de ", false}, {"location", true}, {" … ", false}, {"bail", true}}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("parts %v, want %v", got, want)
+	}
+	if got := splitSnippet(""); got == nil || len(got) != 0 {
+		t.Errorf("empty: %#v", got)
 	}
 }
