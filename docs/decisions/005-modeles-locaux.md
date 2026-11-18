@@ -1,7 +1,7 @@
 # 005 — Les modèles d'IA locaux : texte, image, OCR
 
 - Date : 2026-11-18
-- Statut : acceptée
+- Statut : acceptée ; révisée le 2026-11-18 par #70 : Arctic en fp16 au lieu d'int8
 - Issue : #66 (Feature #65)
 
 ## Décision
@@ -10,7 +10,7 @@ Le worker embarque trois modèles, en ONNX, exécutés sur le CPU par ONNX Runti
 
 | Usage | Modèle retenu | Licence | Fichiers | Vecteur |
 |---|---|---|---|---|
-| Sens des documents (embeddings texte) | **Snowflake Arctic Embed M v2.0**, int8 | Apache-2.0 | 328 Mo | 768 dimensions |
+| Sens des documents (embeddings texte) | **Snowflake Arctic Embed M v2.0**, fp16 | Apache-2.0 | 630 Mo | 768 dimensions |
 | Contenu des photos (embeddings image–texte) | **SigLIP 2 base/16 à 224 px** (Google), int8 | Apache-2.0 | 412 Mo | 768 dimensions |
 | Texte des images et des scans (OCR) | **PP-OCRv5** : détecteur mobile et reconnaissance latine mobile (PaddleOCR) | Apache-2.0 | 13 Mo | — |
 
@@ -20,9 +20,11 @@ Les modèles entrent dans l'image du worker au build, comme ffmpeg (ADR 002) : `
 
 **La justesse d'abord.** Sur le banc d'essai (ci-dessous), Arctic est le seul modèle de texte qui classe en premier le bon document pour 32 des 33 requêtes, dont « contrat de l'appart », qui donne le bail devant l'assurance habitation, la quittance et la location de vacances. SigLIP 2 trouve la bonne photo pour les 15 requêtes, dont « chien à la plage », qui donne les trois photos de chien sur une plage devant le chien dans la neige. PP-OCRv5 lit les pages scannées et photographiées avec 0,1 % d'erreurs de caractères.
 
-**Puis tenir sur un Raspberry Pi 5.** Les trois modèles font 740 Mo sur le disque. Chargés ensemble, ils occupent 1,2 Go de RAM, et 1,8 Go au pic une fois au travail (mesure ci-dessous). Estimé sur un Pi 5 : environ 0,3 s par document, 0,3 s par photo et 3 s par page lue par l'OCR. Une requête est encodée en quelques dizaines de millisecondes, assez vite pour la palette Demander.
+**Puis tenir sur un Raspberry Pi 5.** Les trois modèles font 1,04 Go sur le disque. Chargés ensemble, ils occupent 1,5 Go de RAM (mesure ci-dessous). Estimé sur un Pi 5 : environ 1,1 s par document d'une page ou deux, 0,3 s par photo et 3 s par page lue par l'OCR. Une requête est encodée en quelques dizaines de millisecondes, assez vite pour la palette Demander.
 
 **Arctic plutôt que multilingual-e5-small, plus léger.** e5-small manque deux requêtes de plus. Il est deux à trois fois plus rapide et deux fois plus petit, mais ses scores se tassent : 0,87 pour le bail contre 0,86 pour l'assurance auto sur « contrat de l'appart ». Arctic sépare mieux les voisins trompeurs (0,39 contre 0,36). Il lit aussi jusqu'à 8 192 tokens contre 512, ce qui laisse #70 découper les longs documents en moins de morceaux. Sous licence Apache-2.0, il est conçu pour la recherche multilingue, dont le français.
+
+**Arctic en fp16 plutôt qu'en int8 (révision de #70).** La première décision prenait l'export int8, quatre fois plus petit en RAM de calcul et trois fois plus rapide. Sa CI l'a pris en défaut : sur sa machine x86-64, « contrat de l'appart » mettait l'assurance habitation devant le bail. L'export int8 quantifie au vol les activations de chaque produit matriciel, et les noyaux entiers d'ONNX Runtime ne calculent pas pareil d'un processeur à l'autre (AVX2, VNNI, i8mm) ni d'un build à l'autre (ses fusions de graphe). Sous Linux, ses vecteurs sont à 0,96 de cosinus de ceux du fp32, sur arm64 comme sur x86-64, et ils bougent jusqu'à 0,03 entre deux machines. Or le bail ne devance l'assurance que de 0,03. Le fp16 calcule en flottants : 0,99996 du fp32, et les vecteurs d'arm64 et de x86-64 ne diffèrent que de 0,0015. La box pouvant être un mini PC x86 (PRD), la justesse ne doit pas dépendre du processeur. Le détail des mesures est dans [search-ai.md](../architecture/search-ai.md).
 
 **PP-OCRv5 plutôt que Tesseract.** Tesseract, réglé avec le seuillage Sauvola, lit aussi bien les scans et presque aussi bien les photos, deux fois plus vite et avec bien moins de RAM. Mais il tire 71 paquets Debian dans l'image du worker (cairo, pango, glib, gnutls, curl, krb5, ldap, ICU…), dont plusieurs sous LGPL à suivre au titre de l'ADR 002. Tel qu'il est livré, avec le seuillage Otsu, il ne lit presque rien sur une photo éclairée de travers (92 % d'erreurs). PP-OCRv5 n'ajoute que 13 Mo de modèles à ONNX Runtime, déjà là pour les embeddings. Tesseract reste le plan B documenté, si l'OCR des scans doit un jour aller plus vite sur la box.
 
@@ -45,14 +47,16 @@ Les modèles entrent dans l'image du worker au build, comme ffmpeg (ADR 002) : `
 
 | Modèle (int8 sauf mention) | Licence | recall@1 | MRR | Fichiers | RAM (pic) | ms/document | ms/requête | Pi 5 estimé, par document |
 |---|---|---|---|---|---|---|---|---|
-| **Arctic Embed M v2.0** | Apache-2.0 | **0,97** | **0,97** | 328 Mo | 850 Mo | 55 | 5 | 0,3 s |
+| **Arctic Embed M v2.0, fp16** (#70) | Apache-2.0 | **0,97** | **0,97** | 630 Mo | 1 322 Mo | 189 | 16 | 1,1 s |
+| Arctic Embed M v2.0 (première décision) | Apache-2.0 | 0,97 | 0,97 | 328 Mo | 850 Mo | 55 | 5 | 0,3 s |
+| Arctic Embed M v2.0, fp32 | Apache-2.0 | 0,97 | 0,97 | 1 242 Mo | 2 270 Mo | 148 | 12 | 0,9 s |
 | multilingual-e5-small | MIT | 0,94 | 0,96 | 135 Mo | 573 Mo | 18 | 2 | 0,1 s |
 | multilingual-e5-small, fp32 | MIT | 0,94 | 0,97 | 487 Mo | 1 181 Mo | 35 | 3 | 0,2 s |
 | BGE-M3 | MIT | 0,91 | 0,94 | 587 Mo | 1 158 Mo | 180 | 12 | 1,1 s |
 | Qwen3-Embedding-0.6B | Apache-2.0 | 0,82 | 0,87 | 625 Mo | 1 081 Mo | 342 | 30 | 2,1 s |
 | multilingual-e5-base | MIT | 0,76 | 0,85 | 296 Mo | 816 Mo | 44 | 4 | 0,3 s |
 
-Les documents font 230 tokens en moyenne. Avec 33 requêtes, une requête manquée retire 0,03 au recall@1.
+Les documents font 230 tokens en moyenne. Avec 33 requêtes, une requête manquée retire 0,03 au recall@1. Les lignes fp16 et fp32 d'Arctic sont mesurées par #70 dans les mêmes conditions, avec son découpage en fenêtres de 512 tokens (31 fenêtres pour les 30 documents) et le stockage en demi-précision.
 
 ### Image–texte
 
@@ -79,7 +83,7 @@ Les modèles PP-OCR tournent ici avec le pipeline de RapidOCR (OpenCV compris, d
 
 ### Le worker avec ses trois modèles
 
-Mesuré dans l'image du worker, sans réseau (`docker run --network none`) : les imports seuls font 68 Mo. Arctic ajoute 650 Mo et SigLIP 2 513 Mo. Leurs tokenizers en comptent 280 chacun, pour des vocabulaires de 250 000 et 256 000 tokens : c'est la première piste si la RAM manque. PP-OCRv5 n'ajoute presque rien. Les trois modèles chargés en 2,4 s occupent 1,2 Go. Après quelques documents, photos et une page lus, le pic atteint 1,8 Go, dont la mémoire de travail qu'ONNX Runtime garde d'un appel à l'autre. Sur un Pi 5 de 8 Go, il reste de la place pour Postgres et le cœur. Sur un Pi 5 de 4 Go, #70 et #71 devront charger un modèle à la fois. L'image du worker grossit de 740 Mo.
+Mesuré dans l'image du worker, sans réseau (`docker run --network none`) : les imports seuls font 68 Mo. Arctic ajoute 650 Mo en int8, 990 Mo en fp16 (#70), et SigLIP 2 513 Mo. Leurs tokenizers en comptent 280 chacun, pour des vocabulaires de 250 000 et 256 000 tokens : c'est la première piste si la RAM manque. PP-OCRv5 n'ajoute presque rien. Les trois modèles chargés en 2,4 s occupent 1,2 Go avec Arctic en int8, 1,5 Go en fp16. Après quelques documents, photos et une page lus, le pic atteignait 1,8 Go en int8, dont la mémoire de travail qu'ONNX Runtime garde d'un appel à l'autre ; en fp16, il faut compter 340 Mo de plus. Sur un Pi 5 de 8 Go, il reste de la place pour Postgres et le cœur. Sur un Pi 5 de 4 Go, #70 et #71 devront charger un modèle à la fois. L'image du worker grossit de 1,04 Go.
 
 ## Ce que ça impose
 
@@ -97,7 +101,9 @@ Mesuré dans l'image du worker, sans réseau (`docker run --network none`) : les
 - **BGE-M3** (MIT) : moins juste qu'Arctic ici, trois fois plus lent, deux fois plus gros. Il a manqué « contrat de l'appart » sous Linux, alors qu'il le trouvait sous macOS : la quantification int8 le rend sensible au CPU.
 - **Qwen3-Embedding-0.6B** (Apache-2.0) : le plus lent (2 s par document estimées sur un Pi 5) et, en int8, moins juste. Sa version fp32 fait 2,4 Go, trop pour la box.
 - **multilingual-e5-base** (MIT) : sa version int8 publiée chute à 0,76. La fp32 (1,1 Go) n'a pas été mesurée, puisqu'Arctic fait mieux à taille égale.
-- **Snowflake Arctic Embed et SigLIP 2 en fp32** : même justesse ici, trois à quatre fois plus gros, et plus lents sous Linux.
+- **Arctic en int8** (la première décision) : sa justesse dépend du processeur, voir « Pourquoi ». Ses variantes uint8 et 4 bits ne font pas mieux : l'uint8 met l'assurance devant le bail sous Linux arm64 ; le 4 bits (q4) donne les mêmes vecteurs partout mais à 0,95 du fp32, avec 1,9 Go de RAM, sa table d'embeddings restant en fp32, et pas plus vite que le fp16.
+- **Arctic en fp32** : la même justesse que le fp16, un peu plus rapide sous Linux arm64 (148 ms par fenêtre contre 189), mais 2,3 Go de RAM au lieu de 1,3.
+- **SigLIP 2 en fp32** : même justesse ici, trois à quatre fois plus gros, et plus lent sous Linux. Sa partie texte en int8 souffre du même écart entre processeurs qu'Arctic ([embeddings.md](../architecture/embeddings.md)).
 - **CLIP multilingue** (Apache-2.0 et MIT) : trois fois plus rapide, mais il manque une requête sur quinze. Sa partie texte est distillée d'un modèle anglais.
 - **Tesseract** (Apache-2.0) : voir « Pourquoi ». Plan B pour l'OCR des scans.
 - **PP-OCRv6 small** : à peine moins juste que PP-OCRv5 latin, et plus lent. Il couvre plus d'écritures (chinois, japonais…), pas utiles pour un foyer français. Ses fichiers sont aussi dans le wheel `rapidocr` de PyPI : c'est le repli si modelscope.cn, d'où viennent les ONNX de PP-OCRv5, devenait indisponible.
@@ -110,7 +116,7 @@ Mesuré dans l'image du worker, sans réseau (`docker run --network none`) : les
 
 - **`worker/models/fetch.sh <dossier>`** : télécharge les 7 fichiers et vérifie chaque SHA-256. Le téléchargement reprend après une coupure. Il copie ensuite `NOTICE.md` et la licence, puis écrit `SHA256SUMS` en dernier. Il sert à trois endroits : l'image (étape `models` de `worker/Dockerfile`, vers `/opt/models`), le Mac du dev (`make models`, vers `.tools/models`) et la CI (même cible, en cache tant que le script ne change pas).
 - **`worker/src/worker/models.py`** : charge les modèles depuis `CLOUDOS_MODELS_DIR` et les fait tourner avec ONNX Runtime sur 4 fils (`CLOUDOS_MODEL_THREADS`). Il fournit `text_encoder()`, `image_encoder()`, `image_query_encoder()` et `ocr_model()`. Pas de tâche ni de table : l'indexation, c'est #70 (texte), #71 (photos) et #68 (OCR, dont le découpage d'une page en lignes).
-- **`worker/tests/test_models.py`** : les fichiers correspondent à `SHA256SUMS`, « contrat de l'appart » trouve le bail, « chien à la plage » trouve les trois photos de chien sur une plage, l'OCR lit une ligne avec accents et « € » et détecte le texte d'une page. Les tests sont sautés sans les modèles, sauf avec `CLOUDOS_REQUIRE_MODELS` (CI).
+- **`worker/tests/test_models.py`** (et `test_textemb.py` pour l'export fp16 d'Arctic épinglé dans `fetch.sh`) : les fichiers correspondent à `SHA256SUMS`, « contrat de l'appart » trouve le bail, « chien à la plage » trouve les trois photos de chien sur une plage, l'OCR lit une ligne avec accents et « € » et détecte le texte d'une page. Les tests sont sautés sans les modèles, sauf avec `CLOUDOS_REQUIRE_MODELS` (CI).
 - **Pour refaire le banc d'essai** : `cd worker && uv run --group bench python -m bench.fetch`, puis, depuis la racine, `docker build -t cloud-os-bench -f worker/bench/Dockerfile worker` et `docker run --rm -v "$PWD:/repo:ro" cloud-os-bench python -m bench text image` (et `python -m bench.ocr`).
 - **Pour revérifier l'image** : `docker run --rm --network none --entrypoint cat <image du worker> /opt/models/SHA256SUMS`, et `pip list` dans l'image ne montre ni `torch` ni `opencv`.
 

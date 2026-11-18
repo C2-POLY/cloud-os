@@ -38,7 +38,7 @@ make deps
 # Without them `make test` skips the video tests.
 make ffmpeg
 
-# Fetch the worker's local AI models (about 740 MB) into .tools/models, each
+# Fetch the worker's local AI models (about 1 GB) into .tools/models, each
 # checked against its SHA-256 (once; run worker/models/fetch.sh .tools/models
 # again after the script changes). Without them `make test` skips the model tests.
 make models

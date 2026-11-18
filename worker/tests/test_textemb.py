@@ -91,10 +91,13 @@ def test_a_very_long_document_keeps_its_first_windows(
 
 
 def test_the_version_names_the_model_and_the_cutting(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The revision of Arctic that worker/models/fetch.sh pins, int8.
+    # The revision of Arctic that worker/models/fetch.sh pins, and its fp16
+    # export: the int8 one gives other vectors on other CPUs (models.py).
     fetch = (Path(__file__).parents[1] / "models" / "fetch.sh").read_text()
     revision = fetch.split("snowflake-arctic-embed-m-v2.0/resolve/", 1)[1][:7]
-    assert f"{revision}-int8" == models.TEXT_MODEL_VERSION
+    assert f"{revision}-fp16" == models.TEXT_MODEL_VERSION
+    model = next(ln for ln in fetch.splitlines() if " arctic-embed-m-v2.0/model.onnx " in ln)
+    assert model.endswith("$ARCTIC/onnx/model_fp16.onnx")
     assert textemb.version() == f"{models.TEXT_MODEL_VERSION}-w512-o64-n64"
     monkeypatch.setattr(textemb, "OVERLAP", 32)
     assert textemb.version() == f"{models.TEXT_MODEL_VERSION}-w512-o32-n64"

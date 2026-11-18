@@ -79,7 +79,7 @@ sequenceDiagram
   - les requêtes : 0,998 sur arm64, mais 0,94 sur un x86-64 sans VNNI (AVX2, comme les machines de la CI), qui sature les produits int8 de la partie texte ;
   - les photos : 0,80 sur les deux, à cause de la quantification des activations de la partie image.
 
-  Arctic, pour les documents, n'en souffre pas sur le banc : 32 requêtes sur 33 trouvent leur document en premier sur les deux processeurs ([search-ai.md](search-ai.md)).
+  Arctic, pour les documents, en souffrait aussi : en int8, la CI x86-64 mettait l'assurance habitation devant le bail sur « contrat de l'appart ». #70 l'a passé en fp16, qui donne les mêmes vecteurs sur les deux processeurs ([ADR 005](../decisions/005-modeles-locaux.md)).
 
   Pour les photos, la bonne photo sort en premier pour les 15 requêtes du banc sur arm64, et pour 14 sur x86-64, où « parasols sur la plage » donne un chien sur une plage devant la photo de parasols. Sur arm64, l'écart n'est que de 0,013, contre 0,054 en fp32. La variante uint8 de la partie texte ne fait pas mieux (0,935 sur les deux processeurs). Le choix de la quantification est à revoir avec le matériel de référence ([ADR 005](../decisions/005-modeles-locaux.md)).
 

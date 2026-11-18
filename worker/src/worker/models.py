@@ -52,7 +52,13 @@ OCR_MODEL = "pp-ocrv5-latin"
 # quantisation or preprocessing): the core then encodes every photo again.
 IMAGE_MODEL_VERSION = "ba1f3b0-int8"
 # The same for documents; worker.textemb adds how it cuts them in windows.
-TEXT_MODEL_VERSION = "95c2741-int8"
+# fp16, not int8: the int8 export quantizes the activations of every product
+# on the fly, and ONNX Runtime's integer kernels differ from one CPU to the
+# next. Its vectors sit at 0.96 cosine from fp32 and move by up to 0.03
+# between CPUs, enough to put the home insurance before the lease on
+# "contrat de l'appart" on an x86-64 CPU (#70). fp16 computes in floats: 0.9999
+# from fp32, on arm64 and x86-64 alike (docs/decisions/005-modeles-locaux.md).
+TEXT_MODEL_VERSION = "95c2741-fp16"
 # The table of the text vectors (core/migrations): another model is another
 # table, so that vectors of two models never mix.
 TEXT_TABLE = "text_vectors_arctic_m_v2"
@@ -169,7 +175,8 @@ class TextEncoder:
                 _, heads, _, size = arg.shape
                 feed[name] = np.zeros((len(rows), heads, 0, size), dtype=np.float32)
         wanted = "sentence_embedding" if self.spec.pooling == "output" else self.outputs[0]
-        out = self.sess.run([wanted], feed)[0]
+        # An fp16 model answers in fp16: normalise in fp32.
+        out = self.sess.run([wanted], feed)[0].astype(np.float32, copy=False)
         if self.spec.pooling == "output":
             return unit(out)
         if self.spec.pooling == "cls":
@@ -331,7 +338,7 @@ class SiglipTextEncoder:
 
 @_load_once
 def text_encoder() -> TextEncoder:
-    """Arctic Embed M v2.0: documents and queries into 768-dimension vectors;
+    """Arctic Embed M v2.0, fp16: documents and queries into 768-dimension vectors;
     a query takes the prefix "query: ", a document none."""
     spec = TextSpec("model.onnx", "output", query_prefix="query: ", max_tokens=TEXT_SPEC_MAX_TOKENS)
     return TextEncoder(models_dir() / TEXT_MODEL, spec)

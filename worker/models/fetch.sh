@@ -25,7 +25,7 @@ PPOCR=https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-
 
 # <SHA-256> <file under prefix> <URL>
 FILES="
-03d923bb1850ebdccb068e2f3abd8aa43fe81c50d07d037ef103fe3d0fb78e3b arctic-embed-m-v2.0/model.onnx $ARCTIC/onnx/model_quantized.onnx
+f27ab40ab6e230265ba49a202a37f1ad031556256cbbc105d0ca9c0bdc7ec42e arctic-embed-m-v2.0/model.onnx $ARCTIC/onnx/model_fp16.onnx
 f1cc44ad7faaeec47241864835473fd5403f2da94673f3f764a77ebcb0a803ec arctic-embed-m-v2.0/tokenizer.json $ARCTIC/tokenizer.json
 5f2b401c1a4fc095702a5d45348e17ad46c4f87064085365b43c6e8eaa5c0070 siglip2-base-patch16-224/vision_model.onnx $SIGLIP/onnx/vision_model_quantized.onnx
 3a0603d3a00c05a80a6ded4743c16aaac7b1e62cdcc7e362e7ce418659b96400 siglip2-base-patch16-224/text_model.onnx $SIGLIP/onnx/text_model_quantized.onnx
