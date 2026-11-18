@@ -33,6 +33,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/httpapi"
 	"github.com/C2-POLY/cloud-os/core/internal/meta"
 	"github.com/C2-POLY/cloud-os/core/internal/migrate"
+	"github.com/C2-POLY/cloud-os/core/internal/ocr"
 	"github.com/C2-POLY/cloud-os/core/internal/share"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 	"github.com/C2-POLY/cloud-os/core/internal/tasks"
@@ -109,13 +110,22 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 			fmt.Fprintf(out, "%d text extractions queued\n", n)
 			return err
 		})
+	case "ocr":
+		if len(args) != 1 || args[0] != "backfill" {
+			return errors.New("usage: core ocr backfill")
+		}
+		return withCore(ctx, func(c core) error {
+			n, err := ocr.Backfill(ctx, &tasks.Queue{Pool: c.pool})
+			fmt.Fprintf(out, "%d OCR readings queued\n", n)
+			return err
+		})
 	case "reset-password":
 		if len(args) != 1 {
 			return errors.New("usage: core reset-password NAME (the new password is read from stdin)")
 		}
 		return withCore(ctx, func(c core) error { return resetPassword(ctx, c, args[0], os.Stdin, out) })
 	default:
-		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, text, reset-password)", cmd)
+		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, text, ocr, reset-password)", cmd)
 	}
 }
 
@@ -274,9 +284,10 @@ func resetPassword(ctx context.Context, c core, name string, in io.Reader, out i
 }
 
 // queueBackgroundWork is the store's AfterStore hook: it queues the thumbnail
-// and the metadata of a new image or video content, and the text of a new
-// document. Best effort: a task lost here is caught up by `core thumbs
-// backfill`, `core meta backfill` and `core text backfill`.
+// and the metadata of a new image or video content, the text of a new
+// document, and the OCR of a new image. Best effort: a task lost here is
+// caught up by `core thumbs backfill`, `core meta backfill`, `core text
+// backfill` and `core ocr backfill`.
 func queueBackgroundWork(q *tasks.Queue, priority int) func(context.Context, storage.File, []byte) {
 	return func(ctx context.Context, f storage.File, head []byte) {
 		ctx = context.WithoutCancel(ctx)
@@ -288,6 +299,9 @@ func queueBackgroundWork(q *tasks.Queue, priority int) func(context.Context, sto
 		}
 		if _, err := doctext.Enqueue(ctx, q, f, priority); err != nil {
 			slog.Error("queue text", "owner", f.Owner, "path", f.Path, "err", err)
+		}
+		if _, err := ocr.Enqueue(ctx, q, f, head, priority); err != nil {
+			slog.Error("queue OCR", "owner", f.Owner, "path", f.Path, "err", err)
 		}
 	}
 }

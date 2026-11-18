@@ -51,6 +51,10 @@ var tables = []struct {
 	{16, []string{"albums", "album_items"}, `INSERT INTO albums (owner, name) SELECT name, 'Bretagne' FROM accounts LIMIT 1`},
 	{17, []string{"document_text"}, `INSERT INTO document_text (sha256, source, text, chars, truncated, pages, has_text)
 		VALUES (sha256('a'), 'pdf', 'Contrat de location', 19, false, 1, false)`},
+	// Migration 18 lets document_text hold the text read by OCR, no table.
+	{18, []string{}, `UPDATE document_text SET text = 'Facture', chars = 7, has_text = true, ocr_model = 'pp-ocrv5-latin';
+		INSERT INTO document_text (sha256, source, text, chars, truncated, has_text, ocr_model)
+		VALUES (sha256('b'), 'image', '', 0, false, false, 'pp-ocrv5-latin')`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {

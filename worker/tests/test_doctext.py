@@ -262,7 +262,8 @@ def read_only(root: Path) -> dict[Path, tuple[bytes, int]]:
 
 def run(conn: psycopg.Connection, sha: bytes) -> tuple[str, str | None]:
     task_id = tasks.enqueue(conn, doctext.KIND, {"sha256": sha.hex()})
-    assert tasks.run_one(conn, "w", tasks.HANDLERS)
+    # The text tasks only: a scan queues its OCR (test_ocr.py), left for later.
+    assert tasks.run_one(conn, "w", {doctext.KIND: doctext.make})
     row = conn.execute("SELECT state, last_error FROM tasks WHERE id = %s", (task_id,)).fetchone()
     assert row
     return row[0], row[1]
