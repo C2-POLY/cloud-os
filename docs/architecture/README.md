@@ -13,7 +13,7 @@ Comment Cloud OS est construit, domaine par domaine, avec ses schémas. Le besoi
 | Partage par lien : jeton, expiration, mot de passe, page de l'invité | [share.md](share.md) | `core/internal/share`, `core/internal/httpapi/shares.go`, `web/src/share/` | #13 |
 | Miniatures des images | [thumbnails.md](thumbnails.md) | `core/internal/thumbs`, `worker/src/worker/thumbs.py`, `web/src/drive/FileList.tsx` | #14 |
 | Métadonnées des photos : date de prise de vue, GPS, appareil | [metadata.md](metadata.md) | `core/internal/meta`, `worker/src/worker/meta.py` | #34 |
-| Texte des documents : PDF, Office, OpenDocument, textes ; « sans texte » pour l'OCR | [documents.md](documents.md) | `core/internal/doctext`, `worker/src/worker/doctext.py` | #67 |
+| Texte des documents : PDF, Office, OpenDocument, textes ; OCR des images et des scans | [documents.md](documents.md) | `core/internal/doctext`, `core/internal/ocr`, `worker/src/worker/doctext.py`, `worker/src/worker/ocr.py` | #67, #68 |
 | Recherche par nom et dans le texte des documents, palette Demander | [search.md](search.md) | `core/internal/storage/search.go`, `core/migrations/0018_document_search.sql`, `web/src/desktop/Palette.tsx` | #48, #69 |
 | Albums de photos : références, corbeille, API | [albums.md](albums.md) | `core/internal/albums`, `core/internal/httpapi/albums.go`, `web/src/desktop/Albums.tsx` | #39 |
 | Carte des photos : tuiles PMTiles locales, points géolocalisés | [map.md](map.md) | `core/internal/httpapi/map.go`, `core/internal/storage/geo.go`, `web/src/desktop/MapView.tsx` | #40 |

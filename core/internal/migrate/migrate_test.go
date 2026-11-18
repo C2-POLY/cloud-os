@@ -53,6 +53,10 @@ var tables = []struct {
 		VALUES (sha256('a'), 'pdf', 'Contrat de location', 19, false, 1, false)`},
 	// Migration 18 adds a generated column and its index to document_text, no table.
 	{18, []string{}, `SELECT 1 FROM document_text WHERE tsv @@ websearch_to_tsquery('public.cloudos_fr', 'contrats')`},
+	// Migration 19 lets document_text hold the text read by OCR, no table.
+	{19, []string{}, `UPDATE document_text SET text = 'Facture', chars = 7, has_text = true, ocr_model = 'pp-ocrv5-latin';
+		INSERT INTO document_text (sha256, source, text, chars, truncated, has_text, ocr_model)
+		VALUES (sha256('b'), 'image', '', 0, false, false, 'pp-ocrv5-latin')`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {

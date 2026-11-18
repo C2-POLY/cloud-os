@@ -79,6 +79,9 @@ docker compose run --rm core meta backfill
 # Queue the text extraction of every stored document (PDF, Office, OpenDocument, text) that has none
 docker compose run --rm core text backfill
 
+# Queue the OCR of every stored image the OCR has not looked at, and of every scanned PDF (found without text) it has not read
+docker compose run --rm core ocr backfill
+
 # The mobile app (Expo) in the iOS simulator; the box is at localhost:<core port>
 cd mobile && npx expo run:ios
 

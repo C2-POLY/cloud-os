@@ -585,6 +585,10 @@ def make(task: Task, conn: psycopg.Connection) -> None:
             found.has_text,
         ),
     )
+    if found.source == "pdf" and not found.has_text:  # a scan: the OCR reads it
+        from worker import ocr
+
+        ocr.queue(conn, sha, task.priority)
 
 
 def main() -> int:
