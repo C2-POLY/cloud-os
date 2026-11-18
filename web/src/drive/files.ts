@@ -1,13 +1,18 @@
 import { api } from '../api.ts'
-import type { Entry } from '../../../shared/api-types.ts'
+import type { ContentHit, Entry, SnippetPart } from '../../../shared/api-types.ts'
 
-export type { Entry }
+export type { ContentHit, Entry, SnippetPart }
 
 const q = (path: string) => encodeURIComponent(path)
 
 /** The account's files and folders whose path holds every word of q (accents and case ignored). */
 export function searchFiles(query: string, limit = 30): Promise<Entry[]> {
   return api<Entry[]>('GET', `/api/search?q=${encodeURIComponent(query)}&limit=${limit}`)
+}
+
+/** The account's files whose text holds the words of q (French stems, accents and case ignored), with an extract. */
+export function searchContent(query: string, limit = 20): Promise<ContentHit[]> {
+  return api<ContentHit[]>('GET', `/api/search/content?q=${encodeURIComponent(query)}&limit=${limit}`)
 }
 
 /** The direct children of a folder ("" is the root). */

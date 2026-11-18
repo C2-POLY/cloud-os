@@ -77,7 +77,7 @@ Pas de python-docx, openpyxl, python-pptx, odfpy ni lxml : aucune dépendance de
 
 ## Stockage
 
-Table `document_text` (migrations `0017_document_text.sql` et `0018_document_ocr.sql`), clé `sha256` : deux fichiers identiques partagent leur ligne, une nouvelle version a la sienne. **Une ligne peut changer une fois** : l'OCR remplit celle d'un PDF scanné par un `UPDATE` (`text`, `chars`, `truncated`, `has_text`, `ocr_model`). Ce qui se calcule à partir du texte (recherche, embeddings) suit cet `UPDATE`, et ne se fie qu'à `has_text` : une photo a sa ligne, sans texte.
+Table `document_text` (migrations `0017_document_text.sql` et `0019_document_ocr.sql`), clé `sha256` : deux fichiers identiques partagent leur ligne, une nouvelle version a la sienne. **Une ligne peut changer une fois** : l'OCR remplit celle d'un PDF scanné par un `UPDATE` (`text`, `chars`, `truncated`, `has_text`, `ocr_model`). Ce qui se calcule à partir du texte (recherche, embeddings) suit cet `UPDATE`, et ne se fie qu'à `has_text` : une photo a sa ligne, sans texte.
 
 | Colonne | |
 |---|---|
@@ -88,6 +88,7 @@ Table `document_text` (migrations `0017_document_text.sql` et `0018_document_ocr
 | `pages` | Pages d'un PDF, diapositives, feuilles ; NULL pour un texte, un docx, un odt, ou un classeur ODF coupé avant la fin |
 | `has_text` | Faux pour un scan ou un document vide (ci-dessus) ; après l'OCR, vrai à partir de 32 caractères visibles par page lue ; faux pour une photo |
 | `ocr_model` | Le modèle qui a lu le texte (`pp-ocrv5-latin`, `worker.models.OCR_MODEL`) ; NULL quand le texte vient du fichier. Toujours posé pour une `image` (contrainte `document_text_image_ocr`) |
+| `tsv` | Le `tsvector` du texte (`cloudos_doc_tsv`, configuration `cloudos_fr`), colonne générée pour la recherche dans le contenu ([search.md](search.md)) |
 
 Postgres compresse le texte (TOAST) : 10 000 documents d'une vingtaine de pages font environ 200 Mo avant compression.
 
@@ -176,4 +177,4 @@ Un PDF qui mêle pages de texte et pages scannées (« avec texte » pour #67, e
 
 ## API
 
-Aucune pour l'instant : la recherche dans le contenu et ses routes viennent avec #69.
+Le texte n'a pas de route à lui : il sert la recherche dans le contenu, `GET /api/search/content` (#69). La migration 0018 lui ajoute la colonne générée `tsv` et son index GIN ; tout est dans [search.md](search.md).
