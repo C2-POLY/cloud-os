@@ -56,6 +56,9 @@ type Config struct {
 	Activity  *activity.Log // nil: no journal (tests that do not need it)
 	MaxUpload int64         // bytes; 0 means only the free space limits an upload
 	StaticDir string        // the built web front, served at / when not empty
+	// Encoder turns a search query into a vector (the worker's encoder);
+	// nil: search by meaning answers 503.
+	Encoder QueryEncoder
 }
 
 // access says who may call a route.
@@ -84,6 +87,10 @@ func routes(c Config) []route {
 	d := &desktopAPI{files: c.Files, activity: c.Activity}
 	m := &mapAPI{dir: c.MapsDir, files: c.Files}
 	al := &albumsAPI{albums: c.Albums}
+	sem := &semanticAPI{encoder: c.Encoder}
+	if c.Files != nil {
+		sem.pool = c.Files.Pool
+	}
 	return []route{
 		{"GET /api/health", public, healthHandler(c.Version, c.Health)},
 		{"GET /api/setup", public, a.setupNeeded},
@@ -101,6 +108,7 @@ func routes(c Config) []route {
 		{"GET /api/files/thumb", member, f.thumb},
 		{"GET /api/files/meta", member, f.meta},
 		{"GET /api/search", member, f.search},
+		{"GET /api/search/semantic", member, sem.search},
 		{"POST /api/files/known", member, f.known},
 		{"POST /api/files/dedupe", member, f.dedupe},
 		{"GET /api/files/recent", member, d.recent},

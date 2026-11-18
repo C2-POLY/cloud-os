@@ -15,6 +15,7 @@ Comment Cloud OS est construit, domaine par domaine, avec ses schémas. Le besoi
 | Métadonnées des photos : date de prise de vue, GPS, appareil | [metadata.md](metadata.md) | `core/internal/meta`, `worker/src/worker/meta.py` | #34 |
 | Texte des documents : PDF, Office, OpenDocument, textes ; « sans texte » pour l'OCR | [documents.md](documents.md) | `core/internal/doctext`, `worker/src/worker/doctext.py` | #67 |
 | Recherche par nom et palette Demander | [search.md](search.md) | `core/internal/storage/search.go`, `web/src/desktop/Palette.tsx` | #48 |
+| Recherche par le sens : vecteurs du texte des documents, encodage des requêtes, API | [search-ai.md](search-ai.md) | `core/internal/textemb`, `core/internal/encoder`, `worker/src/worker/textemb.py`, `worker/src/worker/encoder.py` | #70 |
 | Albums de photos : références, corbeille, API | [albums.md](albums.md) | `core/internal/albums`, `core/internal/httpapi/albums.go`, `web/src/desktop/Albums.tsx` | #39 |
 | Carte des photos : tuiles PMTiles locales, points géolocalisés | [map.md](map.md) | `core/internal/httpapi/map.go`, `core/internal/storage/geo.go`, `web/src/desktop/MapView.tsx` | #40 |
 | App mobile (Expo) : connexion, fichiers, photos | [mobile.md](mobile.md) | `mobile/`, `shared/api-types.ts` | #37 |

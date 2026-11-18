@@ -30,12 +30,14 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
 	"github.com/C2-POLY/cloud-os/core/internal/doctext"
+	"github.com/C2-POLY/cloud-os/core/internal/encoder"
 	"github.com/C2-POLY/cloud-os/core/internal/httpapi"
 	"github.com/C2-POLY/cloud-os/core/internal/meta"
 	"github.com/C2-POLY/cloud-os/core/internal/migrate"
 	"github.com/C2-POLY/cloud-os/core/internal/share"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 	"github.com/C2-POLY/cloud-os/core/internal/tasks"
+	"github.com/C2-POLY/cloud-os/core/internal/textemb"
 	"github.com/C2-POLY/cloud-os/core/internal/thumbs"
 )
 
@@ -109,13 +111,22 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 			fmt.Fprintf(out, "%d text extractions queued\n", n)
 			return err
 		})
+	case "embed":
+		if len(args) != 1 || args[0] != "backfill" {
+			return errors.New("usage: core embed backfill")
+		}
+		return withCore(ctx, func(c core) error {
+			n, err := textemb.Backfill(ctx, &tasks.Queue{Pool: c.pool})
+			fmt.Fprintf(out, "%d text embeddings queued\n", n)
+			return err
+		})
 	case "reset-password":
 		if len(args) != 1 {
 			return errors.New("usage: core reset-password NAME (the new password is read from stdin)")
 		}
 		return withCore(ctx, func(c core) error { return resetPassword(ctx, c, args[0], os.Stdin, out) })
 	default:
-		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, text, reset-password)", cmd)
+		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, text, embed, reset-password)", cmd)
 	}
 }
 
@@ -212,6 +223,7 @@ func serve(ctx context.Context, c core) error {
 			Activity:  &activity.Log{Pool: c.pool},
 			MaxUpload: maxUpload(),
 			StaticDir: os.Getenv("STATIC_DIR"),
+			Encoder:   &encoder.Client{URL: envOr("CLOUDOS_ENCODER_URL", encoder.DefaultURL)},
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

@@ -167,13 +167,14 @@ def selftest(task: Task, conn: psycopg.Connection) -> None:
 
 
 def _handlers() -> dict[str, Handler]:
-    from worker import doctext, meta, thumbs
+    from worker import doctext, meta, textemb, thumbs
 
     return {
         "selftest": selftest,
         thumbs.KIND: thumbs.make,
         meta.KIND: meta.make,
         doctext.KIND: doctext.make,
+        textemb.KIND: textemb.make,
     }
 
 

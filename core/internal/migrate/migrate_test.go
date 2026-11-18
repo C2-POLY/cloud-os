@@ -51,6 +51,8 @@ var tables = []struct {
 	{16, []string{"albums", "album_items"}, `INSERT INTO albums (owner, name) SELECT name, 'Bretagne' FROM accounts LIMIT 1`},
 	{17, []string{"document_text"}, `INSERT INTO document_text (sha256, source, text, chars, truncated, pages, has_text)
 		VALUES (sha256('a'), 'pdf', 'Contrat de location', 19, false, 1, false)`},
+	{18, []string{"text_vectors_arctic_m_v2"}, `INSERT INTO text_vectors_arctic_m_v2 (sha256, chunk, start_char, end_char, model, version, embedding)
+		VALUES (sha256('a'), 0, 0, 19, 'arctic-embed-m-v2.0', 'v', array_fill(0.036, ARRAY[768])::halfvec)`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {

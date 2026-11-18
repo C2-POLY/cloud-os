@@ -21,18 +21,19 @@ flowchart LR
     M -. "HTTP /api, Bearer" .-> C
     C -- "migrations, index, sessions" --> DB
     K -- "battement, file de tâches" --> DB
+    C -- "POST /encode : vecteur d'une requête<br/>(réseau Compose, port 8090 non publié)" --> K
     C -- "seul à écrire" --> D
 ```
 
 - **Les clients ne parlent qu'au cœur.** Le cœur sert aussi le front compilé (`STATIC_DIR`). En développement, Vite le sert avec rechargement à chaud et renvoie `/api` vers le cœur.
-- **Le cœur et les workers ne se parlent que par Postgres** : le battement, et la file de tâches (voir [tasks.md](tasks.md)). Un worker n'écrit jamais dans les fichiers des utilisateurs : il les lit depuis `/data`, monté en lecture seule, et écrit ses résultats en base (par exemple les miniatures, voir [thumbnails.md](thumbnails.md)).
+- **Le cœur et les workers se parlent par Postgres** : le battement, et la file de tâches (voir [tasks.md](tasks.md)). Une seule exception, pour la recherche par le sens : le cœur demande au worker le vecteur d'une requête (`POST /encode`, sur le réseau Compose seulement, voir [search-ai.md](search-ai.md)). Un worker n'écrit jamais dans les fichiers des utilisateurs : il les lit depuis `/data`, monté en lecture seule, et écrit ses résultats en base (par exemple les miniatures, voir [thumbnails.md](thumbnails.md)).
 - **Seul le cœur applique les migrations**, au démarrage, sous un verrou Postgres (goose). Un worker attend que les tables dont il a besoin existent.
 
 | Service | Image | Port hôte (défaut) |
 |---|---|---|
 | `db` | `pgvector/pgvector:0.8.1-pg17` | 54320 |
 | `core` | `core/Dockerfile` (front compilé + binaire Go, distroless, non root) | 8480 |
-| `worker` | `worker/Dockerfile` (Python 3.13, uv) | aucun ; `/data` en lecture seule |
+| `worker` | `worker/Dockerfile` (Python 3.13, uv) | aucun (8090 sur le réseau Compose seulement) ; `/data` en lecture seule |
 | `web` | `node:24-alpine`, Vite en développement | 5180 |
 
 Tous les ports sont liés à `127.0.0.1` et réglables (`CLOUDOS_*_PORT`), pour qu'une pile par worktree tourne sans conflit.

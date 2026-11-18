@@ -39,8 +39,10 @@ flowchart LR
 - **Rien n'est téléchargé à l'exécution.** `session()` lève `FileNotFoundError` quand un fichier manque. `fetch.sh` est le seul à télécharger, au build, et il vérifie chaque fichier par son SHA-256.
 - **Rien ne sort de la box.** ONNX Runtime 1.32 envoie par défaut des événements d'usage à Microsoft. Le paquet `worker` pose `ORT_DISABLE_TELEMETRY=1` avant tout import d'ONNX Runtime, `worker.models` appelle `ort.disable_telemetry_events()`, et l'image pose la même variable avec `HF_HUB_OFFLINE=1`.
 - **Une requête ne s'encode pas comme un document.** Arctic met `query: ` devant une requête, rien devant un document (`embed(…, query=True)`). SigLIP 2 met le texte en minuscules et le complète à 64 tokens, comme à son entraînement.
-- **512 tokens par passage** pour Arctic (`TEXT_SPEC_MAX_TOKENS`). Il en accepte 8 192, mais l'attention coûte le carré de la longueur ; le découpage des longs documents se décide dans #70.
-- **Le nom du modèle accompagne chaque vecteur** (`TEXT_MODEL`, `IMAGE_MODEL`, `OCR_MODEL`) : changer de modèle, c'est changer `fetch.sh` et réindexer dans une nouvelle table.
+- **512 tokens par passage** pour Arctic (`TEXT_SPEC_MAX_TOKENS`). Il en accepte 8 192, mais à 2 048 tokens d'un coup le pic de RAM du worker passe de 1,2 à 2,6 Go. Les documents sont découpés en fenêtres de 512 tokens qui se chevauchent de 64 ([search-ai.md](search-ai.md)).
+- **Chaque modèle est chargé une fois par processus**, par le premier fil qui le demande : le fil des tâches ou l'encodeur des requêtes (`worker.encoder`). Un verrou (`_load_once`) fait attendre le second au lieu d'en charger une autre copie.
+- **La version des vecteurs** part du SHA-256 du fichier du modèle, lu dans `SHA256SUMS` (`file_sha256`) : un nouveau fichier réindexe tout ([search-ai.md](search-ai.md)).
+- **Le nom du modèle accompagne chaque vecteur** (`TEXT_MODEL`, `IMAGE_MODEL`, `OCR_MODEL`), et chaque modèle a sa table (`TEXT_TABLE`) : changer de modèle, c'est changer `fetch.sh` et réindexer dans une nouvelle table.
 - **4 fils ONNX Runtime par modèle**, les 4 cœurs d'un Pi 5 ; `CLOUDOS_MODEL_THREADS` en donne moins.
 - **L'OCR ne fait que tourner les modèles.** Le détecteur reçoit l'image ramenée entre 736 px pour le petit côté et 2 000 px pour le grand. La reconnaissance reçoit une ligne à 48 px de haut, en BGR ramené à -1…1, comme à l'entraînement de PaddleOCR. Elle décode en CTC avec la liste des caractères inscrite dans le modèle. Le découpage d'une page en lignes et leur ordre de lecture sont dans #68.
 

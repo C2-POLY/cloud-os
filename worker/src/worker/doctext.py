@@ -6,7 +6,8 @@ its hash, and hands its bytes to a child process (`python -m worker.doctext`)
 that reads them on stdin and answers JSON on stdout, within TIMEOUT seconds
 and MEMORY bytes: a booby-trapped document fails for good instead of holding
 the worker and its task. The text goes to document_text, keyed by the
-content's SHA-256: nothing is ever written to a file.
+content's SHA-256: nothing is ever written to a file. A text with words
+queues its vectors (worker.textemb) in the same transaction.
 
 The format is recognised by the content, not by the name: a PDF by its
 header, an Office (OOXML) or OpenDocument file by the parts of its zip, any
@@ -572,19 +573,27 @@ def make(task: Task, conn: psycopg.Connection) -> None:
     if data is None:
         return
     found = read_text(data)
-    conn.execute(
-        """INSERT INTO document_text (sha256, source, text, chars, truncated, pages, has_text)
-           VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
-        (
-            sha,
-            found.source,
-            found.text,
-            len(found.text),
-            found.truncated,
-            found.pages,
-            found.has_text,
-        ),
-    )
+    # Imported here: the child process that reads documents (main) never
+    # loads ONNX Runtime.
+    from worker import textemb
+
+    with conn.transaction():
+        written = conn.execute(
+            """INSERT INTO document_text (sha256, source, text, chars, truncated, pages, has_text)
+               VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING RETURNING has_text""",
+            (
+                sha,
+                found.source,
+                found.text,
+                len(found.text),
+                found.truncated,
+                found.pages,
+                found.has_text,
+            ),
+        ).fetchone()
+        if written and written[0]:
+            # Its vectors, at the priority of this task: a new file stays new.
+            textemb.enqueue(conn, sha, task.priority)
 
 
 def main() -> int:

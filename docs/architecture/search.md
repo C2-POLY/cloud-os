@@ -1,6 +1,6 @@
 # Recherche
 
-Trouver un fichier ou un dossier sans savoir où il est rangé : par nom et par chemin aujourd'hui, en langage naturel avec l'index IA de la phase 3.
+Trouver un fichier ou un dossier sans savoir où il est rangé : par nom et par chemin. La recherche par le sens (phase 3) est dans [search-ai.md](search-ai.md).
 Issue : #48 (Feature #45).
 
 ## Cœur

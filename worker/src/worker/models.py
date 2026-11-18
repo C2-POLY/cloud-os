@@ -11,15 +11,17 @@ package before this module imports it).
 
 This module only loads the models and turns texts and images into unit
 vectors, and pages into text; indexing them is the job of worker.tasks
-(#68, #70, #71).
+(#68, #70, #71). A worker loads each model once, whichever of its threads
+(the task loop, the query encoder of worker.encoder) asks first.
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+import threading
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from functools import cache
+from functools import cache, wraps
 from pathlib import Path
 from typing import Literal
 
@@ -43,8 +45,13 @@ THREADS = 4
 TEXT_MODEL = "arctic-embed-m-v2.0"
 IMAGE_MODEL = "siglip2-base-patch16-224"
 OCR_MODEL = "pp-ocrv5-latin"
-# Arctic reads up to 8192 tokens, but attention grows with the square of the
-# length: 512 tokens (about two pages) until #70 decides how to cut documents.
+# The table of each embedding model's vectors (core/migrations): another
+# model is another table, so that vectors of two models never mix.
+TEXT_TABLE = "text_vectors_arctic_m_v2"
+# Arctic reads up to 8192 tokens, but 2048 at once already take the worker
+# from 1.2 to 2.6 GB of RAM, and a long window blurs the passage that answers
+# a precise question: documents are cut into windows of 512 tokens (about
+# 1,800 characters of French), worker.textemb.
 TEXT_SPEC_MAX_TOKENS = 512
 
 
@@ -54,6 +61,37 @@ def models_dir() -> Path:
 
 def threads() -> int:
     return int(os.environ.get("CLOUDOS_MODEL_THREADS", THREADS))
+
+
+@cache
+def file_sha256(name: str) -> str:
+    """The SHA-256 of a model file ("arctic-embed-m-v2.0/model.onnx"), as
+    worker/models/fetch.sh checked and listed it in SHA256SUMS: it names the
+    version of the vectors the file makes."""
+    sums = models_dir() / "SHA256SUMS"
+    if not sums.is_file():
+        raise FileNotFoundError(f"model list missing: {sums} (worker/models/fetch.sh)")
+    for line in sums.read_text().splitlines():
+        digest, _, path = line.partition("  ")
+        if path == name:
+            return digest
+    raise FileNotFoundError(f"{name} is not in {sums} (worker/models/fetch.sh)")
+
+
+_loading = threading.Lock()
+
+
+def _load_once[T](load: Callable[[], T]) -> Callable[[], T]:
+    """load, run once per process: a second thread asking while the first
+    loads waits for that model instead of loading another copy."""
+    loaded = cache(load)
+
+    @wraps(load)
+    def get() -> T:
+        with _loading:
+            return loaded()
+
+    return get
 
 
 def session(path: Path, n_threads: int | None = None) -> ort.InferenceSession:
@@ -263,7 +301,7 @@ class SiglipTextEncoder:
         return unit(self.sess.run(["pooler_output"], {"input_ids": ids})[0])
 
 
-@cache
+@_load_once
 def text_encoder() -> TextEncoder:
     """Arctic Embed M v2.0: documents and queries into 768-dimension vectors;
     a query takes the prefix "query: ", a document none."""
@@ -271,20 +309,20 @@ def text_encoder() -> TextEncoder:
     return TextEncoder(models_dir() / TEXT_MODEL, spec)
 
 
-@cache
+@_load_once
 def image_encoder() -> ImageEncoder:
     """SigLIP 2 base/16 at 224 px: photos into 768-dimension vectors."""
     spec = ImageSpec("vision_model.onnx", 224, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     return ImageEncoder(models_dir() / IMAGE_MODEL, spec)
 
 
-@cache
+@_load_once
 def image_query_encoder() -> SiglipTextEncoder:
     """SigLIP 2's text half: a query into a vector that compares with the photos'."""
     return SiglipTextEncoder(models_dir() / IMAGE_MODEL, "text_model.onnx")
 
 
-@cache
+@_load_once
 def ocr_model() -> OcrModel:
     """PP-OCRv5: the mobile text detector and the Latin mobile recogniser."""
     return OcrModel(models_dir() / OCR_MODEL)

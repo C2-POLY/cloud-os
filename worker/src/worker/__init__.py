@@ -17,6 +17,7 @@ log = logging.getLogger("worker")
 
 HEARTBEAT_EVERY = 10.0
 RETRY_EVERY = 2.0
+NICE = 10  # CLOUDOS_WORKER_NICE: how much lower than the core the worker runs
 
 UPSERT_HEARTBEAT = """
     INSERT INTO worker_heartbeat (worker_id, seen_at) VALUES (%s, now())
@@ -61,6 +62,20 @@ def run(url: str, worker_id: str, stop: threading.Event) -> None:
             stop.wait(RETRY_EVERY)
 
 
+def requeue_stale(conn: psycopg.Connection) -> None:
+    """Queue again, at backfill priority, the vectors a new model or another
+    cutting made stale (worker.textemb). A failure is logged: the tasks run anyway."""
+    from worker import textemb
+
+    try:
+        n = textemb.requeue_stale(conn)
+    except (OSError, psycopg.Error) as err:  # no model files, or an older schema
+        log.error("text vectors not checked against the current model: %s", err)
+        return
+    if n:
+        log.info("%d contents queued for their text vectors (%s)", n, textemb.version())
+
+
 def run_tasks(url: str, worker_id: str, stop: threading.Event) -> None:
     """Run queued tasks until stopped, reconnecting whenever the database goes away."""
     from worker import tasks
@@ -70,6 +85,7 @@ def run_tasks(url: str, worker_id: str, stop: threading.Event) -> None:
             with psycopg.connect(url, autocommit=True) as conn:
                 if not wait_for_table(conn, "tasks", stop):
                     return
+                requeue_stale(conn)
                 log.info("worker %s takes tasks: %s", worker_id, ", ".join(tasks.HANDLERS))
                 tasks.work(conn, worker_id, stop)
         except psycopg.OperationalError as err:
@@ -86,6 +102,11 @@ def main() -> None:
     # workers sharing one would complete each other's tasks.
     worker_id = f"{os.environ.get('WORKER_ID', 'worker')}@{socket.gethostname()}:{os.getpid()}"
 
+    # Background work gives way to the core and Postgres, which answer the
+    # user: the threads started below inherit this niceness.
+    if niceness := int(os.environ.get("CLOUDOS_WORKER_NICE", NICE)):
+        os.nice(niceness)
+
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
@@ -93,6 +114,11 @@ def main() -> None:
         target=run, args=(url, worker_id, stop), name="heartbeat", daemon=True
     )
     heartbeat.start()
+    from worker import encoder
+
+    queries = threading.Thread(target=encoder.run, args=(stop,), name="encoder", daemon=True)
+    queries.start()
     run_tasks(url, worker_id, stop)
     heartbeat.join(timeout=5)
+    queries.join(timeout=5)
     log.info("worker %s stopped", worker_id)
