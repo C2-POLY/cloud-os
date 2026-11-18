@@ -91,6 +91,15 @@ export function dayTitle(day: string): string {
 }
 
 /** A photo's metadata, as GET /api/files/meta returns it (docs/architecture/metadata.md). */
+/** A video's length: "0:42", "12:05", "1:02:03". */
+export function formatDuration(ms: number): string {
+  const s = Math.round(ms / 1000)
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = String(s % 60).padStart(2, '0')
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`
+}
+
 const when = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 
 /** A wall-clock date "2024-07-14T18:03:22" written out, without any time zone conversion. */

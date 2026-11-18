@@ -65,6 +65,8 @@ type TimelineEntry struct {
 	Entry
 	At    string `json:"at"`    // wall-clock date, "2024-07-14T18:03:22", no zone
 	Taken bool   `json:"taken"` // At is when the photo was taken
+	// DurationMS is a video's length, once the workers have read it.
+	DurationMS *int64 `json:"duration_ms,omitempty"`
 }
 
 // TimelinePage is one page of the timeline and where the next one starts.
@@ -113,7 +115,7 @@ func (a *desktopAPI) timeline(w http.ResponseWriter, r *http.Request) {
 	}
 	page := TimelinePage{Items: make([]TimelineEntry, len(items))}
 	for i, it := range items {
-		page.Items[i] = TimelineEntry{Entry: entryOf(it.File), At: it.At.Format(wallClock), Taken: it.Taken}
+		page.Items[i] = TimelineEntry{Entry: entryOf(it.File), At: it.At.Format(wallClock), Taken: it.Taken, DurationMS: it.DurationMS}
 	}
 	if n := len(items); n == min(limit, storage.MaxTimelinePage) {
 		page.Next = &TimelineCursor{At: items[n-1].At.Format(wallClock), Path: items[n-1].Path}

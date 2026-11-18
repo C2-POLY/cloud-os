@@ -22,6 +22,8 @@ const (
 	png  = "\x89PNG\r\n\x1a\n a scan"
 	heic = "\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic an iPhone photo"
 	heif = "\x00\x00\x00\x18ftypmif1\x00\x00\x00\x00mif1heic a HEIF photo"
+	mp4  = "\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2 a video"
+	mov  = "\x00\x00\x00\x14ftypqt  \x00\x00\x02\x00qt   an iPhone video"
 )
 
 type env struct {
@@ -105,12 +107,25 @@ func TestStoringAnImageQueuesItsThumbnailOnce(t *testing.T) {
 	}
 }
 
+func TestStoringAVideoQueuesItsThumbnail(t *testing.T) {
+	e := newEnv(t)
+	e.put(t, "IMG_0002.MOV", mov)   // iPhone video, by its extension
+	e.put(t, "clip.mp4", mp4)       // MP4, by its extension
+	e.put(t, "from-phone", mov+"!") // QuickTime without extension, by its brand
+	e.put(t, "export", mp4+"!")     // MP4 without extension, by its brand
+	want := []string{hexsum(mov) + "/10", hexsum(mp4) + "/10", hexsum(mov+"!") + "/10", hexsum(mp4+"!") + "/10"}
+	if got := e.queued(t); strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("queued %v, want %v", got, want)
+	}
+}
+
 func TestBackfillQueuesLiveImagesWithoutThumbnail(t *testing.T) {
 	e := newEnv(t)
 	e.store.AfterStore = nil // files stored before thumbnails existed
 	e.put(t, "a.jpg", jpeg)
 	e.put(t, "b.png", png)
 	e.put(t, "iPhone/IMG_0001.HEIC", heic)
+	e.put(t, "iPhone/IMG_0002.MOV", mov)
 	e.put(t, "done.jpg", jpeg+"done")
 	e.put(t, "gone.jpg", jpeg+"gone")
 	e.put(t, "notes.txt", "hello")
@@ -119,7 +134,7 @@ func TestBackfillQueuesLiveImagesWithoutThumbnail(t *testing.T) {
 		t.Fatal(err)
 	}
 	n, err := thumbs.Backfill(e.ctx, e.queue)
-	if err != nil || n != 3 {
+	if err != nil || n != 4 {
 		t.Fatalf("backfill = %d, %v", n, err)
 	}
 	for _, q := range e.queued(t) {

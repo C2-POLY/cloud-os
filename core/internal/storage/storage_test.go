@@ -466,3 +466,31 @@ func TestHEIFIsRecognisedByExtensionAndContent(t *testing.T) {
 		}
 	}
 }
+
+func TestVideosAreRecognisedByExtensionAndContent(t *testing.T) {
+	box := func(brand, compat string) []byte {
+		return []byte("\x00\x00\x00\x18ftyp" + brand + "\x00\x00\x02\x00" + compat + "\x00\x00\x00\x08free")
+	}
+	for _, c := range []struct {
+		path string
+		head []byte
+		want string
+	}{
+		{"iPhone/IMG_0002.MOV", nil, "video/quicktime"}, // upper case, as an iPhone names it
+		{"clip.mp4", nil, "video/mp4"},
+		{"clip.m4v", nil, "video/mp4"},
+		{"video", box("qt  ", "qt  "), "video/quicktime"},
+		{"video", box("isom", "iso2"), "video/mp4"}, // no "mp4" brand: http.DetectContentType misses it
+		{"video", box("mp42", "isom"), "video/mp4"},
+		{"video", box("M4V ", "M4V "), "video/mp4"},
+	} {
+		if got := detectMIME(c.path, c.head); got != c.want {
+			t.Errorf("detectMIME(%q, %q) = %q, want %q", c.path, c.head, got, c.want)
+		}
+	}
+	for _, head := range [][]byte{box("M4A ", "isom"), box("avif", "mif1"), box("crx ", "isom")} {
+		if got := SniffMIME(head); strings.HasPrefix(got, "video/") {
+			t.Errorf("SniffMIME(%q) = %q", head, got)
+		}
+	}
+}

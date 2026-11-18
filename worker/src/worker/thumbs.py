@@ -1,4 +1,4 @@
-"""Thumbnails of image files, for core/internal/thumbs.
+"""Thumbnails of photos and videos, for core/internal/thumbs.
 
 The worker reads the data root read-only and writes the thumbnail to the
 database, keyed by the content's SHA-256: it never writes a file.
@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING
 import psycopg
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from worker import heif
-from worker.content import read_content, sha_of
+from worker import heif, video
+from worker.content import content_path, head_of, read_content, sha_of
 from worker.errors import Permanent
 
 if TYPE_CHECKING:
@@ -70,10 +70,16 @@ def make(task: Task, conn: psycopg.Connection) -> None:
     ).fetchone()
     if done:
         return
-    data = read_content(conn, sha, "image")
-    if data is None:
+    src = content_path(conn, sha)
+    if src is None:
         return
-    webp, width, height = render(data)
+    if video.is_video(head_of(src)):
+        webp, width, height = render(video.frame(src))
+    else:
+        data = read_content(conn, sha, "image")
+        if data is None:
+            return
+        webp, width, height = render(data)
     conn.execute(
         """INSERT INTO thumbnails (sha256, size, mime, width, height, bytes)
            VALUES (%s, %s, 'image/webp', %s, %s, %s) ON CONFLICT DO NOTHING""",

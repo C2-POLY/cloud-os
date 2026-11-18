@@ -49,6 +49,39 @@ def read_content(conn: psycopg.Connection, sha: bytes, what: str = "file") -> by
     raise RuntimeError("no copy of the content could be read")
 
 
+def content_path(conn: psycopg.Connection, sha: bytes) -> Path | None:
+    """The path of a live file with this content, checked against its hash by
+    reading it in chunks, whatever its size: for videos, which ffmpeg reads
+    from the disk. None when no live file has it any more."""
+    rows = conn.execute(
+        """SELECT owner, path FROM files
+           WHERE kind = 'file' AND sha256 = %s AND trash_id IS NULL ORDER BY id""",
+        (sha,),
+    ).fetchall()
+    if not rows:
+        return None
+    root = data_root()
+    for owner, path in rows:
+        disk = (root / owner / path).resolve()
+        if not disk.is_relative_to(root):
+            continue
+        h = hashlib.sha256()
+        try:
+            with disk.open("rb") as f:
+                while chunk := f.read(1024 * 1024):
+                    h.update(chunk)
+        except OSError:
+            continue  # moved or replaced while we read: try the next copy
+        if h.digest() == sha:
+            return disk
+    raise RuntimeError("no copy of the content could be read")
+
+
+def head_of(path: Path, size: int = 32) -> bytes:
+    with path.open("rb") as f:
+        return f.read(size)
+
+
 def sha_of(payload: dict) -> bytes:
     """The content a task keyed by content is about: payload {"sha256": hex}."""
     try:

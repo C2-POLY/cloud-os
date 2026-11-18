@@ -23,6 +23,12 @@ describe('thumbURL', () => {
     expect(thumbURL(file('a.heif', 'image/heif'))).not.toBeNull()
   })
 
+  it('points the videos the workers read at their thumbnail too', () => {
+    expect(thumbURL(file('IMG_0002.MOV', 'video/quicktime'))).toBe('/api/files/thumb?path=IMG_0002.MOV&v=abababababababab')
+    expect(thumbURL(file('clip.mp4', 'video/mp4'))).not.toBeNull()
+    expect(thumbURL(file('clip.webm', 'video/webm'))).toBeNull()
+  })
+
   it('has none for other files and folders', () => {
     expect(thumbURL(file('a.txt', 'text/plain'))).toBeNull()
     expect(thumbURL(file('a.gif', 'image/gif'))).toBeNull()

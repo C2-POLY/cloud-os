@@ -29,11 +29,11 @@ type Payload struct {
 	SHA256 string `json:"sha256"`
 }
 
-// Enqueue queues the metadata of a stored file, unless it is not an image
-// the workers can read, its content already has its metadata, or a task is
+// Enqueue queues the metadata of a stored file, unless it is not a photo
+// or a video the workers can read, its content already has its metadata, or a task is
 // already queued for it.
 func Enqueue(ctx context.Context, q *tasks.Queue, f storage.File, head []byte, priority int) (bool, error) {
-	if f.IsDir() || !thumbs.IsImage(f.MIME, head) {
+	if f.IsDir() || !thumbs.IsMedia(f.MIME, head) {
 		return false, nil
 	}
 	var exists bool
@@ -53,7 +53,7 @@ func Backfill(ctx context.Context, q *tasks.Queue) (int, error) {
 		`SELECT DISTINCT f.sha256, f.mime FROM files f
 		 WHERE f.kind = 'file' AND f.trash_id IS NULL AND f.mime = ANY($1)
 		   AND NOT EXISTS (SELECT 1 FROM media_meta m WHERE m.sha256 = f.sha256)`,
-		thumbs.ImageMIMEs())
+		thumbs.MediaMIMEs())
 	if err != nil {
 		return 0, err
 	}
@@ -97,15 +97,17 @@ type Meta struct {
 	Make, Model, Lens   *string
 	Width, Height       *int
 	Orientation         *int
+	// DurationMS is the length of a video, in milliseconds.
+	DurationMS *int64
 }
 
 // Get returns the metadata of a content, or ErrNotFound.
 func Get(ctx context.Context, pool *pgxpool.Pool, sha256 []byte) (Meta, error) {
 	var m Meta
 	err := pool.QueryRow(ctx,
-		`SELECT taken_at, taken_offset, latitude, longitude, make, model, lens, width, height, orientation
+		`SELECT taken_at, taken_offset, latitude, longitude, make, model, lens, width, height, orientation, duration_ms
 		 FROM media_meta WHERE sha256 = $1`, sha256).
-		Scan(&m.TakenAt, &m.TakenOffset, &m.Latitude, &m.Longitude, &m.Make, &m.Model, &m.Lens, &m.Width, &m.Height, &m.Orientation)
+		Scan(&m.TakenAt, &m.TakenOffset, &m.Latitude, &m.Longitude, &m.Make, &m.Model, &m.Lens, &m.Width, &m.Height, &m.Orientation, &m.DurationMS)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return m, ErrNotFound
 	}

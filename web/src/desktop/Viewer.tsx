@@ -5,7 +5,7 @@ import { api } from '../api.ts'
 import { downloadURL, formatSize, parentOf, thumbURL } from '../drive/files.ts'
 import { enter } from '../motion/animate.ts'
 import { driveURL, navigate } from '../router.ts'
-import { formatWallClock, type MediaMeta, type TimelineEntry } from './timeline.ts'
+import { formatDuration, formatWallClock, type MediaMeta, type TimelineEntry } from './timeline.ts'
 
 // What browsers draw themselves; anything else (HEIC…) shows its thumbnail.
 const drawable = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'])
@@ -70,7 +70,7 @@ export function Viewer({
     <div className="viewer" role="dialog" aria-modal="true" aria-label={item.name}>
       <div ref={panel} className="viewer-stage">
         {video ? (
-          <video key={item.path} src={downloadURL(item.path)} controls autoPlay playsInline />
+          <video key={item.path} src={downloadURL(item.path)} poster={thumb ?? undefined} controls autoPlay playsInline />
         ) : original ? (
           <img key={item.path} src={downloadURL(item.path)} alt={item.name} onError={() => setBroken(item.path)} />
         ) : thumb ? (
@@ -103,6 +103,12 @@ export function Viewer({
             <>
               <dt>Objectif</dt>
               <dd>{m.lens}</dd>
+            </>
+          )}
+          {m?.duration_ms != null && (
+            <>
+              <dt>Durée</dt>
+              <dd>{formatDuration(m.duration_ms)}</dd>
             </>
           )}
           {m?.width && m?.height && (

@@ -27,6 +27,7 @@ export interface Entry {
 export interface TimelineEntry extends Entry {
   at: string // wall-clock date, "2024-07-14T18:03:22", no zone
   taken: boolean // at is when the photo was taken
+  duration_ms?: number // a video's length, once the workers read it
 }
 
 export interface TimelineCursor {
@@ -57,6 +58,7 @@ export interface MediaMeta {
   lens: string | null
   width: number | null
   height: number | null
+  duration_ms: number | null // a video's length
 }
 
 /** POST /api/login and POST /api/setup. */
