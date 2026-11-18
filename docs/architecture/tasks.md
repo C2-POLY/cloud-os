@@ -1,7 +1,7 @@
 # File de tâches
 
 Le travail de fond (miniatures, OCR, embeddings…) passe par une file de tâches dans Postgres, partagée par le cœur (Go) et les workers (Python), sans Redis.
-Issue : #8.
+Issues : #8, #75.
 
 ## Contrat
 
@@ -43,7 +43,34 @@ stateDiagram-v2
 
 Le worker fait tourner deux fils d'exécution, chacun avec sa propre connexion et sa reconnexion automatique : le battement de vie, et la boucle des tâches (`tasks.work`).
 - **Boucle :** elle prend une tâche des types qu'il sait faire (`HANDLERS`), l'exécute en repoussant son bail, puis la termine ou enregistre l'échec. Une exception dans une tâche est enregistrée, et n'arrête jamais le worker ; l'exception `Permanent` fait passer la tâche en `failed` sans nouvel essai.
-- **Ajouter un type de tâche :** écrire sa fonction `(task, conn)` et l'ajouter à `HANDLERS`. Types actuels : `selftest`, `thumb` ([thumbnails.md](thumbnails.md)), `meta` ([metadata.md](metadata.md)). Les modules des tâches importent `Permanent` depuis `worker/src/worker/errors.py`, pas depuis `tasks.py`, pour pouvoir être importés avant la file.
+- **Ajouter un type de tâche :** écrire sa fonction `(task, conn)` et l'ajouter à `HANDLERS`. Types actuels : `selftest`, `thumb` ([thumbnails.md](thumbnails.md)), `meta` ([metadata.md](metadata.md)), `text` ([documents.md](documents.md)). Les modules des tâches importent `Permanent` depuis `worker/src/worker/errors.py`, pas depuis `tasks.py`, pour pouvoir être importés avant la file.
+
+### Bail
+
+Pendant la tâche, un fil à part (`keep_lease` dans `run_one`) appelle `extend` toutes les 20 s, sur sa propre connexion : celle de la tâche est occupée par le handler, qui peut y tenir une transaction. Il se connecte avec les paramètres de la connexion de la tâche plus son mot de passe (`make_conninfo(conn.info.dsn, password=conn.info.password)`, car `dsn` l'omet), et seulement à la première prolongation : une tâche de moins de 20 s n'ouvre pas de connexion. `run_one` attend ce fil avant `complete` ou `fail`. S'il ne peut pas se connecter, il l'écrit en avertissement et la tâche continue ; passé 60 s, `Reap` la reprend et `complete` lève `Lost` (#75).
+
+```mermaid
+sequenceDiagram
+    participant W as run_one (fil de la tâche)
+    participant K as keep_lease (fil du bail)
+    participant DB as Postgres (tasks)
+    participant C as cœur (Reap, toutes les 30 s)
+    W->>DB: claim : running, locked_until = now + 60 s
+    W->>K: démarre avec make_conninfo(conn.info.dsn, password=conn.info.password)
+    W->>W: handler(task, conn)
+    K->>K: attend 20 s (done.wait), rien si le handler a fini
+    K->>DB: se connecte, mot de passe compris
+    loop toutes les 20 s tant que le handler tourne
+        K->>DB: extend : locked_until = now + 60 s, WHERE locked_by = worker
+    end
+    C->>DB: Reap : seulement les tâches avec locked_until < now()
+    Note over C,DB: le bail est toujours dans le futur, la tâche reste au worker
+    W->>K: done.set(), puis attend le fil (join)
+    W->>DB: complete (ou fail)
+    alt connexion refusée, ou bail déjà repris
+        K-->>K: avertissement ; complete lève Lost, journalisé
+    end
+```
 
 ## Santé et preuve de bout en bout
 

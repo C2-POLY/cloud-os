@@ -76,6 +76,9 @@ docker compose run --rm core thumbs backfill
 # Queue the metadata (date, GPS, camera, a video's length) of every stored image and video that has none
 docker compose run --rm core meta backfill
 
+# Queue the text extraction of every stored document (PDF, Office, OpenDocument, text) that has none
+docker compose run --rm core text backfill
+
 # The mobile app (Expo) in the iOS simulator; the box is at localhost:<core port>
 cd mobile && npx expo run:ios
 

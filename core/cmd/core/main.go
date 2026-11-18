@@ -29,6 +29,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/albums"
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
+	"github.com/C2-POLY/cloud-os/core/internal/doctext"
 	"github.com/C2-POLY/cloud-os/core/internal/httpapi"
 	"github.com/C2-POLY/cloud-os/core/internal/meta"
 	"github.com/C2-POLY/cloud-os/core/internal/migrate"
@@ -99,13 +100,22 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 			fmt.Fprintf(out, "%d metadata tasks queued\n", n)
 			return err
 		})
+	case "text":
+		if len(args) != 1 || args[0] != "backfill" {
+			return errors.New("usage: core text backfill")
+		}
+		return withCore(ctx, func(c core) error {
+			n, err := doctext.Backfill(ctx, &tasks.Queue{Pool: c.pool})
+			fmt.Fprintf(out, "%d text extractions queued\n", n)
+			return err
+		})
 	case "reset-password":
 		if len(args) != 1 {
 			return errors.New("usage: core reset-password NAME (the new password is read from stdin)")
 		}
 		return withCore(ctx, func(c core) error { return resetPassword(ctx, c, args[0], os.Stdin, out) })
 	default:
-		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, reset-password)", cmd)
+		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, text, reset-password)", cmd)
 	}
 }
 
@@ -264,8 +274,9 @@ func resetPassword(ctx context.Context, c core, name string, in io.Reader, out i
 }
 
 // queueBackgroundWork is the store's AfterStore hook: it queues the thumbnail
-// and the metadata of a new image content. Best effort: a task lost here is
-// caught up by `core thumbs backfill` and `core meta backfill`.
+// and the metadata of a new image or video content, and the text of a new
+// document. Best effort: a task lost here is caught up by `core thumbs
+// backfill`, `core meta backfill` and `core text backfill`.
 func queueBackgroundWork(q *tasks.Queue, priority int) func(context.Context, storage.File, []byte) {
 	return func(ctx context.Context, f storage.File, head []byte) {
 		ctx = context.WithoutCancel(ctx)
@@ -274,6 +285,9 @@ func queueBackgroundWork(q *tasks.Queue, priority int) func(context.Context, sto
 		}
 		if _, err := meta.Enqueue(ctx, q, f, head, priority); err != nil {
 			slog.Error("queue metadata", "owner", f.Owner, "path", f.Path, "err", err)
+		}
+		if _, err := doctext.Enqueue(ctx, q, f, priority); err != nil {
+			slog.Error("queue text", "owner", f.Owner, "path", f.Path, "err", err)
 		}
 	}
 }
@@ -300,6 +314,9 @@ func reapTasksEvery(ctx context.Context, q *tasks.Queue, every time.Duration) {
 			}
 			if _, err := meta.Prune(ctx, q.Pool); err != nil {
 				slog.Error("prune metadata", "err", err)
+			}
+			if _, err := doctext.Prune(ctx, q.Pool); err != nil {
+				slog.Error("prune document text", "err", err)
 			}
 			if _, err := (&activity.Log{Pool: q.Pool}).Prune(ctx); err != nil {
 				slog.Error("prune activity", "err", err)
