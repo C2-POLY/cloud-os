@@ -20,17 +20,17 @@ jest.mock('../lib/session', () => ({ useApi: () => mockApi }))
 
 describe('Folder', () => {
   it('lists folders first, and opens a subfolder', async () => {
-    render(<Folder path="Photos" />)
+    await render(<Folder path="Photos" />)
     await waitFor(() => expect(screen.getByLabelText('Été')).toBeTruthy())
     expect(mockApi.list).toHaveBeenCalledWith('Photos')
     expect(screen.getByText('2,7 Ko')).toBeTruthy()
-    fireEvent.press(screen.getByLabelText('Été'))
+    await fireEvent.press(screen.getByLabelText('Été'))
     expect(mockPush).toHaveBeenCalledWith('/files/Photos/%C3%89t%C3%A9')
   })
 
   it('shows the box’s error', async () => {
     mockApi.list.mockRejectedValueOnce(new Error('La box ne répond pas à cette adresse.'))
-    render(<Folder path="" />)
+    await render(<Folder path="" />)
     await waitFor(() => expect(screen.getByText('La box ne répond pas à cette adresse.')).toBeTruthy())
   })
 })
