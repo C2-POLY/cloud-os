@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import psycopg
+from psycopg.conninfo import make_conninfo
 
 from worker.errors import Permanent as Permanent  # re-exported: tasks.Permanent
 
@@ -179,20 +180,32 @@ def _handlers() -> dict[str, Handler]:
 HANDLERS: dict[str, Handler] = _handlers()
 
 
-def run_one(conn: psycopg.Connection, worker: str, handlers: dict[str, Handler]) -> bool:
+def run_one(
+    conn: psycopg.Connection,
+    worker: str,
+    handlers: dict[str, Handler],
+    lease: float = LEASE,
+    extend_every: float = EXTEND_EVERY,
+) -> bool:
     """Claim and run one task; False when none is ready. While the handler
-    works, a thread pushes back the lease so the task is not taken away."""
-    task = claim(conn, worker, list(handlers))
+    works, a thread pushes back the lease every extend_every seconds, on its
+    own connection, so the task is not taken away."""
+    task = claim(conn, worker, list(handlers), lease)
     if task is None:
         return False
     done = threading.Event()
-    url = conn.info.dsn
+    # info.dsn leaves out the password, which the database asks for.
+    conninfo = make_conninfo(conn.info.dsn, password=conn.info.password or None)
 
     def keep_lease() -> None:
+        if done.wait(extend_every):
+            return  # a short task needs no extension, nor a connection
         try:
-            with psycopg.connect(url, autocommit=True) as c:
-                while not done.wait(EXTEND_EVERY):
-                    extend(c, task.id, worker)
+            with psycopg.connect(conninfo, autocommit=True) as c:
+                while True:
+                    extend(c, task.id, worker, lease)
+                    if done.wait(extend_every):
+                        return
         except Lost:
             log.warning("task %s: lease lost", task.id)
         except psycopg.Error as err:
@@ -204,6 +217,7 @@ def run_one(conn: psycopg.Connection, worker: str, handlers: dict[str, Handler])
         handlers[task.kind](task, conn)
     except Exception as err:  # a failing handler is recorded, never kills the worker
         done.set()
+        keeper.join()  # its last extension lands before fail, not after
         log.warning("task %s (%s) failed: %s", task.id, task.kind, err)
         try:
             fail(
@@ -217,6 +231,7 @@ def run_one(conn: psycopg.Connection, worker: str, handlers: dict[str, Handler])
             log.warning("task %s: lost before recording the failure", task.id)
         return True
     done.set()
+    keeper.join()
     try:
         complete(conn, task.id, worker)
     except Lost:
