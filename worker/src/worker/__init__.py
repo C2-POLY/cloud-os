@@ -17,6 +17,7 @@ log = logging.getLogger("worker")
 
 HEARTBEAT_EVERY = 10.0
 RETRY_EVERY = 2.0
+NICE = 10  # CLOUDOS_WORKER_NICE: how much lower than the core the worker runs
 
 UPSERT_HEARTBEAT = """
     INSERT INTO worker_heartbeat (worker_id, seen_at) VALUES (%s, now())
@@ -89,6 +90,11 @@ def main() -> None:
     # Unique per process: the queue tells workers apart by this id, so two
     # workers sharing one would complete each other's tasks.
     worker_id = f"{os.environ.get('WORKER_ID', 'worker')}@{socket.gethostname()}:{os.getpid()}"
+
+    # Background work gives way to the core and Postgres, which answer the
+    # user: the threads started below inherit this niceness.
+    if niceness := int(os.environ.get("CLOUDOS_WORKER_NICE", NICE)):
+        os.nice(niceness)
 
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):

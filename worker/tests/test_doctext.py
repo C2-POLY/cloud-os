@@ -260,9 +260,10 @@ def read_only(root: Path) -> dict[Path, tuple[bytes, int]]:
     return seen
 
 
-def run(conn: psycopg.Connection, sha: bytes) -> tuple[str, str | None]:
-    task_id = tasks.enqueue(conn, doctext.KIND, {"sha256": sha.hex()})
-    # The text tasks only: a scan queues its OCR (test_ocr.py), left for later.
+def run(conn: psycopg.Connection, sha: bytes, priority: int = 0) -> tuple[str, str | None]:
+    """Run the text task of a content. The text tasks only: the vectors and
+    the OCR it queues (test_textemb.py, test_ocr.py) are left queued."""
+    task_id = tasks.enqueue(conn, doctext.KIND, {"sha256": sha.hex()}, priority=priority)
     assert tasks.run_one(conn, "w", {doctext.KIND: doctext.make})
     row = conn.execute("SELECT state, last_error FROM tasks WHERE id = %s", (task_id,)).fetchone()
     assert row
@@ -313,6 +314,31 @@ def test_task_writes_the_text_and_never_the_file(conn: psycopg.Connection, root:
     assert sorted(p for p in root.rglob("*") if p.is_file()) == sorted(before)
     # Running it again is a no-op.
     assert run(conn, shas["Contrats/bail.pdf"]) == ("done", None)
+
+
+def test_a_text_with_words_queues_its_vectors_at_the_priority_of_its_task(
+    conn: psycopg.Connection, root: Path
+) -> None:
+    new = store(conn, root, "notes.md", b"# Courses\n- lait\n", "text/markdown")
+    old = store(conn, root, "Contrats/bail.pdf", fixture("letter.pdf"), "application/pdf")
+    scan = store(conn, root, "Scans/facture.pdf", fixture("scan.pdf"), "application/pdf")
+    read_only(root)
+    assert run(conn, new, priority=10) == ("done", None)
+    assert run(conn, old, priority=0) == ("done", None)
+    assert run(conn, scan, priority=10) == ("done", None)
+    queued = conn.execute(
+        "SELECT payload->>'sha256', priority, dedupe_key, state FROM tasks WHERE kind = 'textemb'"
+        " ORDER BY id"
+    ).fetchall()
+    # A new file stays new, a backfill stays backfill; a scan waits for its OCR.
+    assert queued == [
+        (new.hex(), 10, f"textemb:{new.hex()}", "queued"),
+        (old.hex(), 0, f"textemb:{old.hex()}", "queued"),
+    ]
+    # A text already there queues nothing more.
+    conn.execute("UPDATE tasks SET state = 'done' WHERE kind = 'textemb'")
+    assert run(conn, new, priority=10) == ("done", None)
+    assert conn.execute("SELECT count(*) FROM tasks WHERE kind = 'textemb'").fetchone() == (2,)
 
 
 def test_unreadable_document_fails_without_blocking_the_queue(

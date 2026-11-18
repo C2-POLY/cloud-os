@@ -6,6 +6,7 @@
 //	core reset-password NAME set a new password read from stdin and end the account's sessions
 //	core selftest [N]        queue N selftest tasks and wait for the workers to run them
 //	core photovec backfill   queue the vector of every stored photo and video that has none
+//	core textemb backfill    queue the vectors of every stored document with text that has none
 package main
 
 import (
@@ -40,6 +41,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/share"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 	"github.com/C2-POLY/cloud-os/core/internal/tasks"
+	"github.com/C2-POLY/cloud-os/core/internal/textemb"
 	"github.com/C2-POLY/cloud-os/core/internal/thumbs"
 )
 
@@ -131,13 +133,22 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 			fmt.Fprintf(out, "%d photo vectors queued\n", n)
 			return err
 		})
+	case "textemb":
+		if len(args) != 1 || args[0] != "backfill" {
+			return errors.New("usage: core textemb backfill")
+		}
+		return withCore(ctx, func(c core) error {
+			n, err := textemb.Backfill(ctx, &tasks.Queue{Pool: c.pool})
+			fmt.Fprintf(out, "%d document vectors queued\n", n)
+			return err
+		})
 	case "reset-password":
 		if len(args) != 1 {
 			return errors.New("usage: core reset-password NAME (the new password is read from stdin)")
 		}
 		return withCore(ctx, func(c core) error { return resetPassword(ctx, c, args[0], os.Stdin, out) })
 	default:
-		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, text, ocr, photovec, reset-password)", cmd)
+		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, text, ocr, photovec, textemb, reset-password)", cmd)
 	}
 }
 
@@ -221,6 +232,8 @@ func serve(ctx context.Context, c core) error {
 	}
 
 	addr := envOr("CORE_ADDR", ":8080")
+	// The workers' query endpoint, for the searches by meaning.
+	workers := &embed.Client{URL: os.Getenv("WORKER_URL")}
 	srv := &http.Server{
 		Addr: addr,
 		Handler: httpapi.NewHandler(httpapi.Config{
@@ -231,7 +244,8 @@ func serve(ctx context.Context, c core) error {
 			Shares:    shares,
 			MapsDir:   os.Getenv("MAPS_DIR"),
 			Albums:    &albums.Service{Pool: c.pool, Files: c.files},
-			Photos:    &photovec.Searcher{Pool: c.pool, Embed: &embed.Client{URL: os.Getenv("WORKER_URL")}},
+			Photos:    &photovec.Searcher{Pool: c.pool, Embed: workers},
+			Documents: &textemb.Searcher{Pool: c.pool, Embed: workers},
 			Activity:  &activity.Log{Pool: c.pool},
 			MaxUpload: maxUpload(),
 			StaticDir: os.Getenv("STATIC_DIR"),
@@ -298,7 +312,8 @@ func resetPassword(ctx context.Context, c core, name string, in io.Reader, out i
 
 // queueBackgroundWork is the store's AfterStore hook: it queues the thumbnail,
 // the metadata and the vector of a new image or video content, the text of a
-// new document, and the OCR of a new image. Best effort: a task lost here is
+// new document, and the OCR of a new image (the workers queue the vectors of
+// a document once they have its text). Best effort: a task lost here is
 // caught up by `core thumbs backfill`, `core meta backfill`, `core text
 // backfill`, `core ocr backfill` and `core photovec backfill`.
 func queueBackgroundWork(q *tasks.Queue, priority int) func(context.Context, storage.File, []byte) {
@@ -323,8 +338,8 @@ func queueBackgroundWork(q *tasks.Queue, priority int) func(context.Context, sto
 }
 
 // reapTasksEvery gives back the tasks of dead workers, prunes old done tasks
-// and what no file has any more, and queues every photo again when the
-// workers declare a new model version.
+// and what no file has any more, and queues every photo and document again
+// when the workers declare a new model version.
 func reapTasksEvery(ctx context.Context, q *tasks.Queue, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
@@ -357,6 +372,11 @@ func reapTasksEvery(ctx context.Context, q *tasks.Queue, every time.Duration) {
 				slog.Error("queue photo vectors for the model", "err", err)
 			} else if n > 0 {
 				slog.Info("photo vectors queued for the workers' model", "model", photovec.Model, "count", n)
+			}
+			if n, err := textemb.Sync(ctx, q); err != nil {
+				slog.Error("queue document vectors for the model", "err", err)
+			} else if n > 0 {
+				slog.Info("document vectors queued for the workers' model", "model", textemb.Model, "count", n)
 			}
 			if _, err := (&activity.Log{Pool: q.Pool}).Prune(ctx); err != nil {
 				slog.Error("prune activity", "err", err)

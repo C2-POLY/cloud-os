@@ -41,9 +41,19 @@ type queryer interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-func scanFile(row pgx.Row) (File, error) {
+func scanFile(row pgx.Row) (File, error) { return ScanFile(row) }
+
+// FileColumns are the columns of a files row that ScanFile reads, each
+// prefixed with alias ("f.id, f.owner, …"), for a package that joins files
+// with its own tables (internal/textemb). Reading only: writes stay here.
+func FileColumns(alias string) string {
+	return alias + "." + strings.ReplaceAll(fileColumns, ", ", ", "+alias+".")
+}
+
+// ScanFile reads the FileColumns of a row, followed by dest.
+func ScanFile(row pgx.Row, dest ...any) (File, error) {
 	var f File
-	err := row.Scan(&f.ID, &f.Owner, &f.Path, &f.Kind, &f.Size, &f.MIME, &f.SHA256, &f.CreatedAt, &f.ModifiedAt, &f.IndexedAt, &f.TrashID)
+	err := row.Scan(append([]any{&f.ID, &f.Owner, &f.Path, &f.Kind, &f.Size, &f.MIME, &f.SHA256, &f.CreatedAt, &f.ModifiedAt, &f.IndexedAt, &f.TrashID}, dest...)...)
 	return f, err
 }
 

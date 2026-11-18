@@ -167,7 +167,7 @@ def selftest(task: Task, conn: psycopg.Connection) -> None:
 
 
 def _handlers() -> dict[str, Handler]:
-    from worker import doctext, meta, ocr, photovec, thumbs
+    from worker import doctext, meta, ocr, photovec, textemb, thumbs
 
     return {
         "selftest": selftest,
@@ -176,6 +176,7 @@ def _handlers() -> dict[str, Handler]:
         doctext.KIND: doctext.make,
         ocr.KIND: ocr.make,
         photovec.KIND: photovec.make,
+        textemb.KIND: textemb.make,
     }
 
 

@@ -43,6 +43,18 @@ export interface PhotoHit extends Entry {
   score: number // cosine similarity to the query; compare ranks, not scores across searches
 }
 
+/**
+ * A document found by meaning, as the core's `httpapi.SemanticHit` writes it:
+ * GET /api/search/semantic?q=…&limit=…, best first. 503 when the workers
+ * cannot encode the query.
+ */
+export interface SemanticHit extends Entry {
+  score: number // cosine similarity of the best window of its text, 1 at most
+  start: number // that window, in characters of the document's text
+  end: number
+  excerpt: string // the window's first characters
+}
+
 /** A file on the timeline, as the core's `httpapi.TimelineEntry` writes it. */
 export interface TimelineEntry extends Entry {
   at: string // wall-clock date, "2024-07-14T18:03:22", no zone

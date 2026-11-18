@@ -1,7 +1,7 @@
 # Vecteurs et recherche par le sens
 
 Ce que montrent les photos et les vidéos, rangé en vecteurs dans pgvector pour les retrouver en décrivant la scène, en français : « chien à la plage ». Le worker encode chaque contenu avec SigLIP 2 ([models.md](models.md)), et le cœur cherche les plus proches d'une phrase encodée par le même modèle.
-Issue : #71 (Feature #65). Le mécanisme des requêtes et le registre des modèles servent aussi aux textes (#70). La fusion avec le plein texte et les documents dans Demander, c'est #72.
+Issue : #71 (Feature #65). Le mécanisme des requêtes et le registre des modèles servent aussi aux documents : Arctic Embed et leurs vecteurs par fenêtre de texte (#70, [search-ai.md](search-ai.md)). La fusion avec le plein texte et les documents dans Demander, c'est #72.
 
 | Pièce | Où | Rôle |
 |---|---|---|
@@ -64,7 +64,7 @@ sequenceDiagram
 ## Modèle et version
 
 - **Le worker sait ce qu'il fait tourner.** `models.embedding_models()` donne, par nom de modèle, sa version, sa dimension et son encodeur de requêtes. `vectors.declare` l'écrit dans `embedding_models` au démarrage. Une version déjà déclarée ne change rien ; une nouvelle remet `requeued_at` à NULL.
-- **Le cœur remet tout en file une fois par version.** `photovec.Sync`, au tour de 30 s, lit `embed.Due` (une requête). Quand `requeued_at` est NULL, il lance `Backfill` puis `embed.MarkRequeued`. Le premier démarrage passe par là : les photos déjà stockées sont rattrapées sans commande. `core photovec backfill` fait le rattrapage à la main.
+- **Le cœur remet tout en file une fois par version.** `photovec.Sync` (et `textemb.Sync` pour les documents), au tour de 30 s, lit `embed.Due` (une requête). Quand `requeued_at` est NULL, il lance `Backfill` puis `embed.MarkRequeued`. Le premier démarrage passe par là : les photos déjà stockées sont rattrapées sans commande. `core photovec backfill` fait le rattrapage à la main.
 - **Jamais de mélange.** La version (`IMAGE_MODEL_VERSION`, `ba1f3b0-int8` : la révision que fige `fetch.sh` et la quantification) est écrite sur chaque ligne. La recherche ne compare que les vecteurs de la version qui a encodé la requête. Pendant un rattrapage, une photo pas encore réencodée manque à la recherche par le sens et reste trouvable par son nom.
 - **Changer de modèle.** Une autre version du même modèle : changer `IMAGE_MODEL_VERSION` (et `fetch.sh`), la table reste. Un autre modèle, ou une autre dimension : une nouvelle table par migration, une ligne `table` et `Model` dans `core/internal/photovec`, et l'ancienne table supprimée une fois la nouvelle remplie.
 
@@ -79,7 +79,9 @@ sequenceDiagram
   - les requêtes : 0,998 sur arm64, mais 0,94 sur un x86-64 sans VNNI (AVX2, comme les machines de la CI), qui sature les produits int8 de la partie texte ;
   - les photos : 0,80 sur les deux, à cause de la quantification des activations de la partie image.
 
-  Résultat : la bonne photo sort en premier pour les 15 requêtes du banc sur arm64, et pour 14 sur x86-64, où « parasols sur la plage » donne un chien sur une plage devant la photo de parasols. Sur arm64, l'écart n'est que de 0,013, contre 0,054 en fp32. La variante uint8 de la partie texte ne fait pas mieux (0,935 sur les deux processeurs). Le choix de la quantification est à revoir avec le matériel de référence ([ADR 005](../decisions/005-modeles-locaux.md)).
+  Arctic, pour les documents, en souffrait aussi : en int8, la CI x86-64 mettait l'assurance habitation devant le bail sur « contrat de l'appart ». #70 l'a passé en fp16, qui donne les mêmes vecteurs sur les deux processeurs ([ADR 005](../decisions/005-modeles-locaux.md)).
+
+  Pour les photos, la bonne photo sort en premier pour les 15 requêtes du banc sur arm64, et pour 14 sur x86-64, où « parasols sur la plage » donne un chien sur une plage devant la photo de parasols. Sur arm64, l'écart n'est que de 0,013, contre 0,054 en fp32. La variante uint8 de la partie texte ne fait pas mieux (0,935 sur les deux processeurs). Le choix de la quantification est à revoir avec le matériel de référence ([ADR 005](../decisions/005-modeles-locaux.md)).
 
 ## Règles
 

@@ -38,7 +38,7 @@ ffmpeg: .tools/ffmpeg/bin/ffprobe
 .tools/ffmpeg/bin/ffprobe:
 	worker/ffmpeg/build.sh .tools/ffmpeg
 
-## models: fetch the worker's local AI models into .tools/models (about 740 MB),
+## models: fetch the worker's local AI models into .tools/models (about 1 GB),
 ## checked against their SHA-256, for the model tests (the same files as
 ## worker/Dockerfile; skipped when present)
 models: .tools/models/SHA256SUMS

@@ -19,7 +19,8 @@ each line, the line cut out upright and read, then the lines in reading order.
 
 The worker reads the data root read-only and checks each content against its
 hash; the text goes to document_text, keyed by the content's SHA-256, with
-ocr_model naming the model: nothing is ever written to a file.
+ocr_model naming the model: nothing is ever written to a file. A text with
+words queues its vectors (worker.textemb) in the same transaction.
 """
 
 from __future__ import annotations
@@ -41,7 +42,7 @@ import psycopg
 from PIL import Image
 from pypdf import PasswordType, PdfReader, apply_configuration
 
-from worker import doctext, models, thumbs
+from worker import doctext, models, textemb, thumbs
 from worker.content import read_content, sha_of
 from worker.errors import Permanent
 
@@ -421,20 +422,27 @@ def make(task: Task, conn: psycopg.Connection) -> None:
         return
     if row is None:
         found = read_image(data)
-        conn.execute(
+        write = (
             """INSERT INTO document_text
                    (sha256, source, text, chars, truncated, pages, has_text, ocr_model)
-               VALUES (%s, 'image', %s, %s, %s, NULL, %s, %s) ON CONFLICT DO NOTHING""",
+               VALUES (%s, 'image', %s, %s, %s, NULL, %s, %s) ON CONFLICT DO NOTHING
+               RETURNING has_text""",
             (sha, found.text, len(found.text), found.truncated, found.has_text, MODEL),
         )
-        return
-    found = read_pdf_text(data)
-    conn.execute(
-        """UPDATE document_text SET text = %s, chars = %s, truncated = %s, has_text = %s,
-               ocr_model = %s
-           WHERE sha256 = %s AND source = 'pdf' AND NOT has_text AND ocr_model IS NULL""",
-        (found.text, len(found.text), found.truncated, found.has_text, MODEL, sha),
-    )
+    else:
+        found = read_pdf_text(data)
+        write = (
+            """UPDATE document_text SET text = %s, chars = %s, truncated = %s, has_text = %s,
+                   ocr_model = %s
+               WHERE sha256 = %s AND source = 'pdf' AND NOT has_text AND ocr_model IS NULL
+               RETURNING has_text""",
+            (found.text, len(found.text), found.truncated, found.has_text, MODEL, sha),
+        )
+    with conn.transaction():
+        written = conn.execute(*write).fetchone()
+        if written and written[0]:
+            # Its vectors (worker.textemb), at the priority of this task.
+            textemb.enqueue(conn, sha, task.priority)
 
 
 def main() -> int:

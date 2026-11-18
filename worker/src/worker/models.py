@@ -11,16 +11,19 @@ package before this module imports it).
 
 This module only loads the models and turns texts and images into unit
 vectors, and pages into text; indexing them is the job of the tasks
-(worker.photovec for photos, #71; #68 and #70 for the rest), and
-worker.embedserver encodes the text of a search for the core.
+(worker.photovec for photos, worker.textemb for documents, worker.ocr for
+images and scans), and worker.embedserver encodes the text of a search for
+the core. A worker loads each model once, whichever of its threads (the
+task loop, the query endpoint) asks first.
 """
 
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from functools import cache
+from functools import cache, wraps
 from pathlib import Path
 from typing import Literal
 
@@ -48,13 +51,26 @@ OCR_MODEL = "pp-ocrv5-latin"
 # export. Change it whenever the vectors would change (another revision,
 # quantisation or preprocessing): the core then encodes every photo again.
 IMAGE_MODEL_VERSION = "ba1f3b0-int8"
+# The same for documents; worker.textemb adds how it cuts them in windows.
+# fp16, not int8: the int8 export quantizes the activations of every product
+# on the fly, and ONNX Runtime's integer kernels differ from one CPU to the
+# next. Its vectors sit at 0.96 cosine from fp32 and move by up to 0.03
+# between CPUs, enough to put the home insurance before the lease on
+# "contrat de l'appart" on an x86-64 CPU (#70). fp16 computes in floats: 0.9999
+# from fp32, on arm64 and x86-64 alike (docs/decisions/005-modeles-locaux.md).
+TEXT_MODEL_VERSION = "95c2741-fp16"
+# The table of the text vectors (core/migrations): another model is another
+# table, so that vectors of two models never mix.
+TEXT_TABLE = "text_vectors_arctic_m_v2"
 # SigLIP learnt from image captions: a search reads better as one. On the
 # benchmark, it finds the photo first for 18 queries out of 18 against 17
 # bare ("chat" alone found the dogs). It shapes queries only, not the
 # stored vectors: changing it needs no new version.
 IMAGE_QUERY_TEMPLATE = "une photo de {}"
-# Arctic reads up to 8192 tokens, but attention grows with the square of the
-# length: 512 tokens (about two pages) until #70 decides how to cut documents.
+# Arctic reads up to 8192 tokens, but 2048 at once already take the worker
+# from 1.2 to 2.6 GB of RAM, and a long window blurs the passage that answers
+# a precise question: documents are cut into windows of 512 tokens (about
+# 1,800 characters of French), worker.textemb.
 TEXT_SPEC_MAX_TOKENS = 512
 
 
@@ -64,6 +80,22 @@ def models_dir() -> Path:
 
 def threads() -> int:
     return int(os.environ.get("CLOUDOS_MODEL_THREADS", THREADS))
+
+
+_loading = threading.Lock()
+
+
+def _load_once[T](load: Callable[[], T]) -> Callable[[], T]:
+    """load, run once per process: a second thread asking while the first
+    loads waits for that model instead of loading another copy."""
+    loaded = cache(load)
+
+    @wraps(load)
+    def get() -> T:
+        with _loading:
+            return loaded()
+
+    return get
 
 
 def session(path: Path, n_threads: int | None = None) -> ort.InferenceSession:
@@ -143,7 +175,8 @@ class TextEncoder:
                 _, heads, _, size = arg.shape
                 feed[name] = np.zeros((len(rows), heads, 0, size), dtype=np.float32)
         wanted = "sentence_embedding" if self.spec.pooling == "output" else self.outputs[0]
-        out = self.sess.run([wanted], feed)[0]
+        # An fp16 model answers in fp16: normalise in fp32.
+        out = self.sess.run([wanted], feed)[0].astype(np.float32, copy=False)
         if self.spec.pooling == "output":
             return unit(out)
         if self.spec.pooling == "cls":
@@ -303,28 +336,28 @@ class SiglipTextEncoder:
         return unit(self.sess.run(["pooler_output"], {"input_ids": ids})[0])
 
 
-@cache
+@_load_once
 def text_encoder() -> TextEncoder:
-    """Arctic Embed M v2.0: documents and queries into 768-dimension vectors;
+    """Arctic Embed M v2.0, fp16: documents and queries into 768-dimension vectors;
     a query takes the prefix "query: ", a document none."""
     spec = TextSpec("model.onnx", "output", query_prefix="query: ", max_tokens=TEXT_SPEC_MAX_TOKENS)
     return TextEncoder(models_dir() / TEXT_MODEL, spec)
 
 
-@cache
+@_load_once
 def image_encoder() -> ImageEncoder:
     """SigLIP 2 base/16 at 224 px: photos into 768-dimension vectors."""
     spec = ImageSpec("vision_model.onnx", 224, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     return ImageEncoder(models_dir() / IMAGE_MODEL, spec)
 
 
-@cache
+@_load_once
 def image_query_encoder() -> SiglipTextEncoder:
     """SigLIP 2's text half: a query into a vector that compares with the photos'."""
     return SiglipTextEncoder(models_dir() / IMAGE_MODEL, "text_model.onnx")
 
 
-@cache
+@_load_once
 def ocr_model() -> OcrModel:
     """PP-OCRv5: the mobile text detector and the Latin mobile recogniser."""
     return OcrModel(models_dir() / OCR_MODEL)
@@ -344,9 +377,18 @@ class Served:
 def embedding_models() -> dict[str, Served]:
     """The embedding models the worker serves, by name. Building this loads
     no model: query() loads its model the first time it runs."""
+    from worker import textemb  # its version names how it cuts documents
+
     return {
         IMAGE_MODEL: Served(IMAGE_MODEL_VERSION, 768, image_queries),
+        TEXT_MODEL: Served(textemb.version(), 768, text_queries),
     }
+
+
+def text_queries(texts: Sequence[str]) -> np.ndarray:
+    """Searches into vectors that compare with the windows of documents
+    (Arctic's query prefix, "query: ")."""
+    return text_encoder().embed(texts, query=True)
 
 
 def image_queries(texts: Sequence[str]) -> np.ndarray:

@@ -21,6 +21,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/share"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 	"github.com/C2-POLY/cloud-os/core/internal/tasks"
+	"github.com/C2-POLY/cloud-os/core/internal/textemb"
 	"golang.org/x/net/webdav"
 )
 
@@ -54,6 +55,8 @@ type Config struct {
 	Albums  *albums.Service
 	// Photos searches photos by what they show; nil answers 503.
 	Photos *photovec.Searcher
+	// Documents searches documents by meaning; nil answers 503.
+	Documents *textemb.Searcher
 	// MapsDir holds the .pmtiles file of the Photos map; "" when none.
 	MapsDir   string
 	Activity  *activity.Log // nil: no journal (tests that do not need it)
@@ -88,6 +91,7 @@ func routes(c Config) []route {
 	m := &mapAPI{dir: c.MapsDir, files: c.Files}
 	al := &albumsAPI{albums: c.Albums}
 	ps := &photoSearchAPI{photos: c.Photos}
+	sem := &semanticAPI{docs: c.Documents}
 	return []route{
 		{"GET /api/health", public, healthHandler(c.Version, c.Health)},
 		{"GET /api/setup", public, a.setupNeeded},
@@ -107,6 +111,7 @@ func routes(c Config) []route {
 		{"GET /api/search", member, f.search},
 		{"GET /api/search/content", member, f.searchContent},
 		{"GET /api/search/photos", member, ps.search},
+		{"GET /api/search/semantic", member, sem.search},
 		{"POST /api/files/known", member, f.known},
 		{"POST /api/files/dedupe", member, f.dedupe},
 		{"GET /api/files/recent", member, d.recent},

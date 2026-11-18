@@ -25,7 +25,7 @@ from PIL import Image, ImageDraw
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DictionaryObject, NameObject, NumberObject, StreamObject
 
-from worker import doctext, models, ocr, tasks
+from worker import doctext, models, ocr, tasks, textemb
 
 FIXTURES = Path(__file__).parent / "fixtures"
 BENCH = FIXTURES / "bench"
@@ -330,13 +330,24 @@ def read_only(root: Path) -> dict[Path, tuple[bytes, int]]:
     return seen
 
 
-def run(conn: psycopg.Connection, kind: str, sha: bytes) -> tuple[str, str | None]:
-    """Queue a task of kind for the content and run the next ready task."""
-    task_id = tasks.enqueue(conn, kind, {"sha256": sha.hex()})
-    assert tasks.run_one(conn, "w", tasks.HANDLERS)
+def run(
+    conn: psycopg.Connection, kind: str, sha: bytes, priority: int = 0
+) -> tuple[str, str | None]:
+    """Queue a task of kind for the content and run the next ready task of
+    that kind: the vectors an OCR queues (test_textemb.py) are left queued."""
+    task_id = tasks.enqueue(conn, kind, {"sha256": sha.hex()}, priority=priority)
+    assert tasks.run_one(conn, "w", {kind: tasks.HANDLERS[kind]})
     row = conn.execute("SELECT state, last_error FROM tasks WHERE id = %s", (task_id,)).fetchone()
     assert row
     return row[0], row[1]
+
+
+def vector_tasks(conn: psycopg.Connection) -> list[tuple[str, int]]:
+    """The textemb tasks queued: content and priority."""
+    return conn.execute(
+        "SELECT payload->>'sha256', priority FROM tasks WHERE kind = %s ORDER BY id",
+        (textemb.KIND,),
+    ).fetchall()
 
 
 def text_row(conn: psycopg.Connection, sha: bytes) -> tuple | None:
@@ -360,7 +371,7 @@ def test_the_task_reads_images_and_never_writes_the_files(
         "image/jpeg",
     )
     before = read_only(root)
-    assert run(conn, ocr.KIND, invoice) == ("done", None)
+    assert run(conn, ocr.KIND, invoice, priority=10) == ("done", None)
     row = text_row(conn, invoice)
     assert row is not None
     source, text, chars, truncated, pages, has_text, model = row
@@ -378,6 +389,8 @@ def test_the_task_reads_images_and_never_writes_the_files(
     assert text_row(conn, beach) == ("image", "", 0, False, None, False, models.OCR_MODEL)
     assert run(conn, ocr.KIND, beach) == ("done", None)
     assert conn.execute("SELECT count(*) FROM document_text").fetchone() == (2,)
+    # The text read queued its vectors, at the priority of its OCR; the photo none.
+    assert vector_tasks(conn) == [(invoice.hex(), 10)]
     # The originals are untouched, and nothing was written next to them.
     after = {p: (hashlib.sha256(p.read_bytes()).digest(), p.stat().st_mtime_ns) for p in before}
     assert after == before
@@ -399,11 +412,15 @@ def test_a_scan_is_read_after_its_text_task(conn: psycopg.Connection, root: Path
         "SELECT payload->>'sha256', priority, dedupe_key FROM tasks WHERE kind = 'ocr'"
     ).fetchall()
     assert queued == [(scan.hex(), 10, f"ocr:{scan.hex()}")]
-    assert tasks.run_one(conn, "w", tasks.HANDLERS)
+    # The letter's text queued its vectors; the scan, without text yet, none.
+    assert vector_tasks(conn) == [(letter.hex(), 10)]
+    assert tasks.run_one(conn, "w", {ocr.KIND: ocr.make})
     row = text_row(conn, scan)
     assert row is not None
     assert row[0] == "pdf" and row[4:] == (1, True, models.OCR_MODEL)
     assert row[1].startswith("Facture n° 2024-117\n") and row[2] == len(row[1])
+    # The text read in place queued the scan's vectors, at the priority of its OCR.
+    assert vector_tasks(conn) == [(letter.hex(), 10), (scan.hex(), 10)]
     # Read once: another task changes nothing.
     assert run(conn, ocr.KIND, scan) == ("done", None)
     assert text_row(conn, scan) == row

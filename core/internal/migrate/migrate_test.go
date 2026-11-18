@@ -61,6 +61,8 @@ var tables = []struct {
 		VALUES ('siglip2-base-patch16-224', 'v1', 768);
 		INSERT INTO photo_vectors_siglip2_b16_224 (sha256, model, version, source, embedding)
 		SELECT sha256('a'), 'siglip2-base-patch16-224', 'v1', 'image', array_fill(0.036::real, ARRAY[768])::vector`},
+	{21, []string{"text_vectors_arctic_m_v2"}, `INSERT INTO text_vectors_arctic_m_v2 (sha256, chunk, start_char, end_char, model, version, embedding)
+		VALUES (sha256('a'), 0, 0, 19, 'arctic-embed-m-v2.0', 'v', array_fill(0.036, ARRAY[768])::halfvec)`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {

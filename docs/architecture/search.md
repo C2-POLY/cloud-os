@@ -1,6 +1,6 @@
 # Recherche
 
-Trouver un fichier ou un dossier sans savoir où il est rangé : par nom et par chemin, et par le texte des documents. Le langage naturel viendra avec l'index IA de la phase 3 (#70, #71, #72).
+Trouver un fichier ou un dossier sans savoir où il est rangé : par nom et par chemin, et par le texte des documents. La recherche par le sens est dans [search-ai.md](search-ai.md) pour les documents (#70) et [embeddings.md](embeddings.md) pour les photos (#71) ; la palette les réunira avec #72.
 Issues : #48 (Feature #45) pour les noms, #69 (Feature #65) pour le texte.
 
 ## Par nom : `GET /api/search`

@@ -25,7 +25,7 @@ sequenceDiagram
         alt illisible, mot de passe, binaire, délai ou mémoire dépassés
             K->>DB: fail final (Permanent) : la tâche passe en failed, la file continue
         else
-            K->>DB: INSERT document_text ON CONFLICT DO NOTHING
+            K->>DB: transaction : INSERT document_text ON CONFLICT DO NOTHING, et si has_text, textemb.enqueue à la même priorité
             K->>DB: Complete
         end
     end
@@ -92,7 +92,9 @@ Table `document_text` (migrations `0017_document_text.sql` et `0019_document_ocr
 
 Postgres compresse le texte (TOAST) : 10 000 documents d'une vingtaine de pages font environ 200 Mo avant compression.
 
-Pas de clé étrangère vers `files` : toutes les 30 s, avec `Reap`, `thumbs.Prune` et `meta.Prune`, le cœur fait `doctext.Prune`, qui supprime les lignes dont aucun fichier (vivant ou en corbeille) n'a l'empreinte. Un document restauré de la corbeille retrouve donc la sienne.
+Pas de clé étrangère vers `files` : toutes les 30 s, avec `Reap`, `thumbs.Prune` et `meta.Prune`, le cœur fait `doctext.Prune`, qui supprime les lignes dont aucun fichier (vivant ou en corbeille) n'a l'empreinte. Un document restauré de la corbeille retrouve donc la sienne. Les vecteurs du texte (#70) partent avec la ligne, en cascade.
+
+Un texte avec des mots (`has_text`) met en file ses vecteurs (tâche `textemb`) dans la transaction qui l'écrit, à la priorité de la tâche qui l'a écrit : `text`, ou `ocr` pour une image lue ou un scan lu en place. Voir [search-ai.md](search-ai.md).
 
 ## OCR : images et PDF scannés
 
