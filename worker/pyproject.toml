@@ -4,14 +4,22 @@ version = "0.1.0"
 description = "Cloud OS background worker: AI and indexing tasks read from the Postgres task queue."
 requires-python = ">=3.13,<3.14"
 dependencies = [
+    "numpy==2.5.5",
+    "onnxruntime==1.32.0",
     "pillow==13.0.0",
     "psycopg[binary]==3.3.9",
+    "tokenizers==0.23.3",
 ]
 
 [dependency-groups]
 dev = [
     "pytest==9.2.0",
     "ruff==0.17.5",
+]
+# The model benchmark only (worker/bench, docs/decisions/005-modeles-locaux.md):
+# `uv run --group bench python -m bench`. Never in the worker image.
+bench = [
+    "rapidocr==3.10.0",
 ]
 
 [build-system]

@@ -8,6 +8,11 @@ import threading
 
 import psycopg
 
+# ONNX Runtime (worker.models) sends usage telemetry to Microsoft unless told
+# not to, and reads this switch when it is first imported: set it here, before
+# any of the worker's modules can import it. Nothing leaves the box.
+os.environ["ORT_DISABLE_TELEMETRY"] = "1"
+
 log = logging.getLogger("worker")
 
 HEARTBEAT_EVERY = 10.0

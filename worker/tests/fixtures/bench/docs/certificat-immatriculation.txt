@@ -1,0 +1,19 @@
+CERTIFICAT D'IMMATRICULATION
+République française
+
+(A) Numéro d'immatriculation : AB-123-CD (fictif)
+(B) Date de première immatriculation : 14/03/2019
+(C.1) Titulaire : MARTIN Julien
+(C.3) Adresse : 14 rue des Acacias, 69003 Lyon
+(D.1) Marque : RENAULT
+(D.3) Dénomination commerciale : CLIO
+(E) Numéro d'identification du véhicule : VF1000000000000 (fictif)
+(F.1) Masse en charge maximale : 1 588 kg
+(J.1) Genre national : VP — véhicule particulier
+(P.1) Cylindrée : 999 cm³
+(P.3) Type de carburant : ES (essence)
+(P.6) Puissance administrative : 5 CV
+(S.1) Nombre de places assises : 5
+(V.7) Émissions de CO2 : 118 g/km
+(X.1) Contrôle technique valable jusqu'au : 13/03/2026
+(I) Date du présent certificat : 02/10/2023
