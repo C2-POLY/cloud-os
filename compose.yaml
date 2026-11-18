@@ -29,6 +29,8 @@ services:
       DATABASE_URL: *database-url
       CLOUDOS_DATA_DIR: /data
       MAPS_DIR: /maps
+      # The worker's query endpoint (POST /embed), on the Compose network only.
+      WORKER_URL: http://worker:8090
     ports:
       - "127.0.0.1:${CLOUDOS_CORE_PORT:-8480}:8080"
     volumes:
@@ -46,6 +48,10 @@ services:
       DATABASE_URL: *database-url
       WORKER_ID: python # role prefix; the id adds the container and process
       CLOUDOS_DATA_DIR: /data
+    # Port 8090 serves the core the vectors of searches (POST /embed). It is
+    # reachable on the Compose network only: never add it to `ports`.
+    expose:
+      - "8090"
     volumes:
       # Read-only: workers write their results to the database, never to the files.
       - ${CLOUDOS_DATA_DIR:-./.data/files}:/data:ro

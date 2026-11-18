@@ -5,6 +5,7 @@
 //	core verify              check every stored file against the index; exit 1 on any difference
 //	core reset-password NAME set a new password read from stdin and end the account's sessions
 //	core selftest [N]        queue N selftest tasks and wait for the workers to run them
+//	core photovec backfill   queue the vector of every stored photo and video that has none
 package main
 
 import (
@@ -30,9 +31,11 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
 	"github.com/C2-POLY/cloud-os/core/internal/doctext"
+	"github.com/C2-POLY/cloud-os/core/internal/embed"
 	"github.com/C2-POLY/cloud-os/core/internal/httpapi"
 	"github.com/C2-POLY/cloud-os/core/internal/meta"
 	"github.com/C2-POLY/cloud-os/core/internal/migrate"
+	"github.com/C2-POLY/cloud-os/core/internal/photovec"
 	"github.com/C2-POLY/cloud-os/core/internal/share"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 	"github.com/C2-POLY/cloud-os/core/internal/tasks"
@@ -109,13 +112,22 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 			fmt.Fprintf(out, "%d text extractions queued\n", n)
 			return err
 		})
+	case "photovec":
+		if len(args) != 1 || args[0] != "backfill" {
+			return errors.New("usage: core photovec backfill")
+		}
+		return withCore(ctx, func(c core) error {
+			n, err := photovec.Backfill(ctx, &tasks.Queue{Pool: c.pool})
+			fmt.Fprintf(out, "%d photo vectors queued\n", n)
+			return err
+		})
 	case "reset-password":
 		if len(args) != 1 {
 			return errors.New("usage: core reset-password NAME (the new password is read from stdin)")
 		}
 		return withCore(ctx, func(c core) error { return resetPassword(ctx, c, args[0], os.Stdin, out) })
 	default:
-		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, text, reset-password)", cmd)
+		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, text, photovec, reset-password)", cmd)
 	}
 }
 
@@ -209,6 +221,7 @@ func serve(ctx context.Context, c core) error {
 			Shares:    shares,
 			MapsDir:   os.Getenv("MAPS_DIR"),
 			Albums:    &albums.Service{Pool: c.pool, Files: c.files},
+			Photos:    &photovec.Searcher{Pool: c.pool, Embed: &embed.Client{URL: os.Getenv("WORKER_URL")}},
 			Activity:  &activity.Log{Pool: c.pool},
 			MaxUpload: maxUpload(),
 			StaticDir: os.Getenv("STATIC_DIR"),
@@ -273,10 +286,11 @@ func resetPassword(ctx context.Context, c core, name string, in io.Reader, out i
 	return nil
 }
 
-// queueBackgroundWork is the store's AfterStore hook: it queues the thumbnail
-// and the metadata of a new image or video content, and the text of a new
-// document. Best effort: a task lost here is caught up by `core thumbs
-// backfill`, `core meta backfill` and `core text backfill`.
+// queueBackgroundWork is the store's AfterStore hook: it queues the thumbnail,
+// the metadata and the vector of a new image or video content, and the text
+// of a new document. Best effort: a task lost here is caught up by `core
+// thumbs backfill`, `core meta backfill`, `core photovec backfill` and `core
+// text backfill`.
 func queueBackgroundWork(q *tasks.Queue, priority int) func(context.Context, storage.File, []byte) {
 	return func(ctx context.Context, f storage.File, head []byte) {
 		ctx = context.WithoutCancel(ctx)
@@ -289,10 +303,15 @@ func queueBackgroundWork(q *tasks.Queue, priority int) func(context.Context, sto
 		if _, err := doctext.Enqueue(ctx, q, f, priority); err != nil {
 			slog.Error("queue text", "owner", f.Owner, "path", f.Path, "err", err)
 		}
+		if _, err := photovec.Enqueue(ctx, q, f, head, priority); err != nil {
+			slog.Error("queue photo vector", "owner", f.Owner, "path", f.Path, "err", err)
+		}
 	}
 }
 
-// reapTasksEvery gives back the tasks of dead workers and prunes old done tasks.
+// reapTasksEvery gives back the tasks of dead workers, prunes old done tasks
+// and what no file has any more, and queues every photo again when the
+// workers declare a new model version.
 func reapTasksEvery(ctx context.Context, q *tasks.Queue, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
@@ -317,6 +336,14 @@ func reapTasksEvery(ctx context.Context, q *tasks.Queue, every time.Duration) {
 			}
 			if _, err := doctext.Prune(ctx, q.Pool); err != nil {
 				slog.Error("prune document text", "err", err)
+			}
+			if _, err := photovec.Prune(ctx, q.Pool); err != nil {
+				slog.Error("prune photo vectors", "err", err)
+			}
+			if n, err := photovec.Sync(ctx, q); err != nil {
+				slog.Error("queue photo vectors for the model", "err", err)
+			} else if n > 0 {
+				slog.Info("photo vectors queued for the workers' model", "model", photovec.Model, "count", n)
 			}
 			if _, err := (&activity.Log{Pool: q.Pool}).Prune(ctx); err != nil {
 				slog.Error("prune activity", "err", err)

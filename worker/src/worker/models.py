@@ -10,14 +10,15 @@ ONNX Runtime's telemetry is off (ORT_DISABLE_TELEMETRY, set by the worker
 package before this module imports it).
 
 This module only loads the models and turns texts and images into unit
-vectors, and pages into text; indexing them is the job of worker.tasks
-(#68, #70, #71).
+vectors, and pages into text; indexing them is the job of the tasks
+(worker.photovec for photos, #71; #68 and #70 for the rest), and
+worker.embedserver encodes the text of a search for the core.
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -43,6 +44,15 @@ THREADS = 4
 TEXT_MODEL = "arctic-embed-m-v2.0"
 IMAGE_MODEL = "siglip2-base-patch16-224"
 OCR_MODEL = "pp-ocrv5-latin"
+# The version stored with each vector: the revision fetch.sh pins and the
+# export. Change it whenever the vectors would change (another revision,
+# quantisation or preprocessing): the core then encodes every photo again.
+IMAGE_MODEL_VERSION = "ba1f3b0-int8"
+# SigLIP learnt from image captions: a search reads better as one. On the
+# benchmark, it finds the photo first for 18 queries out of 18 against 17
+# bare ("chat" alone found the dogs). It shapes queries only, not the
+# stored vectors: changing it needs no new version.
+IMAGE_QUERY_TEMPLATE = "une photo de {}"
 # Arctic reads up to 8192 tokens, but attention grows with the square of the
 # length: 512 tokens (about two pages) until #70 decides how to cut documents.
 TEXT_SPEC_MAX_TOKENS = 512
@@ -288,3 +298,28 @@ def image_query_encoder() -> SiglipTextEncoder:
 def ocr_model() -> OcrModel:
     """PP-OCRv5: the mobile text detector and the Latin mobile recogniser."""
     return OcrModel(models_dir() / OCR_MODEL)
+
+
+@dataclass(frozen=True)
+class Served:
+    """An embedding model whose vectors the worker stores: its version and
+    dimension, declared in the embedding_models table, and how it encodes
+    the text of a search into vectors comparable with the stored ones."""
+
+    version: str
+    dims: int
+    query: Callable[[Sequence[str]], np.ndarray]
+
+
+def embedding_models() -> dict[str, Served]:
+    """The embedding models the worker serves, by name. Building this loads
+    no model: query() loads its model the first time it runs."""
+    return {
+        IMAGE_MODEL: Served(IMAGE_MODEL_VERSION, 768, image_queries),
+    }
+
+
+def image_queries(texts: Sequence[str]) -> np.ndarray:
+    """Searches into vectors that compare with the photos', each read as the
+    caption of a photo (IMAGE_QUERY_TEMPLATE)."""
+    return image_query_encoder().embed([IMAGE_QUERY_TEMPLATE.format(t) for t in texts])

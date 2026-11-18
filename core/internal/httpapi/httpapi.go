@@ -17,6 +17,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/davfs"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
+	"github.com/C2-POLY/cloud-os/core/internal/photovec"
 	"github.com/C2-POLY/cloud-os/core/internal/share"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 	"github.com/C2-POLY/cloud-os/core/internal/tasks"
@@ -51,6 +52,8 @@ type Config struct {
 	Files   *storage.Store
 	Shares  *share.Service
 	Albums  *albums.Service
+	// Photos searches photos by what they show; nil answers 503.
+	Photos *photovec.Searcher
 	// MapsDir holds the .pmtiles file of the Photos map; "" when none.
 	MapsDir   string
 	Activity  *activity.Log // nil: no journal (tests that do not need it)
@@ -84,6 +87,7 @@ func routes(c Config) []route {
 	d := &desktopAPI{files: c.Files, activity: c.Activity}
 	m := &mapAPI{dir: c.MapsDir, files: c.Files}
 	al := &albumsAPI{albums: c.Albums}
+	ps := &photoSearchAPI{photos: c.Photos}
 	return []route{
 		{"GET /api/health", public, healthHandler(c.Version, c.Health)},
 		{"GET /api/setup", public, a.setupNeeded},
@@ -101,6 +105,7 @@ func routes(c Config) []route {
 		{"GET /api/files/thumb", member, f.thumb},
 		{"GET /api/files/meta", member, f.meta},
 		{"GET /api/search", member, f.search},
+		{"GET /api/search/photos", member, ps.search},
 		{"POST /api/files/known", member, f.known},
 		{"POST /api/files/dedupe", member, f.dedupe},
 		{"GET /api/files/recent", member, d.recent},

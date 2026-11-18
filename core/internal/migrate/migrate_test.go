@@ -51,6 +51,10 @@ var tables = []struct {
 	{16, []string{"albums", "album_items"}, `INSERT INTO albums (owner, name) SELECT name, 'Bretagne' FROM accounts LIMIT 1`},
 	{17, []string{"document_text"}, `INSERT INTO document_text (sha256, source, text, chars, truncated, pages, has_text)
 		VALUES (sha256('a'), 'pdf', 'Contrat de location', 19, false, 1, false)`},
+	{18, []string{"embedding_models", "photo_vectors_siglip2_b16_224"}, `INSERT INTO embedding_models (name, version, dims)
+		VALUES ('siglip2-base-patch16-224', 'v1', 768);
+		INSERT INTO photo_vectors_siglip2_b16_224 (sha256, model, version, source, embedding)
+		SELECT sha256('a'), 'siglip2-base-patch16-224', 'v1', 'image', array_fill(0.036::real, ARRAY[768])::vector`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {

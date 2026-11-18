@@ -29,36 +29,50 @@ QUALITY = 80
 Image.MAX_IMAGE_PIXELS = MAX_PIXELS
 
 
-def render(data: bytes) -> tuple[bytes, int, int]:
-    """Return the WebP thumbnail of an image, upright, at most SIZE pixels on
-    its longest side, and its size. Raises Permanent for an unreadable image."""
+UNREADABLE = (
+    UnidentifiedImageError,
+    Image.DecompressionBombError,
+    Image.DecompressionBombWarning,
+    OSError,
+    SyntaxError,
+    ValueError,
+)
+
+
+def decode(data: bytes, at_least: int = SIZE * 2) -> Image.Image:
+    """Open a JPEG, PNG, WebP, HEIF or HEIC image, upright (its EXIF
+    orientation applied), refusing images over MAX_PIXELS. A JPEG is decoded
+    at the smallest scale that keeps both sides at least at_least pixels.
+    Raises Permanent for an unreadable image."""
     try:
         with warnings.catch_warnings():
             # Between MAX_PIXELS and twice that, Pillow only warns.
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             if heif.is_heif(data):
-                img = heif.open_image(data)  # already upright
-            else:
-                with Image.open(io.BytesIO(data), formats=FORMATS) as im:
-                    im.draft("RGB", (SIZE * 2, SIZE * 2))  # JPEG: decode at a smaller scale
-                    img = ImageOps.exif_transpose(im)
-                    img.load()
-            img.thumbnail((SIZE, SIZE))
-            if img.mode not in ("RGB", "RGBA"):
-                img = img.convert(
-                    "RGBA" if "A" in img.getbands() or "transparency" in img.info else "RGB"
-                )
-            out = io.BytesIO()
-            img.save(out, "WEBP", quality=QUALITY)
-            return out.getvalue(), img.width, img.height
-    except (
-        UnidentifiedImageError,
-        Image.DecompressionBombError,
-        Image.DecompressionBombWarning,
-        OSError,
-        SyntaxError,
-        ValueError,
-    ) as err:
+                return heif.open_image(data)  # already upright
+            with Image.open(io.BytesIO(data), formats=FORMATS) as im:
+                im.draft("RGB", (at_least, at_least))
+                img = ImageOps.exif_transpose(im)
+                img.load()
+                return img
+    except UNREADABLE as err:
+        raise Permanent(f"unreadable image: {type(err).__name__}: {err}") from err
+
+
+def render(data: bytes) -> tuple[bytes, int, int]:
+    """Return the WebP thumbnail of an image, upright, at most SIZE pixels on
+    its longest side, and its size. Raises Permanent for an unreadable image."""
+    img = decode(data)
+    try:
+        img.thumbnail((SIZE, SIZE))
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert(
+                "RGBA" if "A" in img.getbands() or "transparency" in img.info else "RGB"
+            )
+        out = io.BytesIO()
+        img.save(out, "WEBP", quality=QUALITY)
+        return out.getvalue(), img.width, img.height
+    except UNREADABLE as err:
         raise Permanent(f"unreadable image: {type(err).__name__}: {err}") from err
 
 

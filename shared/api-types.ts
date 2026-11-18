@@ -23,6 +23,15 @@ export interface Entry {
   modified_at: string
 }
 
+/**
+ * A photo or video found by what it shows, as the core's `httpapi.PhotoHit`
+ * writes it: GET /api/search/photos?q=…, best first. 503 when the workers
+ * cannot encode the query.
+ */
+export interface PhotoHit extends Entry {
+  score: number // cosine similarity to the query; compare ranks, not scores across searches
+}
+
 /** A file on the timeline, as the core's `httpapi.TimelineEntry` writes it. */
 export interface TimelineEntry extends Entry {
   at: string // wall-clock date, "2024-07-14T18:03:22", no zone
