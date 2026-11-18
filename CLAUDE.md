@@ -33,6 +33,11 @@ Run from the repository root (or a worktree). Steps 5 to 7 of the `topic` skill 
 # `apt-get install --no-install-recommends libheif1 libheif-plugin-libde265`.
 make deps
 
+# Build the LGPL ffmpeg and ffprobe the worker's video tests use, into
+# .tools/ffmpeg (a few minutes, once; `rm -rf .tools/ffmpeg` to rebuild).
+# Without them `make test` skips the video tests.
+make ffmpeg
+
 # Build and start db, core, worker and web; wait until healthy
 make up
 # The app (the core serving the built front): http://localhost:8480
@@ -60,10 +65,10 @@ docker compose run --rm core verify
 # Queue N selftest tasks and wait for the workers to run them (the queue, end to end)
 docker compose run --rm core selftest 20
 
-# Queue the thumbnail of every stored image that has none (catch-up)
+# Queue the thumbnail of every stored image and video that has none (catch-up)
 docker compose run --rm core thumbs backfill
 
-# Queue the metadata (EXIF date, GPS, camera) of every stored image that has none
+# Queue the metadata (date, GPS, camera, a video's length) of every stored image and video that has none
 docker compose run --rm core meta backfill
 
 # The drive as a network disk: Finder › Se connecter au serveur › http://localhost:8480/dav/

@@ -194,10 +194,12 @@ type metaJSON struct {
 	Width       *int     `json:"width"`
 	Height      *int     `json:"height"`
 	Orientation *int     `json:"orientation"`
+	DurationMS  *int64   `json:"duration_ms"` // a video's length
 }
 
 // meta returns the metadata the workers read from a file (date taken, GPS,
-// camera, dimensions), 404 while it has none (not an image, or not read yet).
+// camera, dimensions, a video's length), 404 while it has none (not a photo
+// or a video, or not read yet).
 func (a *filesAPI) meta(w http.ResponseWriter, r *http.Request) {
 	f, err := a.store.Lookup(r.Context(), owner(r), r.URL.Query().Get("path"))
 	if err == nil && f.IsDir() {
@@ -218,7 +220,7 @@ func (a *filesAPI) meta(w http.ResponseWriter, r *http.Request) {
 	}
 	out := metaJSON{
 		Latitude: m.Latitude, Longitude: m.Longitude, Make: m.Make, Model: m.Model, Lens: m.Lens,
-		Width: m.Width, Height: m.Height, Orientation: m.Orientation,
+		Width: m.Width, Height: m.Height, Orientation: m.Orientation, DurationMS: m.DurationMS,
 	}
 	if m.TakenAt != nil {
 		s := m.TakenAt.Format("2006-01-02T15:04:05")

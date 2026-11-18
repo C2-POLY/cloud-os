@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { messageOf } from '../api.ts'
 import { parentOf, thumbURL } from '../drive/files.ts'
 import { driveURL, navigate } from '../router.ts'
-import { byDay, byMonth, dayTitle, fetchMonths, fillMonths, fetchTimeline, monthLabel, startOfMonthAfter, type MonthCount, type TimelineCursor, type TimelineEntry } from './timeline.ts'
+import { byDay, byMonth, dayTitle, fetchMonths, fillMonths, fetchTimeline, formatDuration, monthLabel, startOfMonthAfter, type MonthCount, type TimelineCursor, type TimelineEntry } from './timeline.ts'
 import { Viewer } from './Viewer.tsx'
 
 const dayFormat = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -182,8 +182,17 @@ export function Timeline({ photos = false }: { photos?: boolean }) {
 function MediaVisual({ entry }: { entry: TimelineEntry }) {
   const thumb = thumbURL(entry)
   const [broken, setBroken] = useState(false)
-  if (thumb && !broken) return <img src={thumb} alt="" loading="lazy" onError={() => setBroken(true)} />
-  return <span className="timeline-media-icon">{entry.mime.startsWith('video/') ? <FileVideo size={22} aria-hidden /> : <FileImage size={22} aria-hidden />}</span>
+  const video = entry.mime.startsWith('video/')
+  return (
+    <>
+      {thumb && !broken ? (
+        <img src={thumb} alt="" loading="lazy" onError={() => setBroken(true)} />
+      ) : (
+        <span className="timeline-media-icon">{video ? <FileVideo size={22} aria-hidden /> : <FileImage size={22} aria-hidden />}</span>
+      )}
+      {video && entry.duration_ms != null && <span className="timeline-media-duration">{formatDuration(entry.duration_ms)}</span>}
+    </>
+  )
 }
 
 function DocIcon({ mime }: { mime: string }) {

@@ -36,10 +36,10 @@ export function downloadURL(path: string): string {
   return `/api/files/content?path=${q(path)}`
 }
 
-// Image types the workers make thumbnails of (core/internal/thumbs).
-const thumbnailed = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'])
+// Image and video types the workers make thumbnails of (core/internal/thumbs).
+const thumbnailed = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'video/mp4', 'video/quicktime'])
 
-/** The thumbnail URL of an image, keyed by its content so a new version is never stale; null for other files. */
+/** The thumbnail URL of an image or a video, keyed by its content so a new version is never stale; null for other files. */
 export function thumbURL(entry: Entry): string | null {
   if (entry.kind !== 'file' || !entry.sha256 || !thumbnailed.has(entry.mime)) return null
   return `/api/files/thumb?path=${q(entry.path)}&v=${entry.sha256.slice(0, 16)}`

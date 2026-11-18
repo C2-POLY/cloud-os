@@ -7,7 +7,7 @@ DB_PORT ?= $(or $(CLOUDOS_DB_PORT),54320)
 TEST_DATABASE_URL ?= postgres://cloudos:cloudos@127.0.0.1:$(DB_PORT)/cloudos?sslmode=disable
 EXTERNAL_DB ?=
 
-.PHONY: up down logs deps test test-db test-core test-worker test-web lint fmt
+.PHONY: up down logs deps ffmpeg test test-db test-core test-worker test-web lint fmt
 
 ## up: build and start the stack, wait until it is healthy
 up:
@@ -28,6 +28,15 @@ deps:
 	cd worker && uv sync --frozen
 	cd web && npm ci
 
+## ffmpeg: build the worker's LGPL ffmpeg and ffprobe into .tools/ffmpeg, for
+## the video tests (the same build as worker/Dockerfile; skipped when present)
+ffmpeg: .tools/ffmpeg/bin/ffprobe
+
+# No dependency on build.sh: a cache restored in CI is older than the checkout.
+# After changing the script, `rm -rf .tools/ffmpeg` to rebuild.
+.tools/ffmpeg/bin/ffprobe:
+	worker/ffmpeg/build.sh .tools/ffmpeg
+
 ## test: every test suite (Go, Python, web)
 test: test-core test-worker test-web
 
@@ -40,7 +49,7 @@ test-core: test-db
 	cd core && CLOUDOS_TEST_DATABASE_URL='$(TEST_DATABASE_URL)' go test -count=1 ./...
 
 test-worker: test-db
-	cd worker && CLOUDOS_TEST_DATABASE_URL='$(TEST_DATABASE_URL)' uv run --frozen pytest
+	cd worker && CLOUDOS_TEST_DATABASE_URL='$(TEST_DATABASE_URL)' CLOUDOS_FFMPEG_DIR='$(CURDIR)/.tools/ffmpeg/bin' uv run --frozen pytest
 
 test-web:
 	cd web && npm test

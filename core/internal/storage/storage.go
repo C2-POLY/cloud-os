@@ -323,29 +323,40 @@ func (s *Store) CleanTmp() (int, error) {
 	return len(entries), nil
 }
 
-// The extensions of iPhone photos, known whatever the system's mime.types
-// holds (Go's own table has none of them).
+// The extensions of iPhone photos and of phone videos, known whatever the
+// system's mime.types holds (Go's own table has none of them).
 func init() {
-	for ext, t := range map[string]string{".heic": "image/heic", ".heif": "image/heif"} {
+	for ext, t := range map[string]string{
+		".heic": "image/heic", ".heif": "image/heif",
+		".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime",
+	} {
 		if err := mime.AddExtensionType(ext, t); err != nil {
 			panic(err)
 		}
 	}
 }
 
-// heifBrands are the major brands of HEIF still images (ISO/IEC 23008-12),
-// HEVC-coded (HEIC) or any codec, as worker/src/worker/heif.py BRANDS.
-var heifBrands = map[string]string{
+// ftypBrands maps the major brand of an ISO base media file to its type:
+// HEIF still images (ISO/IEC 23008-12), HEVC-coded (HEIC) or any codec, as
+// worker/src/worker/heif.py BRANDS, and videos.
+var ftypBrands = map[string]string{
 	"heic": "image/heic", "heix": "image/heic", "heim": "image/heic", "heis": "image/heic",
 	"mif1": "image/heif", "msf1": "image/heif",
+	// Videos: QuickTime (iPhone), and the MP4 brands phones and exports write.
+	// http.DetectContentType knows an MP4 only when one of its brands starts
+	// with "mp4", so it misses one branded isom and iso2 alone.
+	"qt  ": "video/quicktime",
+	"isom": "video/mp4", "iso2": "video/mp4", "iso4": "video/mp4", "iso5": "video/mp4", "iso6": "video/mp4",
+	"mp41": "video/mp4", "mp42": "video/mp4", "avc1": "video/mp4", "mmp4": "video/mp4", "M4V ": "video/mp4",
 }
 
 // SniffMIME returns the MIME type of a content from its first bytes: HEIF and
-// HEIC by their file-type box (which http.DetectContentType does not know),
+// HEIC images, QuickTime and MP4 videos by the major brand of their file-type
+// box (which http.DetectContentType does not know, or not always),
 // everything else as http.DetectContentType.
 func SniffMIME(head []byte) string {
 	if len(head) >= 12 && string(head[4:8]) == "ftyp" {
-		if t, ok := heifBrands[string(head[8:12])]; ok {
+		if t, ok := ftypBrands[string(head[8:12])]; ok {
 			return t
 		}
 	}

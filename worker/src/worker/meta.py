@@ -1,4 +1,5 @@
-"""Metadata of photos (date taken, GPS, camera, dimensions), for core/internal/meta.
+"""Metadata of photos and videos (date taken, GPS, camera, dimensions, a
+video's length), for core/internal/meta.
 
 The worker reads the file's EXIF from the data root, read-only, without
 decoding the pixels, and writes one row to media_meta, keyed by the content's
@@ -19,15 +20,15 @@ from typing import TYPE_CHECKING
 import psycopg
 from PIL import Image, UnidentifiedImageError
 
-from worker import heif, thumbs
-from worker.content import read_content, sha_of
+from worker import heif, thumbs, video
+from worker.content import content_path, head_of, read_content, sha_of
 from worker.errors import Permanent
 
 if TYPE_CHECKING:
     from worker.tasks import Task
 
 KIND = "meta"
-FORMATS = thumbs.FORMATS  # with HEIF and HEIC, read by worker.heif; videos #41
+FORMATS = thumbs.FORMATS  # with HEIF and HEIC, read by worker.heif; videos by worker.video
 MAX_TEXT = 200
 
 # EXIF tags (CIPA DC-008).
@@ -55,6 +56,7 @@ class Meta:
     width: int | None = None  # as displayed: orientation applied
     height: int | None = None
     orientation: int | None = None
+    duration_ms: int | None = None  # a video's length
 
 
 def text(value: object) -> str | None:
@@ -183,12 +185,19 @@ def make(task: Task, conn: psycopg.Connection) -> None:
     sha = sha_of(task.payload)
     if conn.execute("SELECT 1 FROM media_meta WHERE sha256 = %s", (sha,)).fetchone():
         return
-    data = read_content(conn, sha, "image")
-    if data is None:
+    src = content_path(conn, sha)
+    if src is None:
         return
+    if video.is_video(head_of(src)):
+        found = Meta(**video.metadata(src))
+    else:
+        data = read_content(conn, sha, "image")
+        if data is None:
+            return
+        found = extract(data)
     conn.execute(
         """INSERT INTO media_meta (sha256, taken_at, taken_offset, latitude, longitude,
-               make, model, lens, width, height, orientation)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
-        (sha, *astuple(extract(data))),
+               make, model, lens, width, height, orientation, duration_ms)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+        (sha, *astuple(found)),
     )

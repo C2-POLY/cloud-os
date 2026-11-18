@@ -40,7 +40,15 @@ La GPL et l'AGPL restent exclues. Un composant qui embarque du code GPL ne passe
 - **Vérifié dans l'image du worker** : aucun fichier `*x265*`, `*x264*` ni d'encodeur ; les paquets ajoutés à `python:3.13-slim` sont `libheif1`, `libheif-plugin-libde265`, `libheif-plugin-dav1d`, `libde265-0` (LGPL-3+), `libdav1d7` (BSD-2-Clause), `libsharpyuv0` (BSD-3-Clause) et `libbrotli1` (MIT). La GPL-3+ citée par les fichiers `copyright` de libheif et libde265 couvre l'empaquetage Debian, des scripts, des tests et l'exemple `dec265`, qui ne sont pas dans ces paquets.
 - **Pour revérifier** : `docker run --rm --entrypoint sh <image du worker> -c 'find / -xdev -iname "*x265*"; ls /usr/lib/*/libheif/plugins/'` ne doit lister que `libheif-dav1d.so` et `libheif-libde265.so`.
 
+## Mise en œuvre pour les vidéos (#41)
+
+- **Compilé depuis la source officielle** : Debian n'a pas de paquet ffmpeg sans `--enable-gpl`. `worker/ffmpeg/build.sh` télécharge l'archive de la version 7.1.5 publiée sur ffmpeg.org, vérifie son SHA-256, et la compile sans modification. Le même script sert à l'image du worker (une étape de build de `worker/Dockerfile`, seuls `ffmpeg` et `ffprobe` sont copiés dans l'image finale, sous `/opt/ffmpeg/bin`), aux tests sur Mac (`make ffmpeg`, dans `.tools/ffmpeg`) et à la CI (en cache, clé sur le hash du script).
+- **Seulement ce qu'il faut pour lire une vidéo de téléphone** : `--disable-everything --disable-autodetect --disable-network`, puis le démultiplexeur MP4/QuickTime, les décodeurs natifs H.264, HEVC, MPEG-4, ProRes, VP9 et MJPEG, les filtres qui redressent une image, et un encodeur PNG pour passer une image à Pillow. Aucune bibliothèque externe sauf zlib, aucun protocole réseau. Les deux binaires font environ 5 Mo.
+- **Appelé comme un programme** : `worker/src/worker/video.py` lance `ffprobe` et `ffmpeg` en sous-processus (`CLOUDOS_FFMPEG_DIR` donne leur dossier), sur le fichier stocké, en lecture seule ; ils écrivent dans un tuyau, jamais dans un fichier.
+- **Garde de licence** : `build.sh` échoue si `ffmpeg -buildconf` contient `--enable-gpl`, `--enable-nonfree`, `--enable-version3`, `libx264` ou `libx265`, et affiche `ffmpeg -L` (« GNU Lesser General Public License version 2.1 or later »).
+- **Pour revérifier** : `docker run --rm --entrypoint /opt/ffmpeg/bin/ffmpeg <image du worker> -hide_banner -buildconf`.
+
 ## Conséquences
 
 - `CLAUDE.md`, règle des dépendances : renvoie à cet ADR.
-- #30 (miniatures HEIC) : libheif est dans l'image du worker, voir « Mise en œuvre » ci-dessus. #41 (vidéos) : un ffmpeg LGPL y entrera.
+- #30 (miniatures HEIC) : libheif est dans l'image du worker, voir « Mise en œuvre » ci-dessus. #41 (vidéos) : un ffmpeg LGPL compilé par le projet, voir « Mise en œuvre pour les vidéos » ci-dessus.

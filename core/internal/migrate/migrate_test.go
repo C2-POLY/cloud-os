@@ -46,6 +46,8 @@ var tables = []struct {
 	{13, []string{"activity"}, `INSERT INTO activity (owner, kind, path) VALUES ('enzo', 'added', 'a.txt')`},
 	{14, []string{"media_meta"}, `INSERT INTO media_meta (sha256, taken_at, taken_offset, latitude, longitude, width, height)
 		VALUES (sha256('a'), '2024-07-14 18:03:22', 120, 48.85, 2.35, 4032, 3024)`},
+	// Migration 15 adds a column to media_meta, no table.
+	{15, []string{}, `UPDATE media_meta SET duration_ms = 42000`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {

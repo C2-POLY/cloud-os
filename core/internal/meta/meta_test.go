@@ -23,6 +23,7 @@ const (
 	png  = "\x89PNG\r\n\x1a\n a scan"
 	heic = "\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic an iPhone photo"
 	heif = "\x00\x00\x00\x18ftypmif1\x00\x00\x00\x00mif1heic a HEIF photo"
+	mov  = "\x00\x00\x00\x14ftypqt  \x00\x00\x02\x00qt   an iPhone video"
 )
 
 type env struct {
@@ -110,6 +111,7 @@ func TestBackfillQueuesLiveImagesWithoutMetadata(t *testing.T) {
 	e.put(t, "a.jpg", jpeg)
 	e.put(t, "b.png", png)
 	e.put(t, "iPhone/IMG_0001.HEIC", heic)
+	e.put(t, "iPhone/IMG_0002.MOV", mov)
 	e.put(t, "done.jpg", jpeg+"done")
 	e.put(t, "gone.jpg", jpeg+"gone")
 	e.put(t, "notes.txt", "hello")
@@ -118,7 +120,7 @@ func TestBackfillQueuesLiveImagesWithoutMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	n, err := meta.Backfill(e.ctx, e.queue)
-	if err != nil || n != 3 {
+	if err != nil || n != 4 {
 		t.Fatalf("backfill = %d, %v", n, err)
 	}
 	for _, q := range e.queued(t) {
@@ -177,7 +179,13 @@ func TestGetReturnsWhatTheWorkerWrote(t *testing.T) {
 	if *m.Latitude != 48.8584 || *m.Longitude != 2.2945 || *m.Make != "Apple" || *m.Model != "iPhone 15" || m.Lens != nil {
 		t.Errorf("place and camera %+v", m)
 	}
-	if *m.Width != 3024 || *m.Height != 4032 || *m.Orientation != 6 {
+	if *m.Width != 3024 || *m.Height != 4032 || *m.Orientation != 6 || m.DurationMS != nil {
 		t.Errorf("dimensions %+v", m)
+	}
+	if _, err := e.pool.Exec(e.ctx, `INSERT INTO media_meta (sha256, duration_ms) VALUES ($1, 42500)`, sum(mov)); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := meta.Get(e.ctx, e.pool, sum(mov)); err != nil || v.DurationMS == nil || *v.DurationMS != 42500 {
+		t.Errorf("video length %v, %v", v.DurationMS, err)
 	}
 }

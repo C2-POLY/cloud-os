@@ -324,14 +324,25 @@ func TestMeta(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := enzo.get("/api/files/meta?path=a.jpg", nil)
-	want := `{"taken_at":"2024-07-14T18:03:22","taken_offset":"-05:30","latitude":48.8584,"longitude":2.2945,"make":"Apple","model":"iPhone 15","lens":"back camera","width":3024,"height":4032,"orientation":6}`
+	want := `{"taken_at":"2024-07-14T18:03:22","taken_offset":"-05:30","latitude":48.8584,"longitude":2.2945,"make":"Apple","model":"iPhone 15","lens":"back camera","width":3024,"height":4032,"orientation":6,"duration_ms":null}`
 	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != want {
 		t.Fatalf("meta: %d %s", rec.Code, rec.Body)
 	}
 	rec = enzo.get("/api/files/meta?path=b.jpg", nil)
-	want = `{"taken_at":null,"taken_offset":null,"latitude":null,"longitude":null,"make":null,"model":null,"lens":null,"width":640,"height":480,"orientation":null}`
+	want = `{"taken_at":null,"taken_offset":null,"latitude":null,"longitude":null,"make":null,"model":null,"lens":null,"width":640,"height":480,"orientation":null,"duration_ms":null}`
 	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != want {
 		t.Fatalf("meta without exif: %d %s", rec.Code, rec.Body)
+	}
+	// A video's length.
+	enzo.upload("clip.mp4", "video bytes", nil)
+	v := sha256.Sum256([]byte("video bytes"))
+	if _, err := pool.Exec(t.Context(),
+		`INSERT INTO media_meta (sha256, width, height, duration_ms) VALUES ($1, 1080, 1920, 42500)`, v[:]); err != nil {
+		t.Fatal(err)
+	}
+	rec = enzo.get("/api/files/meta?path=clip.mp4", nil)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"duration_ms":42500`) {
+		t.Fatalf("meta of a video: %d %s", rec.Code, rec.Body)
 	}
 	// Owner-scoped like every file route; folders and missing files are 404.
 	if rec := johan.get("/api/files/meta?path=a.jpg", nil); rec.Code != http.StatusNotFound {

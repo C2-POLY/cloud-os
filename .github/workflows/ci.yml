@@ -43,7 +43,16 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       # libheif for the worker's HEIC tests, decoders only, as in worker/Dockerfile.
-      - run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends libheif1 libheif-plugin-libde265
+      - run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends libheif1 libheif-plugin-libde265 zlib1g-dev
+      # The worker's LGPL ffmpeg for the video tests, built by the same script as
+      # worker/Dockerfile and cached until that script changes.
+      - uses: actions/cache@v4
+        with:
+          path: .tools/ffmpeg
+          key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('worker/ffmpeg/build.sh') }}
+      - run: make ffmpeg
       - run: make deps
       - run: make lint
       - run: make test
+        env:
+          CLOUDOS_REQUIRE_FFMPEG: "1"

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockApi } from '../test-api.ts'
 import { appOf } from './apps.ts'
 import { Timeline } from './Timeline.tsx'
-import { byDay, dayTitle, formatWallClock, type TimelineEntry } from './timeline.ts'
+import { byDay, dayTitle, formatDuration, formatWallClock, type TimelineEntry } from './timeline.ts'
 
 const tz = encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
 const photo = (path: string, at: string, taken = true, mime = 'image/jpeg'): TimelineEntry => ({
@@ -34,6 +34,13 @@ describe('photo helpers', () => {
     ])
     expect(dayTitle('2024-07-14')).toBe('Dimanche 14 juillet')
     expect(formatWallClock('2024-07-14T18:03:22')).toBe('Dimanche 14 juillet 2024 à 18:03')
+  })
+
+  it('writes a video length', () => {
+    expect(formatDuration(500)).toBe('0:01')
+    expect(formatDuration(42_000)).toBe('0:42')
+    expect(formatDuration(725_400)).toBe('12:05')
+    expect(formatDuration(3_723_000)).toBe('1:02:03')
   })
 })
 
@@ -80,6 +87,27 @@ describe('Photos', () => {
 
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('shows a video with its length on the tile and plays it in the viewer', async () => {
+    const clip = { ...photo('Photos/IMG_0002.MOV', '2024-07-14T20:00:00', true, 'video/quicktime'), duration_ms: 42_000 }
+    mockApi({
+      [`GET /api/timeline/months?tz=${tz}&filter=media`]: { status: 200, body: [{ month: '2024-07', count: 1 }] },
+      [`GET /api/timeline?tz=${tz}&limit=60&filter=media`]: { status: 200, body: { items: [clip], next: null } },
+      'GET /api/files/meta?path=Photos%2FIMG_0002.MOV': { status: 200, body: { ...meta, lens: null, width: 1080, height: 1920, duration_ms: 42_000 } },
+    })
+    render(<Timeline photos />)
+    const tile = await screen.findByRole('button', { name: /IMG_0002\.MOV/ })
+    expect(within(tile).getByText('0:42')).toBeInTheDocument()
+    expect(tile.querySelector('img')).toHaveAttribute('src', '/api/files/thumb?path=Photos%2FIMG_0002.MOV&v=abababababababab')
+
+    fireEvent.click(tile)
+    const viewer = screen.getByRole('dialog', { name: 'IMG_0002.MOV' })
+    const player = viewer.querySelector('video')
+    expect(player).toHaveAttribute('src', '/api/files/content?path=Photos%2FIMG_0002.MOV')
+    expect(player).toHaveAttribute('poster', '/api/files/thumb?path=Photos%2FIMG_0002.MOV&v=abababababababab')
+    expect(await within(viewer).findByText('Durée')).toBeInTheDocument()
+    expect(within(viewer).getByText('0:42')).toBeInTheDocument()
   })
 
   it('shows a photo in Fichiers from the viewer', async () => {

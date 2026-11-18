@@ -15,6 +15,8 @@ type TimelineItem struct {
 	At time.Time
 	// Taken tells At comes from the photo's metadata.
 	Taken bool
+	// DurationMS is a video's length, when the workers have read it.
+	DurationMS *int64
 }
 
 // TimelineFilter narrows the timeline.
@@ -55,7 +57,7 @@ func timelineBase(filter TimelineFilter) string {
 		where = ` AND NOT (f.mime LIKE 'image/%' OR f.mime LIKE 'video/%')`
 	}
 	return `SELECT ` + strings.Join(cols, ", ") + `,
-	        COALESCE(m.taken_at, f.modified_at AT TIME ZONE $2) AS at, m.taken_at IS NOT NULL AS taken
+	        COALESCE(m.taken_at, f.modified_at AT TIME ZONE $2) AS at, m.taken_at IS NOT NULL AS taken, m.duration_ms
 	        FROM files f LEFT JOIN media_meta m ON m.sha256 = f.sha256
 	        WHERE f.owner = $1 AND f.trash_id IS NULL AND f.kind = 'file'` + where
 }
@@ -87,7 +89,7 @@ func (s *Store) Timeline(ctx context.Context, owner, tz string, filter TimelineF
 	for rows.Next() {
 		var it TimelineItem
 		f := &it.File
-		if err := rows.Scan(&f.ID, &f.Owner, &f.Path, &f.Kind, &f.Size, &f.MIME, &f.SHA256, &f.CreatedAt, &f.ModifiedAt, &f.IndexedAt, &f.TrashID, &it.At, &it.Taken); err != nil {
+		if err := rows.Scan(&f.ID, &f.Owner, &f.Path, &f.Kind, &f.Size, &f.MIME, &f.SHA256, &f.CreatedAt, &f.ModifiedAt, &f.IndexedAt, &f.TrashID, &it.At, &it.Taken, &it.DurationMS); err != nil {
 			return nil, err
 		}
 		out = append(out, it)
