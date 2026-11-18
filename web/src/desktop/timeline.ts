@@ -1,27 +1,7 @@
 import { api } from '../api.ts'
-import type { Entry } from '../drive/files.ts'
+import type { Entry, MediaMeta, MonthCount, TimelineCursor, TimelineEntry, TimelinePage } from '../../../shared/api-types.ts'
 
-/** A file on the timeline, as the core's `httpapi.TimelineEntry` writes it. */
-export interface TimelineEntry extends Entry {
-  at: string // wall-clock date, "2024-07-14T18:03:22", no zone
-  taken: boolean // at is when the photo was taken
-  duration_ms?: number // a video's length, once the workers read it
-}
-
-export interface TimelineCursor {
-  at: string
-  path: string
-}
-
-export interface TimelinePage {
-  items: TimelineEntry[]
-  next: TimelineCursor | null
-}
-
-export interface MonthCount {
-  month: string // "2026-11"
-  count: number
-}
+export type { MediaMeta, MonthCount, TimelineCursor, TimelineEntry, TimelinePage }
 
 const zone = () => encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
 
@@ -111,19 +91,6 @@ export function dayTitle(day: string): string {
 }
 
 /** A photo's metadata, as GET /api/files/meta returns it (docs/architecture/metadata.md). */
-export interface MediaMeta {
-  taken_at: string | null
-  taken_offset: string | null
-  latitude: number | null
-  longitude: number | null
-  make: string | null
-  model: string | null
-  lens: string | null
-  width: number | null
-  height: number | null
-  duration_ms: number | null // a video's length
-}
-
 /** A video's length: "0:42", "12:05", "1:02:03". */
 export function formatDuration(ms: number): string {
   const s = Math.round(ms / 1000)

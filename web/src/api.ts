@@ -1,3 +1,4 @@
+export type { Account } from '../../shared/api-types.ts'
 /** Body of GET /api/health, as the core's `httpapi.Health` writes it. */
 export interface Health {
   version: string
@@ -14,15 +15,6 @@ export async function fetchHealth(signal?: AbortSignal): Promise<Health> {
     throw new Error(`HTTP ${res.status}`)
   }
   return (await res.json()) as Health
-}
-
-/** An account, as the core's `auth.Account` writes it. */
-export interface Account {
-  name: string
-  display_name: string
-  role: 'admin' | 'member'
-  disabled_at?: string
-  created_at: string
 }
 
 /** An error answered by the core, with its HTTP status and message. */

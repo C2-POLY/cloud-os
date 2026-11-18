@@ -47,7 +47,7 @@ make up
 make logs
 make down
 
-# Lints, no warning allowed: gofmt, go vet, ruff check and format, tsc, oxlint
+# Lints, no warning allowed: gofmt, go vet, ruff check and format, tsc, oxlint (web and mobile)
 make lint
 
 # Every test suite. Starts the Compose database if needed; each database test
@@ -71,13 +71,16 @@ docker compose run --rm core thumbs backfill
 # Queue the metadata (date, GPS, camera, a video's length) of every stored image and video that has none
 docker compose run --rm core meta backfill
 
+# The mobile app (Expo) in the iOS simulator; the box is at localhost:<core port>
+cd mobile && npx expo run:ios
+
 # The drive as a network disk: Finder › Se connecter au serveur › http://localhost:8480/dav/
 
 # Set a new password for an account that lost it (read from stdin) and end its sessions
 printf '%s\n' '<new password>' | docker compose run --rm -T core reset-password <account>
 ```
 
-Layout: `core/` (Go module, `cmd/core`, `internal/`, SQL migrations in `core/migrations/`, applied by the core at startup with goose), `worker/` (Python, uv), `web/` (React, Vite, npm), `compose.yaml`, `Makefile`, `.github/workflows/ci.yml` (`make lint` and `make test` on every PR and on `main`).
+Layout: `core/` (Go module, `cmd/core`, `internal/`, SQL migrations in `core/migrations/`, applied by the core at startup with goose), `worker/` (Python, uv), `web/` (React, Vite, npm), `mobile/` (Expo, React Native; `docs/architecture/mobile.md`), `shared/api-types.ts` (API types used by web and mobile), `compose.yaml`, `Makefile`, `.github/workflows/ci.yml` (`make lint` and `make test` on every PR and on `main`).
 
 **One stack per worktree.** Give each worktree its own Compose project and, when another stack runs, its own host ports, so stacks never share a database:
 
