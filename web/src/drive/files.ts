@@ -1,15 +1,7 @@
 import { api } from '../api.ts'
+import type { Entry } from '../../../shared/api-types.ts'
 
-/** One file or folder, as the core's `httpapi.Entry` writes it. */
-export interface Entry {
-  path: string
-  name: string
-  kind: 'file' | 'dir'
-  size: number
-  mime: string
-  sha256?: string
-  modified_at: string
-}
+export type { Entry }
 
 const q = (path: string) => encodeURIComponent(path)
 
