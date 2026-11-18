@@ -4,16 +4,20 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/C2-POLY/cloud-os/core/internal/doctext"
-	"github.com/C2-POLY/cloud-os/core/internal/encoder"
+	"github.com/C2-POLY/cloud-os/core/internal/embed"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 	"github.com/C2-POLY/cloud-os/core/internal/tasks"
 	"github.com/C2-POLY/cloud-os/core/internal/testdb"
@@ -75,13 +79,39 @@ func (e env) addWindow(t *testing.T, content string, chunk, start, end int, v []
 	if _, err := e.pool.Exec(e.ctx,
 		`INSERT INTO `+textemb.Table+` (sha256, chunk, start_char, end_char, model, version, embedding)
 		 VALUES ($1, $2, $3, $4, $5, 'v1', $6::halfvec)`,
-		sum(content), chunk, start, end, textemb.Model, encoder.Vector{Values: v}.Literal()); err != nil {
+		sum(content), chunk, start, end, textemb.Model, embed.Vector{Values: v}.Literal()); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func query(v []float32) encoder.Vector {
-	return encoder.Vector{Model: textemb.Model, Version: "v1", Values: v}
+// fakeWorker answers POST /embed like the worker's query endpoint: the
+// vector and version it is set to, for any query; it keeps the queries.
+type fakeWorker struct {
+	mu      sync.Mutex
+	vector  []float32
+	version string
+	queries []string
+}
+
+func (w *fakeWorker) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Model string   `json:"model"`
+		Texts []string `json:"texts"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.queries = append(w.queries, req.Texts...)
+	_ = json.NewEncoder(rw).Encode(map[string]any{"model": req.Model, "version": w.version, "vectors": [][]float32{w.vector}})
+}
+
+// searcher is a Searcher whose queries all come back as v, version "v1".
+func (e env) searcher(t *testing.T, v []float32) (*textemb.Searcher, *fakeWorker) {
+	t.Helper()
+	w := &fakeWorker{vector: v, version: "v1"}
+	srv := httptest.NewServer(w)
+	t.Cleanup(srv.Close)
+	return &textemb.Searcher{Pool: e.pool, Embed: &embed.Client{URL: srv.URL}}, w
 }
 
 func paths(hits []textemb.Hit) []string {
@@ -117,9 +147,13 @@ func (e env) corpus(t *testing.T) {
 func TestSearchRanksTheAccountsDocumentsByTheirBestWindow(t *testing.T) {
 	e := newEnv(t)
 	e.corpus(t)
-	hits, err := textemb.Search(e.ctx, e.pool, "enzo", query(axis(map[int]float64{0: 1})), 0)
+	s, w := e.searcher(t, axis(map[int]float64{0: 1}))
+	hits, err := s.Search(e.ctx, "enzo", "  contrat   de l'appart ", 0)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !slices.Equal(w.queries, []string{"contrat de l'appart"}) {
+		t.Errorf("the workers were asked %q", w.queries)
 	}
 	want := []string{"enzo:Logement/bail.pdf", "enzo:Travail/paie.pdf", "enzo:Voiture/carte-grise.pdf"}
 	if got := paths(hits); !slices.Equal(got, want) {
@@ -138,11 +172,59 @@ func TestSearchRanksTheAccountsDocumentsByTheirBestWindow(t *testing.T) {
 	}
 
 	// limit, and its bounds.
-	if hits, err := textemb.Search(e.ctx, e.pool, "enzo", query(axis(map[int]float64{0: 1})), 1); err != nil || len(hits) != 1 {
+	if hits, err := s.Search(e.ctx, "enzo", "contrat", 1); err != nil || len(hits) != 1 {
 		t.Errorf("limit 1: %v, %v", paths(hits), err)
 	}
-	if hits, err := textemb.Search(e.ctx, e.pool, "enzo", query(axis(map[int]float64{0: 1})), 1000); err != nil || len(hits) != 3 {
+	if hits, err := s.Search(e.ctx, "enzo", "contrat", 1000); err != nil || len(hits) != 3 {
 		t.Errorf("limit 1000: %v, %v", paths(hits), err)
+	}
+
+	// An empty query asks nothing; a long one is cut to what the workers read.
+	w.queries = nil
+	if hits, err := s.Search(e.ctx, "enzo", " \t ", 0); err != nil || hits == nil || len(hits) != 0 {
+		t.Errorf("empty query: %v, %v", hits, err)
+	}
+	if _, err := s.Search(e.ctx, "enzo", strings.Repeat("é", textemb.MaxQueryChars+5), 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.queries) != 1 || len([]rune(w.queries[0])) != textemb.MaxQueryChars {
+		t.Errorf("asked %d queries, the last of %d characters", len(w.queries), len([]rune(w.queries[len(w.queries)-1])))
+	}
+}
+
+func TestSearchComparesOnlyVectorsOfTheQuerysVersion(t *testing.T) {
+	e := newEnv(t)
+	e.corpus(t) // version v1
+	// The workers now serve v2: the lease is the only document already
+	// encoded again, the others wait for their task.
+	if _, err := e.pool.Exec(e.ctx, `UPDATE `+textemb.Table+` SET version = 'v2' WHERE sha256 = $1`, sum(lease)); err != nil {
+		t.Fatal(err)
+	}
+	s, w := e.searcher(t, axis(map[int]float64{0: 1}))
+	w.version = "v2"
+	hits, err := s.Search(e.ctx, "enzo", "contrat", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := paths(hits), []string{"enzo:Logement/bail.pdf"}; !slices.Equal(got, want) {
+		t.Errorf("hits %v, want %v", got, want)
+	}
+}
+
+func TestSearchIsUnavailableWithoutTheWorkersVector(t *testing.T) {
+	e := newEnv(t)
+	e.corpus(t)
+	short, _ := e.searcher(t, []float32{1, 0})
+	down := httptest.NewServer(http.NotFoundHandler())
+	down.Close()
+	for name, s := range map[string]*textemb.Searcher{
+		"another dimension": short,
+		"no worker":         {Pool: e.pool, Embed: &embed.Client{URL: down.URL}},
+		"no worker URL":     {Pool: e.pool, Embed: &embed.Client{}},
+	} {
+		if _, err := s.Search(e.ctx, "enzo", "contrat", 0); !errors.Is(err, embed.ErrUnavailable) {
+			t.Errorf("%s: %v, want ErrUnavailable", name, err)
+		}
 	}
 }
 
@@ -159,38 +241,26 @@ func TestSearchShowsOnlyTheAccountsLiveFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	q := query(axis(map[int]float64{0: 1}))
-	enzo, err := textemb.Search(e.ctx, e.pool, "enzo", q, 0)
+	s, _ := e.searcher(t, axis(map[int]float64{0: 1}))
+	enzo, err := s.Search(e.ctx, "enzo", "contrat", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, want := paths(enzo), []string{"enzo:Logement/bail.pdf", "enzo:Voiture/carte-grise.pdf"}; !slices.Equal(got, want) {
 		t.Errorf("enzo sees %v, want %v", got, want)
 	}
-	lea, err := textemb.Search(e.ctx, e.pool, "lea", q, 0)
+	lea, err := s.Search(e.ctx, "lea", "contrat", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, want := paths(lea), []string{"lea:impots.pdf", "lea:Mes papiers/bail.pdf"}; !slices.Equal(got, want) {
 		t.Errorf("léa sees %v, want %v", got, want)
 	}
-	if hits, err := textemb.Search(e.ctx, e.pool, "nobody", q, 0); err != nil || len(hits) != 0 {
+	if hits, err := s.Search(e.ctx, "nobody", "contrat", 0); err != nil || len(hits) != 0 {
 		t.Errorf("an account without files: %v, %v", paths(hits), err)
 	}
-	if _, err := textemb.Search(e.ctx, e.pool, "../enzo", q, 0); err == nil {
+	if _, err := s.Search(e.ctx, "../enzo", "contrat", 0); err == nil {
 		t.Error("a bad owner name was accepted")
-	}
-}
-
-func TestSearchRefusesAnotherModelsVector(t *testing.T) {
-	e := newEnv(t)
-	for _, v := range []encoder.Vector{
-		{Model: "siglip2-base-patch16-224", Values: axis(map[int]float64{0: 1})},
-		{Model: textemb.Model, Values: []float32{1, 0}},
-	} {
-		if _, err := textemb.Search(e.ctx, e.pool, "enzo", v, 0); !errors.Is(err, textemb.ErrInvalid) {
-			t.Errorf("%s, %d values: %v, want ErrInvalid", v.Model, len(v.Values), err)
-		}
 	}
 }
 
@@ -207,6 +277,9 @@ func TestBackfillQueuesLiveDocumentsWithTextAndNoVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.addText(t, "orphelin", "plus aucun fichier", true)
+	if _, err := e.pool.Exec(e.ctx, `INSERT INTO embedding_models (name, version, dims) VALUES ($1, 'v1', 768)`, textemb.Model); err != nil {
+		t.Fatal(err)
+	}
 
 	q := &tasks.Queue{Pool: e.pool}
 	if n, err := textemb.Backfill(e.ctx, q); err != nil || n != 1 {
@@ -225,6 +298,64 @@ func TestBackfillQueuesLiveDocumentsWithTextAndNoVectors(t *testing.T) {
 	// Already pending: nothing more.
 	if n, err := textemb.Backfill(e.ctx, q); err != nil || n != 0 {
 		t.Errorf("backfill again = %d, %v", n, err)
+	}
+}
+
+// queued lists the contents whose vectors are queued, by their hex SHA-256.
+func (e env) queued(t *testing.T) []string {
+	t.Helper()
+	rows, err := e.pool.Query(e.ctx, `SELECT payload->>'sha256' FROM tasks WHERE kind = $1 AND state = 'queued' AND priority = $2 ORDER BY 1`, textemb.Kind, tasks.PriorityBackfill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func TestSyncQueuesEveryDocumentAgainOnceForANewVersion(t *testing.T) {
+	e := newEnv(t)
+	e.corpus(t) // three documents with vectors of v1
+	q := &tasks.Queue{Pool: e.pool}
+	// No worker has declared the model yet: nothing to do.
+	if n, err := textemb.Sync(e.ctx, q); err != nil || n != 0 {
+		t.Fatalf("sync before any worker = %d, %v", n, err)
+	}
+	// A worker declares v1, the version of every vector: nothing to encode,
+	// and the version is marked done.
+	declare := func(version string) {
+		t.Helper()
+		if _, err := e.pool.Exec(e.ctx, `INSERT INTO embedding_models (name, version, dims) VALUES ($1, $2, 768)
+			ON CONFLICT (name) DO UPDATE SET version = EXCLUDED.version, requeued_at = NULL`, textemb.Model, version); err != nil {
+			t.Fatal(err)
+		}
+	}
+	declare("v1")
+	if n, err := textemb.Sync(e.ctx, q); err != nil || n != 0 {
+		t.Fatalf("sync at v1 = %d, %v", n, err)
+	}
+	if _, due, err := embed.Due(e.ctx, e.pool, textemb.Model); err != nil || due {
+		t.Fatalf("v1 still due: %v, %v", due, err)
+	}
+
+	// Another cutting or model: v2. Every live document is queued, once.
+	declare("v2")
+	if n, err := textemb.Sync(e.ctx, q); err != nil || n != 3 {
+		t.Fatalf("sync at v2 = %d, %v; want 3", n, err)
+	}
+	want := []string{hex.EncodeToString(sum(lease)), hex.EncodeToString(sum(salary)), hex.EncodeToString(sum(car))}
+	slices.Sort(want)
+	if got := e.queued(t); !slices.Equal(got, want) {
+		t.Errorf("queued %v, want %v", got, want)
+	}
+	if n, err := textemb.Sync(e.ctx, q); err != nil || n != 0 {
+		t.Errorf("sync again = %d, %v", n, err)
 	}
 }
 

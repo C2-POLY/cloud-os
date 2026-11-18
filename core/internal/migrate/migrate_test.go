@@ -51,7 +51,17 @@ var tables = []struct {
 	{16, []string{"albums", "album_items"}, `INSERT INTO albums (owner, name) SELECT name, 'Bretagne' FROM accounts LIMIT 1`},
 	{17, []string{"document_text"}, `INSERT INTO document_text (sha256, source, text, chars, truncated, pages, has_text)
 		VALUES (sha256('a'), 'pdf', 'Contrat de location', 19, false, 1, false)`},
-	{18, []string{"text_vectors_arctic_m_v2"}, `INSERT INTO text_vectors_arctic_m_v2 (sha256, chunk, start_char, end_char, model, version, embedding)
+	// Migration 18 adds a generated column and its index to document_text, no table.
+	{18, []string{}, `SELECT 1 FROM document_text WHERE tsv @@ websearch_to_tsquery('public.cloudos_fr', 'contrats')`},
+	// Migration 19 lets document_text hold the text read by OCR, no table.
+	{19, []string{}, `UPDATE document_text SET text = 'Facture', chars = 7, has_text = true, ocr_model = 'pp-ocrv5-latin';
+		INSERT INTO document_text (sha256, source, text, chars, truncated, has_text, ocr_model)
+		VALUES (sha256('b'), 'image', '', 0, false, false, 'pp-ocrv5-latin')`},
+	{20, []string{"embedding_models", "photo_vectors_siglip2_b16_224"}, `INSERT INTO embedding_models (name, version, dims)
+		VALUES ('siglip2-base-patch16-224', 'v1', 768);
+		INSERT INTO photo_vectors_siglip2_b16_224 (sha256, model, version, source, embedding)
+		SELECT sha256('a'), 'siglip2-base-patch16-224', 'v1', 'image', array_fill(0.036::real, ARRAY[768])::vector`},
+	{21, []string{"text_vectors_arctic_m_v2"}, `INSERT INTO text_vectors_arctic_m_v2 (sha256, chunk, start_char, end_char, model, version, embedding)
 		VALUES (sha256('a'), 0, 0, 19, 'arctic-embed-m-v2.0', 'v', array_fill(0.036, ARRAY[768])::halfvec)`},
 }
 
@@ -184,6 +194,52 @@ func TestFolderBackfill(t *testing.T) {
 	var files int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM files`).Scan(&files); err != nil || files != 4 {
 		t.Errorf("after down: %d file rows (%v), want the 4 files", files, err)
+	}
+}
+
+// TestDocumentSearchMigration checks that migration 18 indexes the text
+// already extracted, and that undoing it keeps every text.
+func TestDocumentSearchMigration(t *testing.T) {
+	ctx := context.Background()
+	pool, err := db.Open(ctx, testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	p, err := migrate.NewProvider(db.SQL(pool))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.UpTo(ctx, 17); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO document_text (sha256, source, text, chars, truncated, pages, has_text)
+		VALUES (sha256('a'), 'text', 'Facture d''ÉLECTRICITÉ', 21, false, NULL, true)`); err != nil {
+		t.Fatal(err)
+	}
+	found := func() bool {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM document_text
+			WHERE tsv @@ websearch_to_tsquery('public.cloudos_fr', 'factures electricite')`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n == 1
+	}
+	for _, step := range []string{"up", "up again"} {
+		if _, err := p.UpTo(ctx, 18); err != nil {
+			t.Fatalf("%s: %v", step, err)
+		}
+		if !found() {
+			t.Errorf("%s: the text already there is not indexed", step)
+		}
+		if _, err := p.DownTo(ctx, 17); err != nil {
+			t.Fatalf("down: %v", err)
+		}
+		var text string
+		if err := pool.QueryRow(ctx, `SELECT text FROM document_text`).Scan(&text); err != nil || text != "Facture d'ÉLECTRICITÉ" {
+			t.Errorf("after down: %q (%v)", text, err)
+		}
 	}
 }
 

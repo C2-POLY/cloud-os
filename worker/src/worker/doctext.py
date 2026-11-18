@@ -575,7 +575,7 @@ def make(task: Task, conn: psycopg.Connection) -> None:
     found = read_text(data)
     # Imported here: the child process that reads documents (main) never
     # loads ONNX Runtime.
-    from worker import textemb
+    from worker import ocr, textemb
 
     with conn.transaction():
         written = conn.execute(
@@ -594,6 +594,8 @@ def make(task: Task, conn: psycopg.Connection) -> None:
         if written and written[0]:
             # Its vectors, at the priority of this task: a new file stays new.
             textemb.enqueue(conn, sha, task.priority)
+        if found.source == "pdf" and not found.has_text:  # a scan: the OCR reads it
+            ocr.queue(conn, sha, task.priority)
 
 
 def main() -> int:

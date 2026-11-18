@@ -261,7 +261,8 @@ def read_only(root: Path) -> dict[Path, tuple[bytes, int]]:
 
 
 def run(conn: psycopg.Connection, sha: bytes, priority: int = 0) -> tuple[str, str | None]:
-    """Run the text task of a content; the vectors it queues are left queued."""
+    """Run the text task of a content. The text tasks only: the vectors and
+    the OCR it queues (test_textemb.py, test_ocr.py) are left queued."""
     task_id = tasks.enqueue(conn, doctext.KIND, {"sha256": sha.hex()}, priority=priority)
     assert tasks.run_one(conn, "w", {doctext.KIND: doctext.make})
     row = conn.execute("SELECT state, last_error FROM tasks WHERE id = %s", (task_id,)).fetchone()

@@ -38,7 +38,24 @@ licence. French with accents on purpose (é, è, ê, ô, É, €).
   OpenDocument, made with odfpy 1.4.1 (Apache-2.0).
 - `scan.pdf`: one A4 page at 75 dpi, an image without any text layer, as a
   scanner makes it: the invoice's lines drawn with Pillow's default font,
-  saved as PDF by Pillow (JPEG inside), 16 KB.
+  saved as PDF by Pillow (JPEG inside), 16 KB. That font has no euro sign:
+  the page shows an empty box after "128,40", which the OCR rightly skips.
+
+## Photographed and scanned documents (OCR, #68)
+
+- `invoice-scan.jpg` (1240×1754, 229 KB) and `invoice-photo.jpg` (992×1403,
+  66 KB): the benchmark's electricity invoice,
+  `bench/docs/facture-electricite-mars.txt` (invented, see
+  `bench/README.md`), drawn on an A4 page at 150 dpi with DejaVu Sans by
+  `worker/bench/ocr.py` (`render`), then made into a flatbed scan
+  (`as_scan`: a slight tilt, blur, grain, JPEG at 70) and into a phone photo
+  of the page (`as_photo`: perspective, uneven light, blur, lower resolution,
+  JPEG at 80), with the random generator seeded by the document's name. Free
+  to use, under the project's licence.
 
 openpyxl, python-pptx and odfpy were only used once, in a throwaway
 environment, to make these files: they are not dependencies of the worker.
+- `invoice-en-photo.jpg` (992×1403, 53 KB): an invented English invoice,
+  `invoice-en.txt` (no real company, person or address), drawn and
+  photographed the same way (`as_photo`, seeded by "invoice-en"). Free to
+  use, under the project's licence.

@@ -29,8 +29,8 @@ flowchart LR
         M --> W["worker.models : ONNX Runtime (télémétrie coupée), tokenizers, numpy"]
         W --> V["vecteurs float32 unitaires"]
         W --> O["texte lu"]
-        V -.-> P[("pgvector, une table par modèle : #70, #71")]
-        O -.-> D["texte des documents : #68"]
+        V -.-> P[("pgvector, une table par modèle : #70, photo_vectors_siglip2_b16_224")]
+        O --> D["worker.ocr : texte des images et des scans (documents.md)"]
     end
 ```
 
@@ -40,11 +40,11 @@ flowchart LR
 - **Rien ne sort de la box.** ONNX Runtime 1.32 envoie par défaut des événements d'usage à Microsoft. Le paquet `worker` pose `ORT_DISABLE_TELEMETRY=1` avant tout import d'ONNX Runtime, `worker.models` appelle `ort.disable_telemetry_events()`, et l'image pose la même variable avec `HF_HUB_OFFLINE=1`.
 - **Une requête ne s'encode pas comme un document.** Arctic met `query: ` devant une requête, rien devant un document (`embed(…, query=True)`). SigLIP 2 met le texte en minuscules et le complète à 64 tokens, comme à son entraînement.
 - **512 tokens par passage** pour Arctic (`TEXT_SPEC_MAX_TOKENS`). Il en accepte 8 192, mais à 2 048 tokens d'un coup le pic de RAM du worker passe de 1,2 à 2,6 Go. Les documents sont découpés en fenêtres de 512 tokens qui se chevauchent de 64 ([search-ai.md](search-ai.md)).
-- **Chaque modèle est chargé une fois par processus**, par le premier fil qui le demande : le fil des tâches ou l'encodeur des requêtes (`worker.encoder`). Un verrou (`_load_once`) fait attendre le second au lieu d'en charger une autre copie.
-- **La version des vecteurs** part du SHA-256 du fichier du modèle, lu dans `SHA256SUMS` (`file_sha256`) : un nouveau fichier réindexe tout ([search-ai.md](search-ai.md)).
-- **Le nom du modèle accompagne chaque vecteur** (`TEXT_MODEL`, `IMAGE_MODEL`, `OCR_MODEL`), et chaque modèle a sa table (`TEXT_TABLE`) : changer de modèle, c'est changer `fetch.sh` et réindexer dans une nouvelle table.
+- **Chaque modèle est chargé une fois par processus**, par le premier fil qui le demande : le fil des tâches ou le point de requête (`worker.embedserver`). Un verrou (`_load_once`) fait attendre le second au lieu d'en charger une autre copie.
+- **Le nom du modèle accompagne chaque vecteur** (`TEXT_MODEL`, `IMAGE_MODEL`, `OCR_MODEL`), avec sa version (`IMAGE_MODEL_VERSION`, `TEXT_MODEL_VERSION` plus le découpage de `worker.textemb`), et chaque modèle a sa table (`TEXT_TABLE` pour le texte) : changer de modèle, c'est changer `fetch.sh` et la version, et le cœur réencode tout ([embeddings.md](embeddings.md)).
+- **Les recherches de photos sont lues comme des légendes** : « une photo de … » (`IMAGE_QUERY_TEMPLATE`), l'encodeur que `embedding_models()` donne au point de requête. Celles de documents prennent le préfixe d'Arctic, « query: » (`text_queries`).
 - **4 fils ONNX Runtime par modèle**, les 4 cœurs d'un Pi 5 ; `CLOUDOS_MODEL_THREADS` en donne moins.
-- **L'OCR ne fait que tourner les modèles.** Le détecteur reçoit l'image ramenée entre 736 px pour le petit côté et 2 000 px pour le grand. La reconnaissance reçoit une ligne à 48 px de haut, en BGR ramené à -1…1, comme à l'entraînement de PaddleOCR. Elle décode en CTC avec la liste des caractères inscrite dans le modèle. Le découpage d'une page en lignes et leur ordre de lecture sont dans #68.
+- **L'OCR ne fait que tourner les modèles.** Le détecteur (`text_map`) reçoit l'image ramenée entre 736 px pour le petit côté et 2 000 px pour le grand, ou entre les bornes qu'on lui donne (`min_side`, `max_side` : le tri document ou photo regarde à 960 px). La reconnaissance (`read_lines`) reçoit des lignes à 48 px de haut, en BGR ramené à -1…1, comme à l'entraînement de PaddleOCR, 8 à la fois, chacune complétée à la largeur de la plus large de son lot. Elle décode en CTC avec la liste des caractères inscrite dans le modèle et rend, pour chaque ligne, la probabilité moyenne des caractères gardés. Le découpage d'une page en lignes et leur ordre de lecture sont dans `worker.ocr` ([documents.md](documents.md), #68).
 
 ## Mémoire et vitesse
 

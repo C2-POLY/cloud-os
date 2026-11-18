@@ -1,7 +1,7 @@
 # Texte des documents
 
-Le texte des PDF, des fichiers Office (docx, xlsx, pptx), OpenDocument (odt, ods, odp) et des textes (txt, md, csv, tsv) est extrait par les workers, en tâche de fond, et rangé en base par contenu. Les originaux ne sont jamais modifiés. Il servira la recherche dans le contenu (#69), les embeddings texte (#70) et le classement (#73) ; un PDF scanné est marqué « sans texte » pour l'OCR (#68).
-Issue : #67.
+Le texte des PDF, des fichiers Office (docx, xlsx, pptx), OpenDocument (odt, ods, odp) et des textes (txt, md, csv, tsv) est extrait par les workers, en tâche de fond, et rangé en base par contenu. Celui des documents photographiés ou scannés (images, PDF « sans texte ») est lu par l'OCR et rangé au même endroit. Les originaux ne sont jamais modifiés. Ce texte sert la recherche dans le contenu (#69), les embeddings texte (#70) et le classement (#73).
+Issues : #67 (extraction), #68 (OCR).
 
 ## Parcours
 
@@ -69,7 +69,7 @@ Pas de python-docx, openpyxl, python-pptx, odfpy ni lxml : aucune dépendance de
 
 **Nettoyage :** sans octet nul (Postgres le refuse) ni demi-paire UTF-16, fins de ligne Unix, sans espaces en fin de ligne, au plus une ligne vide de suite, coupé à 1 000 000 caractères (`MAX_CHARS`, environ 400 pages) avec `truncated` vrai.
 
-**« Pas de texte » (`has_text` faux) :** un PDF dont le texte compte moins de 32 caractères visibles par page lue, en moyenne (`MIN_PAGE_CHARS`) : un scan, même avec le filigrane de son scanner, ou une page blanche ; un autre document sans aucun caractère visible. La ligne est écrite quand même. L'OCR (#68) prendra les PDF `source = 'pdf' AND NOT has_text`.
+**« Pas de texte » (`has_text` faux) :** un PDF dont le texte compte moins de 32 caractères visibles par page lue, en moyenne (`MIN_PAGE_CHARS`) : un scan, même avec le filigrane de son scanner, ou une page blanche ; un autre document sans aucun caractère visible. La ligne est écrite quand même, puis la tâche met en file l'OCR du PDF (`ocr.queue`, à sa propre priorité), qui remplit la ligne (section OCR).
 
 - **Erreurs définitives (`Permanent`, la tâche passe en `failed` au premier essai, la file continue) :** document illisible ou tronqué, quelle que soit l'erreur de son lecteur ; PDF qui demande un mot de passe ; ZIP qui n'est pas un document (archive, EPUB) ; « texte » avec des octets nuls (binaire) ; XML qui dépasse les limites d'expat ; lecture de plus de 60 s ; mémoire épuisée ou sous-processus tué ; fichier de plus de 200 Mo.
 - **Erreurs passagères (nouvel essai avec le délai de la file) :** le fichier a bougé ou changé pendant la lecture ; le sous-processus ne démarre pas (image mal construite).
@@ -77,23 +77,106 @@ Pas de python-docx, openpyxl, python-pptx, odfpy ni lxml : aucune dépendance de
 
 ## Stockage
 
-Table `document_text` (migration `0017_document_text.sql`), clé `sha256` : deux fichiers identiques partagent leur ligne, une nouvelle version a la sienne.
+Table `document_text` (migrations `0017_document_text.sql` et `0019_document_ocr.sql`), clé `sha256` : deux fichiers identiques partagent leur ligne, une nouvelle version a la sienne. **Une ligne peut changer une fois** : l'OCR remplit celle d'un PDF scanné par un `UPDATE` (`text`, `chars`, `truncated`, `has_text`, `ocr_model`). Ce qui se calcule à partir du texte (recherche, embeddings) suit cet `UPDATE`, et ne se fie qu'à `has_text` : une photo a sa ligne, sans texte.
 
 | Colonne | |
 |---|---|
-| `source` | `pdf`, `docx`, `xlsx`, `pptx`, `odt`, `ods`, `odp` ou `text`, le format lu |
+| `source` | `pdf`, `docx`, `xlsx`, `pptx`, `odt`, `ods`, `odp` ou `text`, le format lu ; `image` pour une image lue par l'OCR |
 | `text` | Le texte nettoyé ; `''` pour un document sans texte |
 | `chars` | Sa longueur en caractères, de 0 à 1 000 000 |
 | `truncated` | Le document en avait plus : plafond ou délai atteint |
 | `pages` | Pages d'un PDF, diapositives, feuilles ; NULL pour un texte, un docx, un odt, ou un classeur ODF coupé avant la fin |
-| `has_text` | Faux pour un scan ou un document vide (ci-dessus) |
+| `has_text` | Faux pour un scan ou un document vide (ci-dessus) ; après l'OCR, vrai à partir de 32 caractères visibles par page lue ; faux pour une photo |
+| `ocr_model` | Le modèle qui a lu le texte (`pp-ocrv5-latin`, `worker.models.OCR_MODEL`) ; NULL quand le texte vient du fichier. Toujours posé pour une `image` (contrainte `document_text_image_ocr`) |
+| `tsv` | Le `tsvector` du texte (`cloudos_doc_tsv`, configuration `cloudos_fr`), colonne générée pour la recherche dans le contenu ([search.md](search.md)) |
 
 Postgres compresse le texte (TOAST) : 10 000 documents d'une vingtaine de pages font environ 200 Mo avant compression.
 
 Pas de clé étrangère vers `files` : toutes les 30 s, avec `Reap`, `thumbs.Prune` et `meta.Prune`, le cœur fait `doctext.Prune`, qui supprime les lignes dont aucun fichier (vivant ou en corbeille) n'a l'empreinte. Un document restauré de la corbeille retrouve donc la sienne. Les vecteurs du texte (#70) partent avec la ligne, en cascade.
 
-Un texte avec des mots (`has_text`) met en file ses vecteurs (tâche `textemb`) dans la transaction qui l'écrit, à la priorité de la tâche `text` : voir [search-ai.md](search-ai.md).
+Un texte avec des mots (`has_text`) met en file ses vecteurs (tâche `textemb`) dans la transaction qui l'écrit, à la priorité de la tâche qui l'a écrit : `text`, ou `ocr` pour une image lue ou un scan lu en place. Voir [search-ai.md](search-ai.md).
+
+## OCR : images et PDF scannés
+
+Le texte des documents qui ne sont qu'une image : une facture photographiée ou scannée (JPEG, PNG, WebP, HEIC, HEIF) et un PDF « sans texte » (un scan). `core/internal/ocr` met en file, `worker/src/worker/ocr.py` lit, avec PP-OCRv5 (détecteur mobile et reconnaissance latine, [models.md](models.md), ADR 005), numpy et Pillow, sans OpenCV. Issue : #68.
+
+```mermaid
+sequenceDiagram
+    participant C as cœur (Go)
+    participant DB as Postgres
+    participant K as worker (Python)
+    participant X as sous-processus ocr (PDF)
+    C->>DB: AfterStore, ocr.Enqueue : tâche ocr {sha256} d'une image, clé ocr:sha256, sauf si document_text l'a déjà
+    K->>DB: tâche text d'un PDF : INSERT document_text, has_text faux
+    K->>DB: ocr.queue : tâche ocr {sha256}, clé ocr:sha256, priorité de la tâche text
+    K->>DB: Claim (kind ocr)
+    K->>DB: ligne de document_text ? (aucune : une image, ou un PDF sans texte et sans ocr_model)
+    K->>K: read_content : /data en lecture seule, sha256 vérifié, 200 Mo au plus
+    alt image (JPEG, PNG, WebP, HEIC, HEIF)
+        K->>K: thumbs.open_upright (EXIF), puis is_document : détecteur à 960 px
+        alt moins de 5 lignes : une photo
+            K->>DB: INSERT document_text (source image, text vide, has_text faux, ocr_model)
+        else un document
+            K->>K: read_page : détecteur à 2000 px, line_boxes, read_lines, ordre de lecture
+            K->>DB: INSERT document_text (source image, text, has_text, ocr_model)
+        end
+    else PDF sans texte
+        K->>X: python -I -m worker.ocr, les octets sur stdin (10 min, 3 Gio)
+        X->>X: page_image : la plus grande image de chaque page, 50 pages au plus
+        X->>X: read_page de chaque page, un saut de page entre les pages
+        X-->>K: JSON {text, truncated, pages}
+        K->>DB: UPDATE document_text SET text, has_text, ocr_model WHERE ocr_model IS NULL
+    end
+    alt illisible, délai ou mémoire dépassés
+        K->>DB: fail final (Permanent), la file continue
+    else
+        K->>DB: Complete
+    end
+    Note over C,DB: core ocr backfill : images sans ligne, PDF sans texte jamais lus par l'OCR
+```
+
+### Mise en file
+
+- **Images :** le crochet `AfterStore` (`queueBackgroundWork`) appelle `ocr.Enqueue` pour chaque image enregistrée, aux types des miniatures sans les vidéos (`ocr.IsImage`, par le type MIME ou les premiers octets). Rien n'est mis en file si le contenu a déjà sa ligne, lu ou vu comme une photo.
+- **PDF :** le cœur ne sait pas qu'un PDF est un scan. C'est la tâche `text` qui, après avoir écrit un PDF « sans texte », met en file sa tâche `ocr` (`ocr.queue`), à sa propre priorité.
+- **Doublons :** clé `ocr:<sha256>`, une tâche en attente par contenu.
+- **Rattrapage :** `core ocr backfill` met en file, à priorité de rattrapage, chaque image vivante sans ligne et chaque PDF vivant `source = 'pdf' AND NOT has_text AND ocr_model IS NULL` : fonds stocké avant #68, tâche perdue ou échouée (retentée à chaque rattrapage). Un PDF dont la tâche `text` n'a pas encore tourné attend `core text backfill`.
+
+### Document ou photo
+
+Toutes les photos passent par la file : le tri doit coûter peu. `is_document` fait tourner le détecteur seul, sur l'image ramenée à 960 px de grand côté (`TRIAGE_SIDE`) : 35 ms sur un Mac M4, environ 0,2 s estimée sur un Pi 5. L'image est un document à partir de 5 lignes de texte (`MIN_LINES`), des zones au moins 3 fois plus larges que hautes (`LINE_RATIO`). Sur le banc d'essai, chaque page scannée ou photographiée en a de 11 à 32, chacune des 17 photos 0 ou 1. Une photo reçoit quand même sa ligne, sans texte, pour n'être regardée qu'une fois. Une capture d'écran pleine de texte est un document, ce qui est voulu.
+
+L'image est ouverte par `thumbs.open_upright` : redressée selon son EXIF (libheif redresse un HEIC lui-même), décodée à une échelle réduite quand c'est un JPEG plus grand que 2 000 px (`DECODE_SIDE`, l'entrée du détecteur). Une image transparente (capture d'écran) est posée sur du blanc (`rgb`). Les images sont lues dans le worker, comme les miniatures, sans sous-processus : importer numpy et ONNX Runtime coûte 0,24 s sur un M4, plus que le tri lui-même.
+
+### Lire une page
+
+`read_page`, sur la page à 2 000 px au plus :
+
+1. **Carte du détecteur** (`OcrModel.text_map`) : la probabilité que chaque pixel soit du texte. Les pixels au-dessus de 0,3 (`THRESHOLD`) sont du texte.
+2. **Composantes connexes** (`line_boxes`) : les plages de chaque rangée (`_runs`), jointes d'une rangée à la suivante quand elles se touchent, même par un coin (`_label`, union-find).
+3. **Un rectangle orienté par ligne** : le centre et l'axe de la composante viennent de ses moments (sommes calculées plage par plage), sa longueur et sa hauteur de la projection des bouts de ses plages. Le rectangle est agrandi comme le fait PaddleOCR (surface × 1,5 / périmètre de chaque côté, `UNCLIP`), parce que le détecteur dessine des lignes rétrécies. Une zone de moins de 3 px de haut sur la carte (`MIN_BOX`), ou de probabilité moyenne sous 0,6 (`BOX_THRESHOLD`), est écartée. Une page garde ses 400 plus grandes zones (`MAX_LINES`), pour que du bruit lu comme des milliers de lignes ne bloque pas le worker.
+4. **Découpe redressée** : `Image.transform` (QUAD) découpe la ligne dans l'image d'origine et la remet à plat, ce qui rattrape l'inclinaison d'un scan et la perspective d'une photo. Une zone plus haute que large est tournée, comme PaddleOCR le fait.
+5. **Lecture** (`OcrModel.read_lines`), 8 lignes à la fois. Une ligne lue avec une probabilité moyenne sous 0,5 (`MIN_SCORE`) est du bruit (tampon, logo) et n'est pas gardée.
+6. **Ordre de lecture** : les lignes sont rangées de haut en bas ; deux lignes dont les milieux sont à moins d'une demi-hauteur l'une de l'autre font une rangée, lue de gauche à droite (« Montant : » et « 128,40 € » au bout de la même rangée). Deux colonnes de texte se mêlent rangée par rangée.
+
+Sur les 60 pages du banc d'essai (30 documents, scannés puis photographiés) : 0,08 % d'erreurs de caractères pour les scans, 0,12 % pour les photos, comme le pipeline de RapidOCR mesuré par l'ADR 005, en 0,4 à 0,5 s par page sur un M4 sous macOS (environ 3 s estimées sur un Pi 5). Le tri les donne toutes pour des documents. Le texte est nettoyé par `doctext.clean`, comme celui de #67.
+
+### PDF scannés
+
+Sans moteur de rendu : pypdfium2 (FreeType, licence FTL) et les moteurs GPL ou AGPL sont exclus. `page_image` prend, avec pypdf, l'image la plus grande de chaque page qui se décode (JPEG, Flate, CCITT, JPEG 2000, par Pillow), tournée selon le `/Rotate` de la page. Un scanner pose une image par page ; un PDF à contenu mixte (MRC) en pose deux, et la plus grande est le texte. Une page sans image décodable (JBIG2, que Pillow ne lit pas, ou des tracés) compte comme vide. pypdf ne décode pas plus de 75 Mo par image de lui-même ; `PDF_LIMITS` le monte à 300 Mo (`MAX_IMAGE_BYTES`, 100 millions de pixels en RVB, le plafond des miniatures), pour une page A4 scannée en couleur à 600 dpi (139 Mo), et lui interdit de lancer un `jbig2dec` trouvé sur la machine : une page JBIG2 se lit pareil partout.
+
+La lecture tourne dans un sous-processus, `python -I -m worker.ocr`, qui reçoit les octets sur son entrée standard et rend du JSON, comme celui de #67 : 50 pages au plus (`MAX_PAGES`), 10 min (`TIMEOUT`), 3 Gio d'espace d'adressage sous Linux (`MEMORY` : 2,5 Gio au pic pour trois pages, fils et réserves d'ONNX Runtime compris, mesuré dans l'image du worker ; 2 Gio ne suffisent pas). Passé 9 min (`SOFT_DEADLINE`) ou 50 pages, ce qui est lu est gardé, marqué `truncated`. Les pages sont séparées comme dans #67 ; une page vide ne laisse pas de ligne, ses sauts se fondent en un. `has_text` suit la règle de #67 : au moins 32 caractères visibles par page lue.
+
+### Erreurs
+
+- **Définitives (`Permanent`) :** image illisible, tronquée ou de plus de 100 millions de pixels ; PDF illisible ou qui demande un mot de passe ; sous-processus hors délai ou tué (mémoire) ; fichier de plus de 200 Mo.
+- **Passagères :** le fichier a bougé ou changé pendant la lecture ; le sous-processus ne démarre pas.
+- **Rien à faire (`done`) :** aucun fichier vivant n'a plus ce contenu ; la ligne est déjà lue par l'OCR, ou c'est un document avec son propre texte.
+
+### Ce qui n'est pas lu
+
+Un PDF qui mêle pages de texte et pages scannées (« avec texte » pour #67, en moyenne) ; le texte d'un PDF dessiné en tracés, sans image ; les images JBIG2 ; une page à l'envers ou tournée sans `/Rotate`, faute de classifieur d'orientation ; l'écriture manuscrite ; les TIFF ; le texte des vidéos.
 
 ## API
 
-Aucune pour l'instant : la recherche dans le contenu et ses routes viennent avec #69.
+Le texte n'a pas de route à lui : il sert la recherche dans le contenu, `GET /api/search/content` (#69). La migration 0018 lui ajoute la colonne générée `tsv` et son index GIN ; tout est dans [search.md](search.md).

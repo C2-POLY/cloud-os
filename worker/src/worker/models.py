@@ -10,9 +10,11 @@ ONNX Runtime's telemetry is off (ORT_DISABLE_TELEMETRY, set by the worker
 package before this module imports it).
 
 This module only loads the models and turns texts and images into unit
-vectors, and pages into text; indexing them is the job of worker.tasks
-(#68, #70, #71). A worker loads each model once, whichever of its threads
-(the task loop, the query encoder of worker.encoder) asks first.
+vectors, and pages into text; indexing them is the job of the tasks
+(worker.photovec for photos, worker.textemb for documents, worker.ocr for
+images and scans), and worker.embedserver encodes the text of a search for
+the core. A worker loads each model once, whichever of its threads (the
+task loop, the query endpoint) asks first.
 """
 
 from __future__ import annotations
@@ -45,9 +47,20 @@ THREADS = 4
 TEXT_MODEL = "arctic-embed-m-v2.0"
 IMAGE_MODEL = "siglip2-base-patch16-224"
 OCR_MODEL = "pp-ocrv5-latin"
-# The table of each embedding model's vectors (core/migrations): another
-# model is another table, so that vectors of two models never mix.
+# The version stored with each vector: the revision fetch.sh pins and the
+# export. Change it whenever the vectors would change (another revision,
+# quantisation or preprocessing): the core then encodes every photo again.
+IMAGE_MODEL_VERSION = "ba1f3b0-int8"
+# The same for documents; worker.textemb adds how it cuts them in windows.
+TEXT_MODEL_VERSION = "95c2741-int8"
+# The table of the text vectors (core/migrations): another model is another
+# table, so that vectors of two models never mix.
 TEXT_TABLE = "text_vectors_arctic_m_v2"
+# SigLIP learnt from image captions: a search reads better as one. On the
+# benchmark, it finds the photo first for 18 queries out of 18 against 17
+# bare ("chat" alone found the dogs). It shapes queries only, not the
+# stored vectors: changing it needs no new version.
+IMAGE_QUERY_TEMPLATE = "une photo de {}"
 # Arctic reads up to 8192 tokens, but 2048 at once already take the worker
 # from 1.2 to 2.6 GB of RAM, and a long window blurs the passage that answers
 # a precise question: documents are cut into windows of 512 tokens (about
@@ -61,21 +74,6 @@ def models_dir() -> Path:
 
 def threads() -> int:
     return int(os.environ.get("CLOUDOS_MODEL_THREADS", THREADS))
-
-
-@cache
-def file_sha256(name: str) -> str:
-    """The SHA-256 of a model file ("arctic-embed-m-v2.0/model.onnx"), as
-    worker/models/fetch.sh checked and listed it in SHA256SUMS: it names the
-    version of the vectors the file makes."""
-    sums = models_dir() / "SHA256SUMS"
-    if not sums.is_file():
-        raise FileNotFoundError(f"model list missing: {sums} (worker/models/fetch.sh)")
-    for line in sums.read_text().splitlines():
-        digest, _, path = line.partition("  ")
-        if path == name:
-            return digest
-    raise FileNotFoundError(f"{name} is not in {sums} (worker/models/fetch.sh)")
 
 
 _loading = threading.Lock()
@@ -236,10 +234,12 @@ class OcrModel:
     pixels scaled to -1…1, as PaddleOCR trained them.
 
     Turning the detector's map into line boxes and putting the lines in
-    reading order is the page pipeline of #68; this class only runs the two
-    models."""
+    reading order is the page pipeline of worker.ocr; this class only runs the
+    two models."""
 
     LINE_HEIGHT = 48  # pixels, the recogniser's input height
+    MIN_WIDTH = 320  # pixels, the narrowest input of the recogniser
+    BATCH = 8  # lines read in one run of the recogniser
     MIN_SIDE = 736  # the detector's input: short side at least this, multiples of 32,
     MAX_SIDE = 2000  # and long side at most this (a 12 Mpx photo is scaled down)
 
@@ -254,27 +254,55 @@ class OcrModel:
         x = np.asarray(image.convert("RGB"), dtype=np.float32)[..., ::-1]
         return (x / 255.0 - 0.5) / 0.5
 
-    def text_map(self, image: Image.Image) -> np.ndarray:
+    def text_map(
+        self, image: Image.Image, min_side: int | None = None, max_side: int | None = None
+    ) -> np.ndarray:
         """The probability that each pixel is text, for the image resized so
-        that its short side is at least MIN_SIDE, its long side at most
-        MAX_SIDE (that one wins), and both sides are multiples of 32 (the map
-        has that size)."""
+        that its short side is at least min_side (MIN_SIDE), its long side at
+        most max_side (MAX_SIDE; that one wins), and both sides are multiples
+        of 32 (the map has that size)."""
         w, h = image.size
-        ratio = min(max(1.0, self.MIN_SIDE / min(w, h)), self.MAX_SIDE / max(w, h))
+        lo, hi = min_side or self.MIN_SIDE, max_side or self.MAX_SIDE
+        ratio = min(max(1.0, lo / min(w, h)), hi / max(w, h))
         size = (max(32, round(w * ratio / 32) * 32), max(32, round(h * ratio / 32) * 32))
         x = self.bgr(image.resize(size, Image.Resampling.BILINEAR)).transpose(2, 0, 1)
         return self.det.run(None, {self.det.get_inputs()[0].name: x[None]})[0][0, 0]
 
     def read_line(self, image: Image.Image) -> str:
         """The text of an image holding one line of text."""
-        w, h = image.size
-        width = max(1, round(w * self.LINE_HEIGHT / h))
-        x = self.bgr(image.resize((width, self.LINE_HEIGHT), Image.Resampling.BILINEAR))
-        batch = np.zeros((1, 3, self.LINE_HEIGHT, max(width, 320)), dtype=np.float32)
-        batch[0, :, :, :width] = x.transpose(2, 0, 1)
-        best = self.rec.run(None, {self.rec.get_inputs()[0].name: batch})[0][0].argmax(axis=-1)
-        keep = (best != 0) & np.concatenate([[True], best[1:] != best[:-1]])
-        return "".join(self.chars[i] for i in best[keep] if i < len(self.chars))
+        return self.read_lines([image])[0][0]
+
+    def read_lines(self, images: Sequence[Image.Image]) -> list[tuple[str, float]]:
+        """The text of each image holding one line of text, and how sure the
+        recogniser is of it: the mean probability of the characters it kept,
+        from 0 to 1 (0 when it read nothing). Lines of similar widths are read
+        together, BATCH at a time, each padded to the widest of its batch."""
+        lines = [
+            self.bgr(
+                im.resize(
+                    (max(1, round(im.width * self.LINE_HEIGHT / im.height)), self.LINE_HEIGHT),
+                    Image.Resampling.BILINEAR,
+                )
+            )
+            for im in images
+        ]
+        order = sorted(range(len(lines)), key=lambda i: lines[i].shape[1])
+        out: list[tuple[str, float]] = [("", 0.0)] * len(lines)
+        for at in range(0, len(order), self.BATCH):
+            group = order[at : at + self.BATCH]
+            width = max(self.MIN_WIDTH, *(lines[i].shape[1] for i in group))
+            batch = np.zeros((len(group), 3, self.LINE_HEIGHT, width), dtype=np.float32)
+            for row, i in enumerate(group):
+                batch[row, :, :, : lines[i].shape[1]] = lines[i].transpose(2, 0, 1)
+            probs = self.rec.run(None, {self.rec.get_inputs()[0].name: batch})[0]
+            for row, i in enumerate(group):
+                best = probs[row].argmax(axis=-1)
+                keep = (best != 0) & np.concatenate([[True], best[1:] != best[:-1]])
+                keep &= best < len(self.chars)
+                text = "".join(self.chars[c] for c in best[keep])
+                score = float(probs[row].max(axis=-1)[keep].mean()) if keep.any() else 0.0
+                out[i] = (text, score)
+        return out
 
 
 class SiglipTextEncoder:
@@ -326,3 +354,37 @@ def image_query_encoder() -> SiglipTextEncoder:
 def ocr_model() -> OcrModel:
     """PP-OCRv5: the mobile text detector and the Latin mobile recogniser."""
     return OcrModel(models_dir() / OCR_MODEL)
+
+
+@dataclass(frozen=True)
+class Served:
+    """An embedding model whose vectors the worker stores: its version and
+    dimension, declared in the embedding_models table, and how it encodes
+    the text of a search into vectors comparable with the stored ones."""
+
+    version: str
+    dims: int
+    query: Callable[[Sequence[str]], np.ndarray]
+
+
+def embedding_models() -> dict[str, Served]:
+    """The embedding models the worker serves, by name. Building this loads
+    no model: query() loads its model the first time it runs."""
+    from worker import textemb  # its version names how it cuts documents
+
+    return {
+        IMAGE_MODEL: Served(IMAGE_MODEL_VERSION, 768, image_queries),
+        TEXT_MODEL: Served(textemb.version(), 768, text_queries),
+    }
+
+
+def text_queries(texts: Sequence[str]) -> np.ndarray:
+    """Searches into vectors that compare with the windows of documents
+    (Arctic's query prefix, "query: ")."""
+    return text_encoder().embed(texts, query=True)
+
+
+def image_queries(texts: Sequence[str]) -> np.ndarray:
+    """Searches into vectors that compare with the photos', each read as the
+    caption of a photo (IMAGE_QUERY_TEMPLATE)."""
+    return image_query_encoder().embed([IMAGE_QUERY_TEMPLATE.format(t) for t in texts])

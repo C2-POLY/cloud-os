@@ -23,12 +23,32 @@ export interface Entry {
   modified_at: string
 }
 
+/** A piece of an extract: a word found (hit) or the text around it, as the core's `storage.SnippetPart` writes it. */
+export interface SnippetPart {
+  text: string
+  hit?: boolean
+}
+
+/** A file whose text holds the words searched, with an extract, as the core's `httpapi.ContentHit` writes it (GET /api/search/content). */
+export interface ContentHit extends Entry {
+  snippet: SnippetPart[]
+}
+
 /**
- * A document found by meaning, GET /api/search/semantic?q=&limit= (the core's
- * `httpapi.SemanticHit`), best first. 503 while the workers cannot encode the query.
+ * A photo or video found by what it shows, as the core's `httpapi.PhotoHit`
+ * writes it: GET /api/search/photos?q=…, best first. 503 when the workers
+ * cannot encode the query.
  */
-export interface SemanticHit {
-  entry: Entry
+export interface PhotoHit extends Entry {
+  score: number // cosine similarity to the query; compare ranks, not scores across searches
+}
+
+/**
+ * A document found by meaning, as the core's `httpapi.SemanticHit` writes it:
+ * GET /api/search/semantic?q=…&limit=…, best first. 503 when the workers
+ * cannot encode the query.
+ */
+export interface SemanticHit extends Entry {
   score: number // cosine similarity of the best window of its text, 1 at most
   start: number // that window, in characters of the document's text
   end: number

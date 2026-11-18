@@ -62,30 +62,19 @@ def run(url: str, worker_id: str, stop: threading.Event) -> None:
             stop.wait(RETRY_EVERY)
 
 
-def requeue_stale(conn: psycopg.Connection) -> None:
-    """Queue again, at backfill priority, the vectors a new model or another
-    cutting made stale (worker.textemb). A failure is logged: the tasks run anyway."""
-    from worker import textemb
-
-    try:
-        n = textemb.requeue_stale(conn)
-    except (OSError, psycopg.Error) as err:  # no model files, or an older schema
-        log.error("text vectors not checked against the current model: %s", err)
-        return
-    if n:
-        log.info("%d contents queued for their text vectors (%s)", n, textemb.version())
-
-
 def run_tasks(url: str, worker_id: str, stop: threading.Event) -> None:
     """Run queued tasks until stopped, reconnecting whenever the database goes away."""
-    from worker import tasks
+    from worker import tasks, vectors
 
     while not stop.is_set():
         try:
             with psycopg.connect(url, autocommit=True) as conn:
                 if not wait_for_table(conn, "tasks", stop):
                     return
-                requeue_stale(conn)
+                # The core encodes every content again when a model's version changes.
+                if not wait_for_table(conn, "embedding_models", stop):
+                    return
+                vectors.declare(conn)
                 log.info("worker %s takes tasks: %s", worker_id, ", ".join(tasks.HANDLERS))
                 tasks.work(conn, worker_id, stop)
         except psycopg.OperationalError as err:
@@ -114,11 +103,12 @@ def main() -> None:
         target=run, args=(url, worker_id, stop), name="heartbeat", daemon=True
     )
     heartbeat.start()
-    from worker import encoder
+    from worker import embedserver
 
-    queries = threading.Thread(target=encoder.run, args=(stop,), name="encoder", daemon=True)
-    queries.start()
+    try:
+        embedserver.start(stop)
+    except OSError as err:  # the port is taken: tasks still run, searches answer 503
+        log.error("query endpoint not started: %s", err)
     run_tasks(url, worker_id, stop)
     heartbeat.join(timeout=5)
-    queries.join(timeout=5)
     log.info("worker %s stopped", worker_id)

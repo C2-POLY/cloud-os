@@ -1264,6 +1264,11 @@ html:has(.desktop) body {
   background: var(--accent);
 }
 
+/* The icon keeps its size beside a long extract. */
+.palette-row > svg {
+  flex: none;
+}
+
 .palette-row.on .icon-folder {
   color: inherit;
 }
@@ -1282,6 +1287,47 @@ html:has(.desktop) body {
 
 .palette-row.on .palette-name small {
   color: rgba(255, 255, 255, 0.85);
+}
+
+/* The extract of a document's text, the words found marked. */
+.palette-snippet {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  margin-top: 0.15rem;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.palette-snippet mark {
+  padding: 0 0.1em;
+  border-radius: 3px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.palette-row.on .palette-snippet {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.palette-row.on .palette-snippet mark {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.palette-extract {
+  margin: 0;
+  padding: 0.1rem 0 0.1rem 0.75rem;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.palette-extract .palette-snippet {
+  -webkit-line-clamp: 6;
+  line-clamp: 6;
+  font-size: 0.85rem;
 }
 
 .palette-preview {

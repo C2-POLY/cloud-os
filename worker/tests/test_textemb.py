@@ -1,6 +1,6 @@
 """Vectors of the text of documents (#70): the cutting into windows, the
-textemb task, the re-queue after a model change, and the search end to end on
-the benchmark corpus, against a throwaway database.
+textemb task, the model the worker declares and serves for queries, and the
+search end to end on the benchmark corpus, against a throwaway database.
 
 The tests that run the model need it (`make models`); without it they are
 skipped, except when CLOUDOS_REQUIRE_MODELS is set (CI)."""
@@ -8,6 +8,7 @@ skipped, except when CLOUDOS_REQUIRE_MODELS is set (CI)."""
 import hashlib
 import json
 import os
+import threading
 import tomllib
 import urllib.request
 from collections.abc import Iterator
@@ -18,7 +19,7 @@ import psycopg
 import pytest
 from tokenizers import Tokenizer
 
-from worker import encoder, models, tasks, textemb
+from worker import embedserver, models, tasks, textemb, vectors
 
 BENCH = Path(__file__).parent / "fixtures" / "bench"
 RECEIPT = (BENCH / "docs" / "quittance-loyer-avril.txt").read_text()  # 160 tokens
@@ -89,19 +90,37 @@ def test_a_very_long_document_keeps_its_first_windows(
     assert windows[0].start == 0 and windows[-1].end < len(text) // 2
 
 
-@needs_models
-def test_the_version_names_the_model_file_and_the_cutting(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    sums = (models.models_dir() / "SHA256SUMS").read_text()
-    digest = next(
-        ln.split()[0]
-        for ln in sums.splitlines()
-        if ln.endswith("/model.onnx") and models.TEXT_MODEL in ln
-    )
-    assert textemb.version() == f"{digest[:12]}-w512-o64-n64"
+def test_the_version_names_the_model_and_the_cutting(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The revision of Arctic that worker/models/fetch.sh pins, int8.
+    fetch = (Path(__file__).parents[1] / "models" / "fetch.sh").read_text()
+    revision = fetch.split("snowflake-arctic-embed-m-v2.0/resolve/", 1)[1][:7]
+    assert f"{revision}-int8" == models.TEXT_MODEL_VERSION
+    assert textemb.version() == f"{models.TEXT_MODEL_VERSION}-w512-o64-n64"
     monkeypatch.setattr(textemb, "OVERLAP", 32)
-    assert textemb.version() == f"{digest[:12]}-w512-o32-n64"
+    assert textemb.version() == f"{models.TEXT_MODEL_VERSION}-w512-o32-n64"
+
+
+def test_the_worker_declares_arctic_with_the_version_of_its_vectors(
+    conn: psycopg.Connection,
+) -> None:
+    served = models.embedding_models()[models.TEXT_MODEL]
+    assert (served.version, served.dims) == (textemb.version(), 768)
+    # The core queues every document again when it changes (core/internal/textemb Sync).
+    vectors.declare(conn)
+    row = conn.execute(
+        "SELECT version, dims, requeued_at IS NULL FROM embedding_models WHERE name = %s",
+        (models.TEXT_MODEL,),
+    ).fetchone()
+    assert row == (textemb.version(), 768, True)
+
+
+@needs_models
+def test_a_search_is_encoded_with_the_query_prefix() -> None:
+    served = models.embedding_models()[models.TEXT_MODEL]
+    got = served.query(["contrat de l'appart"])
+    want = models.text_encoder().embed(["query: contrat de l'appart"])
+    assert got.shape == (1, 768) and np.allclose(got, want, atol=1e-6)
+    assert not np.allclose(got, models.text_encoder().embed(["contrat de l'appart"]), atol=1e-3)
 
 
 # The task, against a throwaway database.
@@ -150,7 +169,7 @@ def run(conn: psycopg.Connection, sha: bytes) -> tuple[str, str | None]:
     return row[0], row[1]
 
 
-def vectors(conn: psycopg.Connection, sha: bytes) -> list[tuple]:
+def stored(conn: psycopg.Connection, sha: bytes) -> list[tuple]:
     return conn.execute(
         f"""SELECT chunk, start_char, end_char, model, version, vector_dims(embedding),
                    round(l2_norm(embedding)::numeric, 2), created_at
@@ -175,7 +194,7 @@ def test_the_task_stores_one_unit_vector_per_window(
     text = long_text()
     sha = add(conn, "Dossier/tout.txt", text)
     assert run(conn, sha) == ("done", None)
-    rows = vectors(conn, sha)
+    rows = stored(conn, sha)
     windows = textemb.chunks(text, models.text_encoder().tok)
     assert [(r[0], r[1], r[2]) for r in rows] == [
         (i, w.start, w.end) for i, w in enumerate(windows)
@@ -187,12 +206,12 @@ def test_the_task_stores_one_unit_vector_per_window(
 
     # Up to date: running it again changes nothing.
     assert run(conn, sha) == ("done", None)
-    assert vectors(conn, sha) == rows
+    assert stored(conn, sha) == rows
 
     # Another version replaces every row of the content, in one go.
     monkeypatch.setattr(textemb, "version", lambda: "other")
     assert run(conn, sha) == ("done", None)
-    again = vectors(conn, sha)
+    again = stored(conn, sha)
     assert [(r[0], r[1], r[2], r[4]) for r in again] == [(r[0], r[1], r[2], "other") for r in rows]
 
 
@@ -219,59 +238,31 @@ def test_vectors_go_with_the_text(conn: psycopg.Connection) -> None:
     assert conn.execute(f"SELECT count(*) FROM {textemb.TABLE}").fetchone() == (0,)
 
 
-def test_a_new_version_queues_every_live_content_again_at_backfill_priority(
-    conn: psycopg.Connection,
-) -> None:
-    current = add(conn, "a-jour.txt", "à jour")
-    put_vectors(conn, current, "v2")
-    stale = add(conn, "ancien.txt", "ancien modèle")
-    put_vectors(conn, stale, "v1")
-    missing = add(conn, "sans-vecteurs.txt", "jamais indexé")
-    add(conn, "scan.pdf", "", has_text=False)
-    add(conn, "corbeille.txt", "seulement à la corbeille", trashed=True)
-    add(conn, "orphelin.txt", "plus aucun fichier", file=False)
-    # A content in the trash of one account and live in another is live.
-    shared = add(conn, "commun.txt", "partagé", trashed=True)
-    conn.execute(
-        """INSERT INTO files (owner, path, size, mime, sha256, modified_at)
-           VALUES ('lea', 'commun.txt', 7, 'text/plain', %s, now())""",
-        (shared,),
-    )
-
-    assert textemb.requeue_stale(conn, "v2") == 3
-    queued = conn.execute(
-        "SELECT payload, priority, dedupe_key FROM tasks WHERE kind = %s ORDER BY id",
-        (textemb.KIND,),
-    ).fetchall()
-    want = sorted(s.hex() for s in (stale, missing, shared))
-    assert sorted(p["sha256"] for p, _, _ in queued) == want
-    assert {(prio, key == f"textemb:{p['sha256']}") for p, prio, key in queued} == {(0, True)}
-    # Already pending: nothing more.
-    assert textemb.requeue_stale(conn, "v2") == 0
-
-
 # End to end: the benchmark's documents indexed by the task, the query encoded
-# by the worker's encoder, the nearest content found in the database.
+# by the worker's query endpoint (POST /embed), the nearest content found in
+# the database.
 
 
 @pytest.fixture
 def query_url() -> Iterator[str]:
-    server, thread = encoder.serve("127.0.0.1:0")
-    yield f"http://127.0.0.1:{server.server_address[1]}/encode"
-    server.shutdown()
-    thread.join()
+    stop = threading.Event()
+    server = embedserver.start(stop, ("127.0.0.1", 0))
+    yield f"http://127.0.0.1:{server.server_address[1]}/embed"
+    stop.set()
 
 
 def nearest(conn: psycopg.Connection, url: str, query: str) -> list[str]:
     """The paths of the contents nearest to the query, best window first."""
-    body = json.dumps({"model": models.TEXT_MODEL, "text": query}).encode()
-    with urllib.request.urlopen(urllib.request.Request(url, body), timeout=30) as r:
-        vector = np.array(json.load(r)["vector"], dtype=np.float32)
+    body = json.dumps({"model": models.TEXT_MODEL, "texts": [query]}).encode()
+    req = urllib.request.Request(url, body, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        answer = json.load(r)
+    assert answer["version"] == textemb.version()
     rows = conn.execute(
         f"""SELECT f.path, min(v.embedding <=> %s::halfvec) AS d
             FROM {textemb.TABLE} v JOIN files f ON f.sha256 = v.sha256 AND f.trash_id IS NULL
             GROUP BY f.path ORDER BY d""",
-        (textemb.literal(vector),),
+        (vectors.literal(answer["vectors"][0]),),
     ).fetchall()
     return [r[0] for r in rows]
 

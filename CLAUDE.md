@@ -14,9 +14,9 @@ An all-in-one home cloud OS installed on a box: drive, photos, documents and med
 Containers first: the whole application runs in Docker Compose, and the OS is only a wrapper around it. Daily development happens on a Mac with Docker Desktop; OS image tests in a QEMU/UTM VM; real-hardware tests on the box.
 
 - Core (accounts, storage, index, API, WebDAV, sharing, task queue): Go.
-- AI workers (text and image embeddings, OCR, speech, classification): Python, models run with ONNX Runtime, no PyTorch in the image. They read the task queue and write results to the database; they read user files from a read-only mount and never modify them. The models (Arctic Embed M v2.0, SigLIP 2, PP-OCRv5; `docs/decisions/005-modeles-locaux.md`) are baked into the worker image at build time by `worker/models/fetch.sh`, each checked against its SHA-256, and loaded by `worker/src/worker/models.py`; ONNX Runtime's telemetry is switched off (`ORT_DISABLE_TELEMETRY`). The worker also answers the core's search queries (`POST /encode`, port 8090 on the Compose network only, never published; `docs/architecture/search-ai.md`), and runs at `nice 10` so the core stays responsive.
+- AI workers (text and image embeddings, OCR, speech, classification): Python, models run with ONNX Runtime, no PyTorch in the image. They read the task queue and write results to the database; they read user files from a read-only mount and never modify them. The models (Arctic Embed M v2.0, SigLIP 2, PP-OCRv5; `docs/decisions/005-modeles-locaux.md`) are baked into the worker image at build time by `worker/models/fetch.sh`, each checked against its SHA-256, and loaded by `worker/src/worker/models.py`; ONNX Runtime's telemetry is switched off (`ORT_DISABLE_TELEMETRY`). The one call from the core to a worker is `POST /embed` (`worker/src/worker/embedserver.py`, port 8090 on the Compose network only, never published): the vector of a search, which cannot wait behind the queue. Each worker declares the embedding models and versions it serves in `embedding_models`; a new version makes the core queue every content again (`docs/architecture/embeddings.md`). The worker runs at `nice 10` so the core stays responsive.
 - Task queue: a PostgreSQL table (`SELECT … FOR UPDATE SKIP LOCKED`), no Redis.
-- Database: PostgreSQL with pgvector (HNSW index, one table per embedding model, model name and version stored with each vector). Text vectors: `text_vectors_arctic_m_v2`, `halfvec(768)`, one row per window of 512 tokens of a document's text; a new model version is re-queued by the worker at start.
+- Database: PostgreSQL with pgvector (HNSW index, one table per embedding model, model name and version stored with each vector). Text vectors: `text_vectors_arctic_m_v2`, `halfvec(768)`, one row per window of 512 tokens of a document's text, re-queued by the core when a worker declares a new version (model or cutting).
 - LLM: Ollama or llama.cpp, behind the AI provider interface.
 - AI is local by default; an external API key is opt-in per module.
 - Web front: React with Vite, in TypeScript, served as static files by the core.
@@ -79,9 +79,16 @@ docker compose run --rm core meta backfill
 # Queue the text extraction of every stored document (PDF, Office, OpenDocument, text) that has none
 docker compose run --rm core text backfill
 
-# Queue the text vectors of every stored document with text that has none (a new
-# model version is re-queued by the worker itself when it starts)
-docker compose run --rm core embed backfill
+# Queue the OCR of every stored image the OCR has not looked at, and of every scanned PDF (found without text) it has not read
+docker compose run --rm core ocr backfill
+
+# Queue the vector of every stored photo and video that has none of the workers' model version
+# (also done once by the core whenever a worker declares a new version)
+docker compose run --rm core photovec backfill
+
+# Queue the vectors of every stored document with text that has none of the workers' model version
+# (also done once by the core whenever a worker declares a new version)
+docker compose run --rm core textemb backfill
 
 # The mobile app (Expo) in the iOS simulator; the box is at localhost:<core port>
 cd mobile && npx expo run:ios
@@ -100,7 +107,7 @@ Layout: `core/` (Go module, `cmd/core`, `internal/`, SQL migrations in `core/mig
 COMPOSE_PROJECT_NAME=cloud-os-<name> CLOUDOS_DB_PORT=54321 CLOUDOS_CORE_PORT=8481 CLOUDOS_WEB_PORT=5181 make up
 ```
 
-Defaults: database `54320`, core `8480`, Vite `5180`, all bound to `127.0.0.1`. User files are stored in `CLOUDOS_DATA_DIR` (default `./.data/files`, git-ignored), mounted at `/data` in the core. `CLOUDOS_MAX_UPLOAD` (bytes) caps a resumable upload; unset, only the free space does. `CLOUDOS_MAPS_DIR` (default `./.data/maps`) holds the `.pmtiles` file of the Photos map, mounted read-only at `/maps` in the core; without one the map says how to install it (`docs/architecture/map.md`). `CLOUDOS_MODELS_DIR` names the worker's model folder (`/opt/models` in its image, `.tools/models` for `make test`). `CLOUDOS_ENCODER_URL` (core, default `http://worker:8090`) and `CLOUDOS_ENCODER_ADDR` (worker, default `0.0.0.0:8090`) join the core to the worker's query encoder; `CLOUDOS_WORKER_NICE` (default 10) lowers the worker's CPU priority. The Compose credentials (`cloudos`/`cloudos`) are for the local throwaway database only.
+Defaults: database `54320`, core `8480`, Vite `5180`, all bound to `127.0.0.1`. User files are stored in `CLOUDOS_DATA_DIR` (default `./.data/files`, git-ignored), mounted at `/data` in the core. `CLOUDOS_MAX_UPLOAD` (bytes) caps a resumable upload; unset, only the free space does. `CLOUDOS_MAPS_DIR` (default `./.data/maps`) holds the `.pmtiles` file of the Photos map, mounted read-only at `/maps` in the core; without one the map says how to install it (`docs/architecture/map.md`). `CLOUDOS_MODELS_DIR` names the worker's model folder (`/opt/models` in its image, `.tools/models` for `make test`). `WORKER_URL` (core, `http://worker:8090` in Compose) and `CLOUDOS_EMBED_ADDR` (worker, default `0.0.0.0:8090`) join the core to the worker's query endpoint; `CLOUDOS_WORKER_NICE` (default 10) lowers the worker's CPU priority. The Compose credentials (`cloudos`/`cloudos`) are for the local throwaway database only.
 
 ## Non-negotiable rules
 

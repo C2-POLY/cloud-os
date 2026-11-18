@@ -1,29 +1,32 @@
 // Package textemb searches documents by meaning, with the vectors of their
-// text (#70). The workers write them (worker/src/worker/textemb.py): a
-// document's text cut into windows of 512 tokens, one vector per window, in
-// the table of the model, keyed by content like the text. The workers also
-// queue them, when they write a text, and re-index a new model version on
-// their own. This package queues the catch-up and reads the vectors; it never
-// touches the data root.
+// text (#70, docs/architecture/search-ai.md). The workers write them
+// (worker/src/worker/textemb.py): a document's text cut into windows of 512
+// tokens, one vector per window, in the table of the model, keyed by content
+// like the text. The workers queue them when they write a text (the text
+// task, the OCR); this package queues the catch-up and every content again
+// when the workers declare a new version (Sync), and reads the vectors. The
+// workers encode the query (core/internal/embed). It never touches the data
+// root.
 package textemb
 
 import (
 	"context"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/C2-POLY/cloud-os/core/internal/encoder"
+	"github.com/C2-POLY/cloud-os/core/internal/embed"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 	"github.com/C2-POLY/cloud-os/core/internal/tasks"
 )
 
 // The task, the model and its table: worker.textemb.KIND, worker.models.TEXT_MODEL
-// and TEXT_TABLE. Another model is another table, and a migration.
+// and TEXT_TABLE (core/migrations/0021_text_vectors.sql). Another model is
+// another table, and a migration.
 const (
 	Kind  = "textemb"
 	Model = "arctic-embed-m-v2.0"
@@ -35,7 +38,8 @@ const (
 const (
 	DefaultLimit = 20
 	MaxLimit     = 100
-	// MaxQueryChars is the longest query, as worker.encoder.MAX_TEXT.
+	// MaxQueryChars is the longest query the workers encode
+	// (worker.embedserver.MAX_CHARS); a longer one is cut.
 	MaxQueryChars = 1000
 	// candidates is how many windows near the query are read before keeping
 	// the best one per content.
@@ -44,24 +48,22 @@ const (
 	excerptChars = 240
 )
 
-// ErrInvalid is a vector that is not the model's.
-var ErrInvalid = errors.New("not a vector of the text model")
-
 // Payload is what a textemb task carries: the content whose text to encode.
 type Payload struct {
 	SHA256 string `json:"sha256"`
 }
 
 // Backfill queues, at backfill priority, the vectors of every live content
-// with text that has none: its task was lost or failed. The vectors of an
-// older model version are queued by the workers when they start, since only
-// they know the current one.
+// with text and without vectors of the version the workers declared: texts
+// written before the workers made vectors, a new model version, or a task
+// that was lost or failed.
 func Backfill(ctx context.Context, q *tasks.Queue) (int, error) {
 	rows, err := q.Pool.Query(ctx,
 		`SELECT d.sha256 FROM document_text d
 		 WHERE d.has_text
 		   AND EXISTS (SELECT 1 FROM files f WHERE f.kind = 'file' AND f.sha256 = d.sha256 AND f.trash_id IS NULL)
-		   AND NOT EXISTS (SELECT 1 FROM `+Table+` v WHERE v.sha256 = d.sha256)`)
+		   AND NOT EXISTS (SELECT 1 FROM `+Table+` v WHERE v.sha256 = d.sha256
+		       AND v.version = (SELECT version FROM embedding_models WHERE name = $1))`, Model)
 	if err != nil {
 		return 0, err
 	}
@@ -83,6 +85,21 @@ func Backfill(ctx context.Context, q *tasks.Queue) (int, error) {
 	return n, nil
 }
 
+// Sync runs Backfill once for each version of the model the workers declare:
+// at the first start, and whenever the model or the cutting changes. The core
+// calls it on its periodic tick; it costs one query when there is nothing to do.
+func Sync(ctx context.Context, q *tasks.Queue) (int, error) {
+	version, due, err := embed.Due(ctx, q.Pool, Model)
+	if err != nil || !due {
+		return 0, err
+	}
+	n, err := Backfill(ctx, q)
+	if err != nil {
+		return n, err
+	}
+	return n, embed.MarkRequeued(ctx, q.Pool, Model, version)
+}
+
 // Hit is a document of the account near the query: its best window, in
 // characters of its text, and the start of that window.
 type Hit struct {
@@ -93,24 +110,44 @@ type Hit struct {
 	Excerpt string
 }
 
-// Search returns the owner's live documents nearest to the query vector,
-// best first, at most limit (DefaultLimit, MaxLimit). The owner is the
-// caller's session, never a parameter: the vectors are shared by contents,
-// and only the owner's live files make them visible.
-func Search(ctx context.Context, pool *pgxpool.Pool, owner string, v encoder.Vector, limit int) ([]Hit, error) {
+// Searcher finds documents by the meaning of a sentence.
+type Searcher struct {
+	Pool  *pgxpool.Pool
+	Embed *embed.Client
+}
+
+// Search returns the owner's live documents nearest in meaning to q, best
+// first, at most limit (DefaultLimit, MaxLimit). The workers encode q (an
+// embed.ErrUnavailable error when they cannot); only vectors of the same
+// model version are compared, so a document waits for its new vectors after
+// a model change. The owner is the caller's session, never a parameter: the
+// vectors are shared by contents, and only the owner's live files make them
+// visible. An empty q finds nothing.
+func (s *Searcher) Search(ctx context.Context, owner, q string, limit int) ([]Hit, error) {
 	owner, err := storage.CleanOwner(owner)
 	if err != nil {
 		return nil, err
 	}
-	if v.Model != Model || len(v.Values) != Dims {
-		return nil, fmt.Errorf("%w: %s, %d values", ErrInvalid, v.Model, len(v.Values))
+	q = strings.Join(strings.Fields(q), " ")
+	if q == "" {
+		return []Hit{}, nil
+	}
+	if utf8.RuneCountInString(q) > MaxQueryChars {
+		q = string([]rune(q)[:MaxQueryChars])
 	}
 	if limit <= 0 {
 		limit = DefaultLimit
 	}
 	limit = min(limit, MaxLimit)
+	v, err := s.Embed.Query(ctx, Model, q)
+	if err != nil {
+		return nil, err
+	}
+	if len(v.Values) != Dims {
+		return nil, fmt.Errorf("%w: %d values, want %d", embed.ErrUnavailable, len(v.Values), Dims)
+	}
 
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +165,8 @@ func Search(ctx context.Context, pool *pgxpool.Pool, owner string, v encoder.Vec
 		WITH near AS MATERIALIZED (
 		    SELECT v.sha256, v.start_char, v.end_char, v.embedding <=> $1::halfvec AS distance
 		    FROM `+Table+` v
-		    WHERE EXISTS (SELECT 1 FROM files f WHERE f.sha256 = v.sha256 AND f.owner = $2
+		    WHERE v.version = $6
+		      AND EXISTS (SELECT 1 FROM files f WHERE f.sha256 = v.sha256 AND f.owner = $2
 		                  AND f.kind = 'file' AND f.trash_id IS NULL)
 		    ORDER BY v.embedding <=> $1::halfvec
 		    LIMIT $4
@@ -144,7 +182,7 @@ func Search(ctx context.Context, pool *pgxpool.Pool, owner string, v encoder.Vec
 		JOIN files f ON f.sha256 = b.sha256 AND f.owner = $2 AND f.kind = 'file' AND f.trash_id IS NULL
 		JOIN document_text d ON d.sha256 = b.sha256
 		ORDER BY b.distance, f.modified_at DESC, f.path
-		LIMIT $3`, v.Literal(), owner, limit, candidates, excerptChars)
+		LIMIT $3`, v.Literal(), owner, limit, candidates, excerptChars, v.Version)
 	if err != nil {
 		return nil, err
 	}
