@@ -12,8 +12,9 @@ export default function FilesLayout() {
       screenOptions={{
         headerLargeTitle: true,
         headerTintColor: t.accent,
+        // No headerStyle background: on iOS 26 it hides the large title.
         headerTitleStyle: { color: t.fg },
-        headerStyle: { backgroundColor: t.bg },
+        headerLargeTitleStyle: { color: t.fg },
         contentStyle: { backgroundColor: t.bg },
       }}
     >
