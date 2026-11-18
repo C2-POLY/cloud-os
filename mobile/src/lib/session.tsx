@@ -6,6 +6,15 @@ import { ApiError, client, signIn as callSignIn, type Client, type Connection } 
 
 const boxKey = 'cloudos.box' // the box's address, not a secret
 const tokenKey = 'cloudos.token' // the session token, in the Keychain
+// Readable after the first unlock, so the background backup works with the phone locked.
+const keychain = { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK }
+
+/** The box and this phone's token, as stored; null when signed out. For the background backup. */
+export async function storedConnection(): Promise<Connection | null> {
+  const box = (await AsyncStorage.getItem(boxKey)) ?? ''
+  const token = await SecureStore.getItemAsync(tokenKey, keychain)
+  return box && token ? { box, token } : null
+}
 
 type Session =
   | { state: 'loading' }
@@ -28,7 +37,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     let current = true
     ;(async () => {
       const box = (await AsyncStorage.getItem(boxKey)) ?? ''
-      const token = await SecureStore.getItemAsync(tokenKey)
+      const token = await SecureStore.getItemAsync(tokenKey, keychain)
       if (!box || !token) return current && setSession({ state: 'signed-out', box })
       const connection = { box, token }
       const api = client(connection)
@@ -37,7 +46,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (current) setSession({ state: 'signed-in', connection, account, api })
       } catch (err) {
         // A rejected token signs out; an unreachable box keeps it for later.
-        if (err instanceof ApiError && err.status === 401) await SecureStore.deleteItemAsync(tokenKey)
+        if (err instanceof ApiError && err.status === 401) await SecureStore.deleteItemAsync(tokenKey, keychain)
         if (current) setSession({ state: 'signed-out', box })
       }
     })()
@@ -49,7 +58,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const signIn = useCallback(async (box: string, name: string, password: string) => {
     const { account, ...connection } = await callSignIn(box, name, password)
     await AsyncStorage.setItem(boxKey, box)
-    await SecureStore.setItemAsync(tokenKey, connection.token)
+    await SecureStore.setItemAsync(tokenKey, connection.token, keychain)
     setSession({ state: 'signed-in', connection, account, api: client(connection) })
   }, [])
 
@@ -58,7 +67,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       await session.api.signOut().catch(() => {}) // the box may be away; forget the token anyway
       setSession({ state: 'signed-out', box: session.connection.box })
     }
-    await SecureStore.deleteItemAsync(tokenKey)
+    await SecureStore.deleteItemAsync(tokenKey, keychain)
   }, [session])
 
   const value = useMemo(() => ({ session, signIn, signOut }), [session, signIn, signOut])

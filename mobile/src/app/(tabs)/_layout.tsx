@@ -33,6 +33,14 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => <SymbolView name={{ ios: 'photo.on.rectangle', android: 'photo_library' }} tintColor={color} size={size} />,
         }}
       />
+      <Tabs.Screen
+        name="backup"
+        options={{
+          title: 'Sauvegarde',
+          tabBarAccessibilityLabel: 'Sauvegarde',
+          tabBarIcon: ({ color, size }) => <SymbolView name={{ ios: 'arrow.triangle.2.circlepath.icloud', android: 'backup' }} tintColor={color} size={size} />,
+        }}
+      />
     </Tabs>
   )
 }
