@@ -15,6 +15,8 @@ import { Window } from './Window.tsx'
 import { useGeometries, useWindows, type Win } from './windows.ts'
 import { AlbumPage, AlbumsPage } from './Albums.tsx'
 import { albumFromURL, albumsPath, photosPath } from './albums.ts'
+import { mapPath } from './map.ts'
+import { MapView } from './MapView.tsx'
 
 /** The signed-in box: a living wallpaper, a menu bar, the app windows and the dock. */
 export function Desktop({ me, onSignedOut }: { me: Account; onSignedOut: () => void }) {
@@ -103,7 +105,7 @@ function AppContent({ win, me }: { win: Win; me: Account }) {
       return (
         <>
           <PhotosViews path={win.path} />
-          {album !== null ? <AlbumPage id={album} /> : win.path === albumsPath ? <AlbumsPage /> : <Timeline photos />}
+          {album !== null ? <AlbumPage id={album} /> : win.path === albumsPath ? <AlbumsPage /> : win.path === mapPath ? <MapView /> : <Timeline photos />}
         </>
       )
     }
@@ -121,9 +123,10 @@ function AppContent({ win, me }: { win: Win; me: Account }) {
   }
 }
 
-/** Photos' two views: every photo by day, or the albums. */
+/** Photos' three views: every photo by day, the albums, the map. */
 function PhotosViews({ path }: { path: string }) {
-  const onAlbums = path !== photosPath
+  const onMap = path === mapPath
+  const onAlbums = path !== photosPath && !onMap
   const link = (to: string, label: string, active: boolean) => (
     <a
       href={to}
@@ -139,8 +142,9 @@ function PhotosViews({ path }: { path: string }) {
   )
   return (
     <nav className="files-views" aria-label="Vue de Photos">
-      {link(photosPath, 'Photos', !onAlbums)}
+      {link(photosPath, 'Photos', !onAlbums && !onMap)}
       {link(albumsPath, 'Albums', onAlbums)}
+      {link(mapPath, 'Carte', onMap)}
     </nav>
   )
 }

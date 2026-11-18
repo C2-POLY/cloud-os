@@ -205,7 +205,10 @@ func healthHandler(version string, store HealthStore) http.HandlerFunc {
 	}
 }
 
-// spa serves files from dir and falls back to index.html for client-side routes.
+// spa serves files from dir and answers index.html for client-side routes.
+// Under /assets/ and /map/ (the build's files, the map's fonts and
+// pictograms) a missing file is a 404: index.html there would be read as a
+// script, a font or an image.
 func spa(dir string) http.Handler {
 	files := http.FileServer(http.Dir(dir))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -214,6 +217,10 @@ func spa(dir string) http.Handler {
 		}
 		path := filepath.Join(dir, filepath.Clean("/"+r.URL.Path))
 		if info, err := os.Stat(path); err != nil || info.IsDir() && r.URL.Path != "/" {
+			if strings.HasPrefix(r.URL.Path, "/assets/") || strings.HasPrefix(r.URL.Path, "/map/") {
+				http.NotFound(w, r)
+				return
+			}
 			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
 			return
 		}
