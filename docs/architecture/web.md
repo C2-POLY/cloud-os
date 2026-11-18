@@ -14,6 +14,7 @@ Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (
 | `/chronologie` | Fichiers, vue Chronologie | Tout compte |
 | `/photos` | Photos | Tout compte |
 | `/photos/albums`, `/photos/albums/{id}` | Photos › Albums, un album ([albums.md](albums.md)) | Tout compte |
+| `/photos/carte` | Photos › Carte ([map.md](map.md)) | Tout compte |
 | `/partages` | Partages : ses liens, avec Révoquer | Tout compte |
 | `/corbeille` | Corbeille | Tout compte |
 | `/s/<jeton>` | Hors du bureau : la page de l'invité d'un lien de partage | Sans compte |

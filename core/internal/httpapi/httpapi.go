@@ -45,12 +45,14 @@ type Health struct {
 
 // Config is what the core's routes need.
 type Config struct {
-	Version   string
-	Health    HealthStore
-	Auth      *auth.Service
-	Files     *storage.Store
-	Shares    *share.Service
-	Albums    *albums.Service
+	Version string
+	Health  HealthStore
+	Auth    *auth.Service
+	Files   *storage.Store
+	Shares  *share.Service
+	Albums  *albums.Service
+	// MapsDir holds the .pmtiles file of the Photos map; "" when none.
+	MapsDir   string
 	Activity  *activity.Log // nil: no journal (tests that do not need it)
 	MaxUpload int64         // bytes; 0 means only the free space limits an upload
 	StaticDir string        // the built web front, served at / when not empty
@@ -80,6 +82,7 @@ func routes(c Config) []route {
 	t := &trashAPI{store: c.Files}
 	s := &sharesAPI{shares: c.Shares, activity: c.Activity}
 	d := &desktopAPI{files: c.Files, activity: c.Activity}
+	m := &mapAPI{dir: c.MapsDir, files: c.Files}
 	al := &albumsAPI{albums: c.Albums}
 	return []route{
 		{"GET /api/health", public, healthHandler(c.Version, c.Health)},
@@ -118,6 +121,9 @@ func routes(c Config) []route {
 		{"POST /api/trash/{id}/restore", member, t.restore},
 		{"POST /api/trash/{id}/purge", member, t.purge},
 		{"POST /api/trash/empty", member, t.empty},
+		{"GET /api/map", member, m.info},
+		{"GET /api/map/tiles.pmtiles", member, m.tileFile},
+		{"GET /api/map/points", member, m.points},
 		{"GET /api/albums", member, al.list},
 		{"POST /api/albums", member, al.create},
 		{"GET /api/albums/{id}", member, al.get},
@@ -199,7 +205,10 @@ func healthHandler(version string, store HealthStore) http.HandlerFunc {
 	}
 }
 
-// spa serves files from dir and falls back to index.html for client-side routes.
+// spa serves files from dir and answers index.html for client-side routes.
+// Under /assets/ and /map/ (the build's files, the map's fonts and
+// pictograms) a missing file is a 404: index.html there would be read as a
+// script, a font or an image.
 func spa(dir string) http.Handler {
 	files := http.FileServer(http.Dir(dir))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -208,6 +217,10 @@ func spa(dir string) http.Handler {
 		}
 		path := filepath.Join(dir, filepath.Clean("/"+r.URL.Path))
 		if info, err := os.Stat(path); err != nil || info.IsDir() && r.URL.Path != "/" {
+			if strings.HasPrefix(r.URL.Path, "/assets/") || strings.HasPrefix(r.URL.Path, "/map/") {
+				http.NotFound(w, r)
+				return
+			}
 			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
 			return
 		}

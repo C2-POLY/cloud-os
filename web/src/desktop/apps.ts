@@ -33,7 +33,7 @@ export function appInfo(id: AppId): AppInfo {
 /** The app an address belongs to; null for the desktop itself and unknown addresses. */
 export function appOf(path: string): AppId | null {
   if (folderFromURL(path) !== null || path === timelinePath) return 'files'
-  if (path === '/photos' || path === '/photos/albums' || /^\/photos\/albums\/\d+\/?$/.test(path)) return 'photos'
+  if (path === '/photos' || path === '/photos/albums' || path === '/photos/carte' || /^\/photos\/albums\/\d+\/?$/.test(path)) return 'photos'
   if (path === '/partages') return 'shares'
   if (path === '/corbeille') return 'trash'
   if (path === '/comptes') return 'accounts'

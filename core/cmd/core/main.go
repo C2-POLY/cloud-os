@@ -197,6 +197,7 @@ func serve(ctx context.Context, c core) error {
 			Auth:      auth.NewService(c.pool),
 			Files:     c.files,
 			Shares:    shares,
+			MapsDir:   os.Getenv("MAPS_DIR"),
 			Albums:    &albums.Service{Pool: c.pool, Files: c.files},
 			Activity:  &activity.Log{Pool: c.pool},
 			MaxUpload: maxUpload(),
