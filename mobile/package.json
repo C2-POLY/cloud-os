@@ -3,17 +3,22 @@
   "version": "0.1.0",
   "main": "expo-router/entry",
   "dependencies": {
+    "@noble/hashes": "^2.4.0",
     "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~58.0.26",
+    "expo-background-task": "~58.0.13",
     "expo-constants": "~58.0.16",
+    "expo-device": "~58.0.5",
     "expo-file-system": "~58.0.14",
     "expo-image": "~58.0.18",
     "expo-linking": "~58.0.17",
+    "expo-media-library": "~58.0.14",
     "expo-router": "~58.0.32",
     "expo-secure-store": "~58.0.3",
     "expo-sharing": "~58.0.23",
     "expo-status-bar": "~58.0.5",
     "expo-symbols": "~58.0.5",
+    "expo-task-manager": "~58.0.14",
     "react": "19.3.0",
     "react-native": "0.88.1",
     "react-native-safe-area-context": "~5.11.1",
@@ -22,6 +27,7 @@
   "devDependencies": {
     "@testing-library/react-native": "^14.1.0",
     "@types/jest": "^30.0.0",
+    "@types/node": "~26.6.6",
     "@types/react": "~19.3.0",
     "jest": "^30.5.2",
     "jest-expo": "~58.0.0",
@@ -45,6 +51,9 @@
       "/ios/",
       "/android/"
     ],
-    "watchman": false
+    "watchman": false,
+    "transformIgnorePatterns": [
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@noble/.*)"
+    ]
   }
 }

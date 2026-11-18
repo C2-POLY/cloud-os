@@ -34,7 +34,20 @@
       "expo-router",
       "expo-secure-store",
       "expo-sharing",
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-background-task",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Cloud OS lit tes photos et vidéos pour les sauvegarder sur la box de la maison. Il ne les modifie ni ne les supprime jamais.",
+          "savePhotosPermission": false,
+          "isAccessMediaLocationEnabled": true,
+          "granularPermissions": [
+            "photo",
+            "video"
+          ]
+        }
+      ]
     ],
     "scheme": "cloudos",
     "experiments": {
