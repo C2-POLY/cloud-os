@@ -5,6 +5,10 @@ import { downloadURL, formatDate, formatSize, parentOf, searchFiles, thumbURL, t
 import { enter } from '../motion/animate.ts'
 import { driveURL, navigate } from '../router.ts'
 import { folderOf, groupOf, groups } from './search.ts'
+import type { PDFDocumentProxy } from 'pdfjs-dist'
+import { DocViewer } from '../preview/DocViewer.tsx'
+import { PdfPage } from '../preview/PdfPage.tsx'
+import { openPdf, previewKind, textHead } from '../preview/preview.ts'
 
 const debounceMs = 150
 
@@ -139,12 +143,28 @@ function KindIcon({ entry }: { entry: Entry }) {
 
 function Preview({ entry, onOpen }: { entry: Entry; onOpen: () => void }) {
   const thumb = thumbURL(entry)
+  const kind = previewKind(entry)
   const [broken, setBroken] = useState<string | null>(null)
+  const [viewing, setViewing] = useState(false)
+  const visual =
+    kind === 'pdf' ? (
+      <PdfThumb entry={entry} />
+    ) : kind === 'text' ? (
+      <TextHead entry={entry} />
+    ) : thumb && broken !== thumb ? (
+      <img src={thumb} alt="" onError={() => setBroken(thumb)} />
+    ) : (
+      <KindIcon entry={entry} />
+    )
   return (
     <aside className="palette-preview" aria-label={`Aperçu de ${entry.name}`}>
-      <div className="palette-visual">
-        {thumb && broken !== thumb ? <img src={thumb} alt="" onError={() => setBroken(thumb)} /> : <KindIcon entry={entry} />}
-      </div>
+      {kind ? (
+        <button type="button" className="palette-visual" onClick={() => setViewing(true)} aria-label={`Ouvrir l'aperçu de ${entry.name}`} title="Ouvrir l'aperçu">
+          {visual}
+        </button>
+      ) : (
+        <div className="palette-visual">{visual}</div>
+      )}
       <h3>{entry.name}</h3>
       <dl>
         <dt>Dossier</dt>
@@ -168,6 +188,45 @@ function Preview({ entry, onOpen }: { entry: Entry; onOpen: () => void }) {
           </a>
         )}
       </div>
+      {viewing && <DocViewer entry={entry} onClose={() => setViewing(false)} />}
     </aside>
   )
+}
+
+/** The first page of a PDF, small. */
+function PdfThumb({ entry }: { entry: Entry }) {
+  const [doc, setDoc] = useState<PDFDocumentProxy | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let current = true
+    let opened: PDFDocumentProxy | null = null
+    openPdf(entry.path)
+      .then((d) => {
+        opened = d
+        if (current) setDoc(d)
+        else void d.loadingTask.destroy()
+      })
+      .catch(() => current && setFailed(true))
+    return () => {
+      current = false
+      void opened?.loadingTask.destroy()
+    }
+  }, [entry.path])
+  if (failed) return <KindIcon entry={entry} />
+  return doc ? <PdfPage doc={doc} page={1} width={220} label={`Première page de ${entry.name}`} /> : <KindIcon entry={entry} />
+}
+
+/** The first lines of a text, as plain text. */
+function TextHead({ entry }: { entry: Entry }) {
+  const [head, setHead] = useState<string | null>(null)
+  useEffect(() => {
+    let current = true
+    textHead(entry.path, 2048)
+      .then((t) => current && setHead(t.text))
+      .catch(() => current && setHead(null))
+    return () => {
+      current = false
+    }
+  }, [entry.path])
+  return head === null ? <KindIcon entry={entry} /> : <pre className="palette-text">{head}</pre>
 }

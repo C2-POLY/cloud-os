@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, Download, File, FileImage, FileText, FileVideo, Folder, FolderInput, History, Music, Pencil, Share2, Trash2 } from 'lucide-react'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { animatedRows, enter } from '../motion/animate.ts'
+import { previewKind } from '../preview/preview.ts'
 import { driveURL, navigate } from '../router.ts'
 import { downloadURL, formatDate, formatSize, sortEntries, thumbURL, type Entry, type SortKey } from './files.ts'
 
@@ -30,6 +31,7 @@ export function FileList({
   onTrash,
   onVersions,
   onShare,
+  onPreview,
 }: {
   /** The folder the entries belong to: the rows come in when it changes. */
   folder?: string
@@ -39,6 +41,8 @@ export function FileList({
   onTrash: (entry: Entry) => void
   onVersions: (entry: Entry) => void
   onShare: (entry: Entry) => void
+  /** Opens a PDF, an image or a text in the viewer; without it, names are plain text. */
+  onPreview?: (entry: Entry) => void
 }) {
   const [key, setKey] = useState<SortKey>('name')
   const [ascending, setAscending] = useState(true)
@@ -106,6 +110,10 @@ export function FileList({
                   >
                     {e.name}
                   </a>
+                ) : onPreview && previewKind(e) ? (
+                  <button type="button" className="link name-link" onClick={() => onPreview(e)} title="Aperçu">
+                    {e.name}
+                  </button>
                 ) : (
                   <span>{e.name}</span>
                 )}
