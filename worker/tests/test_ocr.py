@@ -131,6 +131,15 @@ def test_a_scanned_or_photographed_invoice_is_read(name: str) -> None:
 
 
 @needs_models
+def test_an_invoice_in_english_is_read() -> None:
+    found = ocr.read_image(fixture("invoice-en-photo.jpg"))
+    assert found.is_document and found.has_text
+    assert same_text(found.text, fixture("invoice-en.txt").decode()) > 0.99
+    for words in ("Invoice No. NW-2024-00417", "VAT (20%): £89.80", "Total due: £538.80"):
+        assert words in found.text, words
+
+
+@needs_models
 def test_holiday_photos_are_not_documents() -> None:
     photos = sorted((BENCH / "photos").glob("*.jpg"))
     assert len(photos) == 17

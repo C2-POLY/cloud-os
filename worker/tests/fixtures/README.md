@@ -55,3 +55,7 @@ licence. French with accents on purpose (é, è, ê, ô, É, €).
 
 openpyxl, python-pptx and odfpy were only used once, in a throwaway
 environment, to make these files: they are not dependencies of the worker.
+- `invoice-en-photo.jpg` (992×1403, 53 KB): an invented English invoice,
+  `invoice-en.txt` (no real company, person or address), drawn and
+  photographed the same way (`as_photo`, seeded by "invoice-en"). Free to
+  use, under the project's licence.

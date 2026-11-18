@@ -1,0 +1,18 @@
+NORTHWIND APPLIANCES LTD
+Invoice No. NW-2024-00417
+Invoice date: 12 March 2024
+
+Bill to: Alex Morgan, 27 Willow Lane, Bristol BS1 4QA
+Order reference: WEB-88213
+
+Item: Washing machine, 8 kg, model AquaLine 800
+Quantity: 1
+Unit price: £399.00
+Delivery and installation: £35.00
+Removal of the old appliance: £15.00
+Subtotal: £449.00
+VAT (20%): £89.80
+Total due: £538.80
+
+Payment received by card on 12 March 2024. Thank you for your order.
+Warranty: two years, parts and labour, from the date of delivery.
