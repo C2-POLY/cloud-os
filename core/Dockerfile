@@ -5,6 +5,8 @@ WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
+# The API types shared with the mobile app (web imports ../shared).
+COPY shared/ /shared/
 RUN npm run build
 
 FROM golang:1.26-alpine AS core

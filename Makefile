@@ -7,7 +7,7 @@ DB_PORT ?= $(or $(CLOUDOS_DB_PORT),54320)
 TEST_DATABASE_URL ?= postgres://cloudos:cloudos@127.0.0.1:$(DB_PORT)/cloudos?sslmode=disable
 EXTERNAL_DB ?=
 
-.PHONY: up down logs deps test test-db test-core test-worker test-web lint fmt
+.PHONY: up down logs deps test test-db test-core test-worker test-web test-mobile lint fmt
 
 ## up: build and start the stack, wait until it is healthy
 up:
@@ -22,14 +22,15 @@ down:
 logs:
 	docker compose logs --follow
 
-## deps: install Go, Python and web dependencies
+## deps: install Go, Python, web and mobile dependencies
 deps:
 	cd core && go mod download
 	cd worker && uv sync --frozen
 	cd web && npm ci
+	cd mobile && npm ci
 
-## test: every test suite (Go, Python, web)
-test: test-core test-worker test-web
+## test: every test suite (Go, Python, web, mobile)
+test: test-core test-worker test-web test-mobile
 
 test-db:
 ifeq ($(EXTERNAL_DB),)
@@ -45,12 +46,16 @@ test-worker: test-db
 test-web:
 	cd web && npm test
 
+test-mobile:
+	cd mobile && npm test
+
 ## lint: formatting and static checks, no warning allowed
 lint:
 	@unformatted="$$(gofmt -l core)"; if [ -n "$$unformatted" ]; then echo "gofmt needed:"; echo "$$unformatted"; exit 1; fi
 	cd core && go vet ./...
 	cd worker && uv run --frozen ruff check . && uv run --frozen ruff format --check .
 	cd web && npm run typecheck && npm run lint
+	cd mobile && npm run typecheck && npm run lint
 
 ## fmt: rewrite Go and Python files in place
 fmt:

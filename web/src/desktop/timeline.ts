@@ -1,26 +1,7 @@
 import { api } from '../api.ts'
-import type { Entry } from '../drive/files.ts'
+import type { Entry, MediaMeta, MonthCount, TimelineCursor, TimelineEntry, TimelinePage } from '../../../shared/api-types.ts'
 
-/** A file on the timeline, as the core's `httpapi.TimelineEntry` writes it. */
-export interface TimelineEntry extends Entry {
-  at: string // wall-clock date, "2024-07-14T18:03:22", no zone
-  taken: boolean // at is when the photo was taken
-}
-
-export interface TimelineCursor {
-  at: string
-  path: string
-}
-
-export interface TimelinePage {
-  items: TimelineEntry[]
-  next: TimelineCursor | null
-}
-
-export interface MonthCount {
-  month: string // "2026-11"
-  count: number
-}
+export type { MediaMeta, MonthCount, TimelineCursor, TimelineEntry, TimelinePage }
 
 const zone = () => encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
 
@@ -110,18 +91,6 @@ export function dayTitle(day: string): string {
 }
 
 /** A photo's metadata, as GET /api/files/meta returns it (docs/architecture/metadata.md). */
-export interface MediaMeta {
-  taken_at: string | null
-  taken_offset: string | null
-  latitude: number | null
-  longitude: number | null
-  make: string | null
-  model: string | null
-  lens: string | null
-  width: number | null
-  height: number | null
-}
-
 const when = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 
 /** A wall-clock date "2024-07-14T18:03:22" written out, without any time zone conversion. */

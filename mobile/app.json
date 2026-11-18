@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "Cloud OS",
+    "slug": "cloud-os",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.c2poly.cloudos",
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        },
+        "NSLocalNetworkUsageDescription": "Cloud OS se connecte à la box sur le réseau de la maison."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.c2poly.cloudos"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-image",
+      "expo-router",
+      "expo-secure-store",
+      "expo-sharing",
+      "expo-status-bar"
+    ],
+    "scheme": "cloudos",
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
