@@ -1,0 +1,196 @@
+# French queries of the model benchmark (worker/bench, #66) and the answers
+# expected: a document of docs/ or a photo of photos/, named without extension.
+# A query may accept several answers; the first one found counts.
+# Phrased the way a member of the household would type them in Demander.
+
+[[text]]
+q = "contrat de l'appart"
+expect = ["bail-appartement"]
+
+[[text]]
+q = "bail de location de notre logement"
+expect = ["bail-appartement"]
+
+[[text]]
+q = "montant du dépôt de garantie"
+expect = ["bail-appartement"]
+
+[[text]]
+q = "quittance de loyer d'avril"
+expect = ["quittance-loyer-avril"]
+
+[[text]]
+q = "état des lieux d'entrée"
+expect = ["etat-des-lieux-entree"]
+
+[[text]]
+q = "assurance habitation"
+expect = ["assurance-habitation"]
+
+[[text]]
+q = "facture d'électricité"
+expect = ["facture-electricite-mars"]
+
+[[text]]
+q = "facture de gaz de l'hiver"
+expect = ["facture-gaz-fevrier"]
+
+[[text]]
+q = "abonnement internet fibre"
+expect = ["facture-internet"]
+
+[[text]]
+q = "lettre pour résilier la box"
+expect = ["resiliation-internet"]
+
+[[text]]
+q = "combien d'impôts on a payé"
+expect = ["avis-imposition-2025"]
+
+[[text]]
+q = "revenu fiscal de référence"
+expect = ["avis-imposition-2025"]
+
+[[text]]
+q = "attestation de la CAF"
+expect = ["attestation-caf"]
+
+[[text]]
+q = "ordonnance pour l'angine"
+expect = ["ordonnance-antibiotiques"]
+
+[[text]]
+q = "séances de kiné"
+expect = ["ordonnance-kine"]
+
+[[text]]
+q = "radio du genou"
+expect = ["compte-rendu-radio"]
+
+[[text]]
+q = "vaccins du petit"
+expect = ["carnet-vaccination"]
+
+[[text]]
+q = "relevé de compte de janvier"
+expect = ["releve-bancaire-janvier"]
+
+[[text]]
+q = "intérêts du livret A"
+expect = ["releve-livret-a"]
+
+[[text]]
+q = "fiche de paie"
+expect = ["bulletin-salaire-mars"]
+
+[[text]]
+q = "période d'essai du CDI"
+expect = ["contrat-travail"]
+
+[[text]]
+q = "carte grise de la voiture"
+expect = ["certificat-immatriculation"]
+
+[[text]]
+q = "assurance de la voiture"
+expect = ["contrat-assurance-auto"]
+
+[[text]]
+q = "vidange de la Clio"
+expect = ["facture-garage"]
+
+[[text]]
+q = "garantie du lave-linge"
+expect = ["facture-lave-linge"]
+
+[[text]]
+q = "devis pour changer la chaudière"
+expect = ["devis-plombier"]
+
+[[text]]
+q = "certificat de scolarité de Léo"
+expect = ["certificat-scolarite"]
+
+[[text]]
+q = "carte de mutuelle"
+expect = ["attestation-mutuelle"]
+
+[[text]]
+q = "billets de train pour Marseille"
+expect = ["billet-train"]
+
+[[text]]
+q = "location de vacances à Biarritz"
+expect = ["location-vacances"]
+
+[[text]]
+q = "recette de la tarte aux pommes"
+expect = ["recette-tarte-pommes"]
+
+[[text]]
+q = "vaccin du chien"
+expect = ["facture-veterinaire"]
+
+[[text]]
+q = "rendez-vous avec la maîtresse"
+expect = ["compte-rendu-reunion-parents"]
+
+[[image]]
+q = "chien à la plage"
+expect = ["chien-plage-1", "chien-plage-2", "chien-plage-3"]
+
+[[image]]
+q = "un chien qui joue dans la neige"
+expect = ["chien-neige"]
+
+[[image]]
+q = "des chiens en laisse en ville"
+expect = ["chien-parc"]
+
+[[image]]
+q = "un chat qui dort"
+expect = ["chat"]
+
+[[image]]
+q = "gâteau d'anniversaire"
+expect = ["gateau"]
+
+[[image]]
+q = "sommet enneigé"
+expect = ["montagne"]
+
+[[image]]
+q = "coucher de soleil sur la mer"
+expect = ["coucher-soleil"]
+
+[[image]]
+q = "parasols sur la plage"
+expect = ["plage"]
+
+[[image]]
+q = "une plage vue du ciel"
+expect = ["plage-2"]
+
+[[image]]
+q = "un vélo garé dans la rue"
+expect = ["velo"]
+
+[[image]]
+q = "voiture de sport rouge"
+expect = ["voiture-rouge"]
+
+[[image]]
+q = "forêt en automne"
+expect = ["foret"]
+
+[[image]]
+q = "une pizza"
+expect = ["pizza"]
+
+[[image]]
+q = "bateaux dans le port"
+expect = ["port"]
+
+[[image]]
+q = "la tour Eiffel"
+expect = ["tour-eiffel"]

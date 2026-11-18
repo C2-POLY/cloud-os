@@ -7,7 +7,7 @@ DB_PORT ?= $(or $(CLOUDOS_DB_PORT),54320)
 TEST_DATABASE_URL ?= postgres://cloudos:cloudos@127.0.0.1:$(DB_PORT)/cloudos?sslmode=disable
 EXTERNAL_DB ?=
 
-.PHONY: up down logs deps ffmpeg test test-db test-core test-worker test-web test-mobile lint fmt
+.PHONY: up down logs deps ffmpeg models test test-db test-core test-worker test-web test-mobile lint fmt
 
 ## up: build and start the stack, wait until it is healthy
 up:
@@ -38,6 +38,16 @@ ffmpeg: .tools/ffmpeg/bin/ffprobe
 .tools/ffmpeg/bin/ffprobe:
 	worker/ffmpeg/build.sh .tools/ffmpeg
 
+## models: fetch the worker's local AI models into .tools/models (about 740 MB),
+## checked against their SHA-256, for the model tests (the same files as
+## worker/Dockerfile; skipped when present)
+models: .tools/models/SHA256SUMS
+
+# fetch.sh writes SHA256SUMS last. After changing the script, run it again
+# (`worker/models/fetch.sh .tools/models`): it replaces what changed.
+.tools/models/SHA256SUMS:
+	worker/models/fetch.sh .tools/models
+
 ## test: every test suite (Go, Python, web, mobile)
 test: test-core test-worker test-web test-mobile
 
@@ -50,7 +60,7 @@ test-core: test-db
 	cd core && CLOUDOS_TEST_DATABASE_URL='$(TEST_DATABASE_URL)' go test -count=1 ./...
 
 test-worker: test-db
-	cd worker && CLOUDOS_TEST_DATABASE_URL='$(TEST_DATABASE_URL)' CLOUDOS_FFMPEG_DIR='$(CURDIR)/.tools/ffmpeg/bin' uv run --frozen pytest
+	cd worker && CLOUDOS_TEST_DATABASE_URL='$(TEST_DATABASE_URL)' CLOUDOS_FFMPEG_DIR='$(CURDIR)/.tools/ffmpeg/bin' CLOUDOS_MODELS_DIR='$(CURDIR)/.tools/models' uv run --frozen pytest
 
 test-web:
 	cd web && npm test

@@ -53,8 +53,16 @@ jobs:
           path: .tools/ffmpeg
           key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('worker/ffmpeg/build.sh') }}
       - run: make ffmpeg
+      # The worker's local AI models for the model tests, fetched by the same
+      # script as worker/Dockerfile and cached until that script changes.
+      - uses: actions/cache@v4
+        with:
+          path: .tools/models
+          key: models-${{ hashFiles('worker/models/fetch.sh', 'worker/models/NOTICE.md') }}
+      - run: make models
       - run: make deps
       - run: make lint
       - run: make test
         env:
           CLOUDOS_REQUIRE_FFMPEG: "1"
+          CLOUDOS_REQUIRE_MODELS: "1"

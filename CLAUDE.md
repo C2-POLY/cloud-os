@@ -14,7 +14,7 @@ An all-in-one home cloud OS installed on a box: drive, photos, documents and med
 Containers first: the whole application runs in Docker Compose, and the OS is only a wrapper around it. Daily development happens on a Mac with Docker Desktop; OS image tests in a QEMU/UTM VM; real-hardware tests on the box.
 
 - Core (accounts, storage, index, API, WebDAV, sharing, task queue): Go.
-- AI workers (text and image embeddings, OCR, speech, classification): Python, models run with ONNX Runtime, no PyTorch in the image. They read the task queue and write results to the database; they read user files from a read-only mount and never modify them.
+- AI workers (text and image embeddings, OCR, speech, classification): Python, models run with ONNX Runtime, no PyTorch in the image. They read the task queue and write results to the database; they read user files from a read-only mount and never modify them. The models (Arctic Embed M v2.0, SigLIP 2, PP-OCRv5; `docs/decisions/005-modeles-locaux.md`) are baked into the worker image at build time by `worker/models/fetch.sh`, each checked against its SHA-256, and loaded by `worker/src/worker/models.py`; ONNX Runtime's telemetry is switched off (`ORT_DISABLE_TELEMETRY`).
 - Task queue: a PostgreSQL table (`SELECT … FOR UPDATE SKIP LOCKED`), no Redis.
 - Database: PostgreSQL with pgvector (HNSW index, one table per embedding model, model name and version stored with each vector).
 - LLM: Ollama or llama.cpp, behind the AI provider interface.
@@ -37,6 +37,11 @@ make deps
 # .tools/ffmpeg (a few minutes, once; `rm -rf .tools/ffmpeg` to rebuild).
 # Without them `make test` skips the video tests.
 make ffmpeg
+
+# Fetch the worker's local AI models (about 740 MB) into .tools/models, each
+# checked against its SHA-256 (once; run worker/models/fetch.sh .tools/models
+# again after the script changes). Without them `make test` skips the model tests.
+make models
 
 # Build and start db, core, worker and web; wait until healthy
 make up
@@ -83,7 +88,7 @@ cd mobile && npx expo run:ios
 printf '%s\n' '<new password>' | docker compose run --rm -T core reset-password <account>
 ```
 
-Layout: `core/` (Go module, `cmd/core`, `internal/`, SQL migrations in `core/migrations/`, applied by the core at startup with goose), `worker/` (Python, uv), `web/` (React, Vite, npm), `mobile/` (Expo, React Native; `docs/architecture/mobile.md`), `shared/api-types.ts` (API types used by web and mobile), `compose.yaml`, `Makefile`, `.github/workflows/ci.yml` (`make lint` and `make test` on every PR and on `main`).
+Layout: `core/` (Go module, `cmd/core`, `internal/`, SQL migrations in `core/migrations/`, applied by the core at startup with goose), `worker/` (Python, uv; the models' fetch script in `worker/models/`, their benchmark in `worker/bench/`), `web/` (React, Vite, npm), `mobile/` (Expo, React Native; `docs/architecture/mobile.md`), `shared/api-types.ts` (API types used by web and mobile), `compose.yaml`, `Makefile`, `.github/workflows/ci.yml` (`make lint` and `make test` on every PR and on `main`).
 
 **One stack per worktree.** Give each worktree its own Compose project and, when another stack runs, its own host ports, so stacks never share a database:
 
@@ -91,7 +96,7 @@ Layout: `core/` (Go module, `cmd/core`, `internal/`, SQL migrations in `core/mig
 COMPOSE_PROJECT_NAME=cloud-os-<name> CLOUDOS_DB_PORT=54321 CLOUDOS_CORE_PORT=8481 CLOUDOS_WEB_PORT=5181 make up
 ```
 
-Defaults: database `54320`, core `8480`, Vite `5180`, all bound to `127.0.0.1`. User files are stored in `CLOUDOS_DATA_DIR` (default `./.data/files`, git-ignored), mounted at `/data` in the core. `CLOUDOS_MAX_UPLOAD` (bytes) caps a resumable upload; unset, only the free space does. `CLOUDOS_MAPS_DIR` (default `./.data/maps`) holds the `.pmtiles` file of the Photos map, mounted read-only at `/maps` in the core; without one the map says how to install it (`docs/architecture/map.md`). The Compose credentials (`cloudos`/`cloudos`) are for the local throwaway database only.
+Defaults: database `54320`, core `8480`, Vite `5180`, all bound to `127.0.0.1`. User files are stored in `CLOUDOS_DATA_DIR` (default `./.data/files`, git-ignored), mounted at `/data` in the core. `CLOUDOS_MAX_UPLOAD` (bytes) caps a resumable upload; unset, only the free space does. `CLOUDOS_MAPS_DIR` (default `./.data/maps`) holds the `.pmtiles` file of the Photos map, mounted read-only at `/maps` in the core; without one the map says how to install it (`docs/architecture/map.md`). `CLOUDOS_MODELS_DIR` names the worker's model folder (`/opt/models` in its image, `.tools/models` for `make test`). The Compose credentials (`cloudos`/`cloudos`) are for the local throwaway database only.
 
 ## Non-negotiable rules
 

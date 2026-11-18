@@ -18,6 +18,7 @@ Comment Cloud OS est construit, domaine par domaine, avec ses schémas. Le besoi
 | Albums de photos : références, corbeille, API | [albums.md](albums.md) | `core/internal/albums`, `core/internal/httpapi/albums.go`, `web/src/desktop/Albums.tsx` | #39 |
 | Carte des photos : tuiles PMTiles locales, points géolocalisés | [map.md](map.md) | `core/internal/httpapi/map.go`, `core/internal/storage/geo.go`, `web/src/desktop/MapView.tsx` | #40 |
 | App mobile (Expo) : connexion, fichiers, photos | [mobile.md](mobile.md) | `mobile/`, `shared/api-types.ts` | #37 |
+| Modèles d'IA locaux : texte, photos, OCR, dans l'image du worker | [models.md](models.md) | `worker/src/worker/models.py`, `worker/models/fetch.sh`, `worker/bench/` | #66 |
 
 ## Quand mettre un fichier à jour
 

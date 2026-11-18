@@ -1,0 +1,21 @@
+VOLTA ÉNERGIE
+Facture d'électricité n° FE-2024-03-118842
+Date de facture : 4 avril 2024
+
+Titulaire du contrat : Camille Martin
+Adresse de consommation : 14 rue des Acacias, 69003 Lyon
+Point de livraison : 0215 487 963
+Offre : Volta Classique, option heures pleines / heures creuses, puissance souscrite 6 kVA
+
+Période facturée : du 1er mars au 31 mars 2024
+Consommation relevée : 312 kWh (heures pleines 198 kWh, heures creuses 114 kWh)
+
+Abonnement : 15,47 €
+Consommation heures pleines : 198 kWh × 0,2700 € = 53,46 €
+Consommation heures creuses : 114 kWh × 0,2068 € = 23,58 €
+Taxes et contributions (accise sur l'électricité, CTA) : 9,12 €
+TVA : 18,06 €
+Montant total TTC : 119,69 €
+
+Prélèvement automatique le 15 avril 2024 sur le compte se terminant par 4417.
+Conseil : votre consommation est en baisse de 12 % par rapport à mars 2023.
