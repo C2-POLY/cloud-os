@@ -1,98 +1,65 @@
-import { Image } from 'expo-image'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ActivityIndicator, Pressable, SectionList, StyleSheet, Text, useWindowDimensions, View } from 'react-native'
+import { SymbolView } from 'expo-symbols'
+import { useCallback, useState } from 'react'
+import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import type { TimelineCursor, TimelineEntry } from '../../../../shared/api-types'
-import { Viewer } from '../../components/Viewer'
-import { byMonth, monthLabel } from '../../lib/format'
+import type { Album, TimelineCursor } from '../../../../shared/api-types'
+import { AlbumList } from '../../components/AlbumList'
+import { PhotoGrid } from '../../components/PhotoGrid'
 import { useApi } from '../../lib/session'
 import { useTheme } from '../../lib/theme'
 
-const columns = 4
-const gap = 2
+type View_ = 'all' | 'albums'
 
-/** The photos and videos, newest first, at the date they were taken, in a grid by month. */
+/** Every photo and video by month, or the albums and one album's photos (#39). */
 export default function Photos() {
   const api = useApi()
   const t = useTheme()
-  const { width } = useWindowDimensions()
-  const [items, setItems] = useState<TimelineEntry[]>([])
-  const [next, setNext] = useState<TimelineCursor | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [viewing, setViewing] = useState<number | null>(null)
-  const busy = useRef(false)
+  const [view, setView] = useState<View_>('all')
+  const [album, setAlbum] = useState<Album | null>(null)
 
-  const load = useCallback(
-    (cursor: TimelineCursor | null) => {
-      if (busy.current) return
-      busy.current = true
-      api
-        .timeline(cursor)
-        .then((page) => {
-          setItems((prev) => (cursor ? [...prev, ...page.items] : page.items))
-          setNext(page.next)
-          setError(null)
-        })
-        .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
-        .finally(() => {
-          busy.current = false
-          setLoading(false)
-        })
-    },
-    [api],
+  const timeline = useCallback((cursor: TimelineCursor | null) => api.timeline(cursor), [api])
+  const albumItems = useCallback((cursor: TimelineCursor | null) => api.albumItems(album?.id ?? 0, cursor), [api, album])
+
+  if (album) {
+    return (
+      <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: t.bg }}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Albums" onPress={() => setAlbum(null)} style={styles.back} hitSlop={12}>
+          <SymbolView name={{ ios: 'chevron.left', android: 'chevron_left' }} tintColor={t.accent} size={18} />
+          <Text style={{ color: t.accent, fontSize: 17 }}>Albums</Text>
+        </Pressable>
+        <Text style={[styles.large, { color: t.fg }]} numberOfLines={1}>
+          {album.name}
+        </Text>
+        <PhotoGrid key={album.id} fetchPage={albumItems} empty="Cet album est vide." />
+      </SafeAreaView>
+    )
+  }
+
+  const segment = (v: View_, label: string) => (
+    <Pressable
+      accessibilityRole="tab"
+      accessibilityState={{ selected: view === v }}
+      onPress={() => setView(v)}
+      style={[styles.segment, view === v && { backgroundColor: t.surface }]}
+    >
+      <Text style={{ color: t.fg, fontWeight: view === v ? '600' : '400' }}>{label}</Text>
+    </Pressable>
   )
-
-  useEffect(() => load(null), [load])
-
-  const size = Math.floor((width - gap * (columns - 1)) / columns)
-  // A SectionList of rows of `columns` tiles: one section per month.
-  const sections = useMemo(
-    () =>
-      byMonth(items).map((m) => {
-        const rows: TimelineEntry[][] = []
-        for (let i = 0; i < m.items.length; i += columns) rows.push(m.items.slice(i, i + columns))
-        return { title: monthLabel(m.month), key: m.month, data: rows }
-      }),
-    [items],
-  )
-  const index = useMemo(() => new Map(items.map((it, i) => [it.path, i])), [items])
-
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: t.bg }}>
       <Text style={[styles.large, { color: t.fg }]}>Photos</Text>
-      {loading && <ActivityIndicator style={{ marginTop: 40 }} />}
-      {error && <Text style={[styles.note, { color: t.bad }]}>{error}</Text>}
-      {!loading && !error && items.length === 0 && <Text style={[styles.note, { color: t.muted }]}>Aucune photo pour l’instant.</Text>}
-      <SectionList
-        sections={sections}
-        keyExtractor={(row) => row[0].path}
-        stickySectionHeadersEnabled
-        onEndReachedThreshold={1.5}
-        onEndReached={() => next && load(next)}
-        renderSectionHeader={({ section }) => (
-          <Text style={[styles.month, { color: t.fg, backgroundColor: t.bg }]} accessibilityRole="header">
-            {section.title}
-          </Text>
-        )}
-        renderItem={({ item: row }) => (
-          <View style={[styles.row, { gap, marginBottom: gap }]}>
-            {row.map((e) => (
-              <Pressable key={e.path} accessibilityRole="button" accessibilityLabel={e.name} onPress={() => setViewing(index.get(e.path) ?? 0)}>
-                <Image source={{ uri: api.thumbURL(e) ?? undefined, headers: api.headers }} style={{ width: size, height: size, backgroundColor: t.line }} contentFit="cover" transition={120} />
-              </Pressable>
-            ))}
-          </View>
-        )}
-      />
-      {viewing !== null && items[viewing] && <Viewer items={items} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} onNearEnd={() => next && load(next)} />}
+      <View style={[styles.segments, { backgroundColor: t.line }]} accessibilityRole="tablist">
+        {segment('all', 'Tout')}
+        {segment('albums', 'Albums')}
+      </View>
+      {view === 'all' ? <PhotoGrid fetchPage={timeline} empty="Aucune photo pour l’instant." /> : <AlbumList onOpen={setAlbum} />}
     </SafeAreaView>
   )
 }
 
 const styles = StyleSheet.create({
   large: { fontSize: 34, fontWeight: '700', paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6 },
-  month: { fontSize: 20, fontWeight: '600', paddingHorizontal: 16, paddingVertical: 10 },
-  row: { flexDirection: 'row' },
-  note: { padding: 20, fontSize: 15 },
+  back: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingTop: 6 },
+  segments: { flexDirection: 'row', marginHorizontal: 16, marginBottom: 8, borderRadius: 9, padding: 2 },
+  segment: { flex: 1, alignItems: 'center', paddingVertical: 6, borderRadius: 7 },
 })

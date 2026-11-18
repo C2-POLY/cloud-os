@@ -14,6 +14,7 @@ Comment Cloud OS est construit, domaine par domaine, avec ses schémas. Le besoi
 | Miniatures des images | [thumbnails.md](thumbnails.md) | `core/internal/thumbs`, `worker/src/worker/thumbs.py`, `web/src/drive/FileList.tsx` | #14 |
 | Métadonnées des photos : date de prise de vue, GPS, appareil | [metadata.md](metadata.md) | `core/internal/meta`, `worker/src/worker/meta.py` | #34 |
 | Recherche par nom et palette Demander | [search.md](search.md) | `core/internal/storage/search.go`, `web/src/desktop/Palette.tsx` | #48 |
+| Albums de photos : références, corbeille, API | [albums.md](albums.md) | `core/internal/albums`, `core/internal/httpapi/albums.go`, `web/src/desktop/Albums.tsx` | #39 |
 | App mobile (Expo) : connexion, fichiers, photos | [mobile.md](mobile.md) | `mobile/`, `shared/api-types.ts` | #37 |
 
 ## Quand mettre un fichier à jour

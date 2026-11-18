@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/C2-POLY/cloud-os/core/internal/activity"
+	"github.com/C2-POLY/cloud-os/core/internal/albums"
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/share"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
@@ -41,6 +42,7 @@ func newFilesAPIPool(t *testing.T) (enzo, johan *client, pool *pgxpool.Pool) {
 		Auth:     auth.NewService(pool),
 		Files:    files,
 		Shares:   share.NewService(pool, files),
+		Albums:   &albums.Service{Pool: pool, Files: files},
 		Activity: journal,
 	})
 	enzo = &client{t: t, h: h}

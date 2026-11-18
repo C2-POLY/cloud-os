@@ -26,6 +26,7 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"github.com/C2-POLY/cloud-os/core/internal/activity"
+	"github.com/C2-POLY/cloud-os/core/internal/albums"
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
 	"github.com/C2-POLY/cloud-os/core/internal/httpapi"
@@ -196,6 +197,7 @@ func serve(ctx context.Context, c core) error {
 			Auth:      auth.NewService(c.pool),
 			Files:     c.files,
 			Shares:    shares,
+			Albums:    &albums.Service{Pool: c.pool, Files: c.files},
 			Activity:  &activity.Log{Pool: c.pool},
 			MaxUpload: maxUpload(),
 			StaticDir: os.Getenv("STATIC_DIR"),

@@ -1,10 +1,12 @@
-import { File, FileImage, FileText, FileVideo } from 'lucide-react'
+import { Check, File, FileImage, FileText, FileVideo } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { messageOf } from '../api.ts'
 import { parentOf, thumbURL } from '../drive/files.ts'
 import { driveURL, navigate } from '../router.ts'
 import { byDay, byMonth, dayTitle, fetchMonths, fillMonths, fetchTimeline, formatDuration, monthLabel, startOfMonthAfter, type MonthCount, type TimelineCursor, type TimelineEntry } from './timeline.ts'
 import { Viewer } from './Viewer.tsx'
+import { addToAlbum, fetchAlbumItems, removeFromAlbum } from './albums.ts'
+import { AlbumPicker } from './Albums.tsx'
 
 const dayFormat = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })
 const day = (at: string) => {
@@ -15,10 +17,17 @@ const day = (at: string) => {
 /**
  * A timeline, newest first, a page at a time; the strip of months jumps.
  * Fichiers' Chronologie (every file; a click opens its folder) or, with
- * `photos`, the Photos app (images and videos by day; a click opens them big).
+ * `photos`, the Photos app (images and videos by day; a click opens them big),
+ * or with `album`, one album of it. In Photos, photos can be selected to add
+ * them to an album, or to take them out of the album shown.
  */
-export function Timeline({ photos = false }: { photos?: boolean }) {
+export function Timeline({ photos: photosApp = false, album, onChange }: { photos?: boolean; album?: number; onChange?: () => void }) {
+  const photos = photosApp || album !== undefined
   const filter = photos ? 'media' : undefined
+  const [selecting, setSelecting] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [picking, setPicking] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
   const [viewing, setViewing] = useState<number | null>(null)
   const [months, setMonths] = useState<MonthCount[] | null>(null)
   const [items, setItems] = useState<TimelineEntry[]>([])
@@ -33,7 +42,7 @@ export function Timeline({ photos = false }: { photos?: boolean }) {
   // the top. An answer to an older jump arriving late is dropped.
   const request = useCallback((cursor: TimelineCursor | null, reset: boolean) => {
     const gen = reset ? ++generation.current : generation.current
-    fetchTimeline(cursor, 60, filter)
+    ;(album !== undefined ? fetchAlbumItems(album, cursor, 60) : fetchTimeline(cursor, 60, filter))
       .then((page) => {
         if (gen !== generation.current) return
         setItems((prev) => (reset ? page.items : [...prev, ...page.items]))
@@ -43,7 +52,7 @@ export function Timeline({ photos = false }: { photos?: boolean }) {
       })
       .catch((err: unknown) => gen === generation.current && setError(messageOf(err)))
       .finally(() => gen === generation.current && setLoading(false))
-  }, [filter])
+  }, [filter, album])
 
   const load = useCallback(
     (cursor: TimelineCursor | null, reset: boolean) => {
@@ -54,11 +63,12 @@ export function Timeline({ photos = false }: { photos?: boolean }) {
   )
 
   useEffect(() => {
-    fetchMonths(filter)
-      .then((m) => setMonths(fillMonths(m)))
-      .catch(() => setMonths([]))
+    if (album === undefined)
+      fetchMonths(filter)
+        .then((m) => setMonths(fillMonths(m)))
+        .catch(() => setMonths([]))
     request(null, true)
-  }, [request, filter])
+  }, [request, filter, album])
 
   // The next page loads when the end of the list comes into view.
   useEffect(() => {
@@ -77,6 +87,36 @@ export function Timeline({ photos = false }: { photos?: boolean }) {
     if (next && !loading) load(next, false)
   }, [next, loading, load])
   const show = (e: TimelineEntry) => setViewing(items.indexOf(e))
+  const toggle = (e: TimelineEntry) =>
+    setSelected((prev) => {
+      const s = new Set(prev)
+      if (s.has(e.path)) s.delete(e.path)
+      else s.add(e.path)
+      return s
+    })
+  const stopSelecting = () => {
+    setSelecting(false)
+    setSelected(new Set())
+  }
+  const addSelected = async (id: number, name: string) => {
+    await addToAlbum(id, [...selected])
+    setPicking(false)
+    setNotice(`${selected.size} ajoutée${selected.size > 1 ? 's' : ''} à « ${name} ».`)
+    stopSelecting()
+  }
+  const removeSelected = async () => {
+    if (album === undefined) return
+    try {
+      await removeFromAlbum(album, [...selected])
+      const n = selected.size
+      setNotice(n > 1 ? `${n} retirées de l'album. Elles restent dans Photos.` : "1 retirée de l'album. Elle reste dans Photos.")
+      stopSelecting()
+      load(null, true)
+      onChange?.()
+    } catch (err) {
+      setError(messageOf(err))
+    }
+  }
 
   return (
     <div className={photos ? 'timeline photos' : 'timeline'}>
@@ -103,8 +143,42 @@ export function Timeline({ photos = false }: { photos?: boolean }) {
         </div>
       )}
 
+      {photos && items.length > 0 && (
+        <div className="toolbar photos-select" role="toolbar" aria-label="Sélection">
+          {!selecting ? (
+            <button type="button" className="secondary" onClick={() => setSelecting(true)}>
+              Sélectionner
+            </button>
+          ) : (
+            <>
+              <span className="muted">
+                {selected.size} sélectionnée{selected.size > 1 ? 's' : ''}
+              </span>
+              {album === undefined ? (
+                <button type="button" disabled={selected.size === 0} onClick={() => setPicking(true)}>
+                  Ajouter à un album…
+                </button>
+              ) : (
+                <button type="button" disabled={selected.size === 0} onClick={() => void removeSelected()}>
+                  Retirer de l'album
+                </button>
+              )}
+              <button type="button" className="secondary" onClick={stopSelecting}>
+                Annuler
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {notice && (
+        <p className="muted" role="status">
+          {notice}
+        </p>
+      )}
       {error && <p className="bad">{error}</p>}
-      {!error && !loading && items.length === 0 && <p className="muted">{photos ? "Aucune photo pour l'instant." : "Aucun fichier pour l'instant."}</p>}
+      {!error && !loading && items.length === 0 && (
+        <p className="muted">{album !== undefined ? 'Cet album est vide. Ajoute des photos depuis Photos, avec « Sélectionner ».' : photos ? "Aucune photo pour l'instant." : "Aucun fichier pour l'instant."}</p>
+      )}
 
       {photos &&
         groups.map((g) => (
@@ -116,8 +190,15 @@ export function Timeline({ photos = false }: { photos?: boolean }) {
                 <ul className="timeline-media">
                   {d.items.map((e) => (
                     <li key={e.path}>
-                      <button type="button" onClick={() => show(e)} aria-label={`${e.name}, ${day(e.at)}`}>
+                      <button
+                        type="button"
+                        className={selected.has(e.path) ? 'selected' : undefined}
+                        aria-pressed={selecting ? selected.has(e.path) : undefined}
+                        onClick={() => (selecting ? toggle(e) : show(e))}
+                        aria-label={`${e.name}, ${day(e.at)}`}
+                      >
                         <MediaVisual entry={e} />
+                        {selecting && <span className="timeline-media-check">{selected.has(e.path) && <Check size={14} aria-hidden />}</span>}
                       </button>
                     </li>
                   ))}
@@ -165,6 +246,8 @@ export function Timeline({ photos = false }: { photos?: boolean }) {
           </button>
         )}
       </div>
+
+      {picking && <AlbumPicker count={selected.size} onPick={addSelected} onClose={() => setPicking(false)} />}
 
       {viewing !== null && viewing >= 0 && items[viewing] && (
         <Viewer

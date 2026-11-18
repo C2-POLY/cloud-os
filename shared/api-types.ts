@@ -65,3 +65,12 @@ export interface MediaMeta {
 export interface SignedIn {
   account: Account
 }
+
+/** An album, as GET /api/albums lists it (#39): it only refers to files. */
+export interface Album {
+  id: number
+  name: string
+  created_at: string
+  count: number // live files in it
+  cover: Entry | null // its newest file, for the thumbnail
+}
