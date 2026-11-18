@@ -323,12 +323,18 @@ func (s *Store) CleanTmp() (int, error) {
 	return len(entries), nil
 }
 
-// The extensions of iPhone photos and of phone videos, known whatever the
-// system's mime.types holds (Go's own table has none of them).
+// The extensions of iPhone photos, of phone videos, and of the documents
+// whose text the workers read (core/internal/doctext), known whatever the
+// system's mime.types holds: Go's own table has none of them, and the core's
+// image has no mime.types. (Go knows .pdf, .docx, .xlsx, .pptx, .txt, .csv.)
 func init() {
 	for ext, t := range map[string]string{
 		".heic": "image/heic", ".heif": "image/heif",
 		".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime",
+		".md": "text/markdown", ".markdown": "text/markdown", ".tsv": "text/tab-separated-values",
+		".odt": "application/vnd.oasis.opendocument.text",
+		".ods": "application/vnd.oasis.opendocument.spreadsheet",
+		".odp": "application/vnd.oasis.opendocument.presentation",
 	} {
 		if err := mime.AddExtensionType(ext, t); err != nil {
 			panic(err)

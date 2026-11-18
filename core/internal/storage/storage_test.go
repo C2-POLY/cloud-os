@@ -467,6 +467,28 @@ func TestHEIFIsRecognisedByExtensionAndContent(t *testing.T) {
 	}
 }
 
+func TestDocumentsAreRecognisedByExtension(t *testing.T) {
+	for p, want := range map[string]string{
+		"Contrats/bail.pdf": "application/pdf",
+		"lettre.docx":       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"budget.xlsx":       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"slides.pptx":       "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+		"lettre.odt":        "application/vnd.oasis.opendocument.text",
+		"budget.ods":        "application/vnd.oasis.opendocument.spreadsheet",
+		"slides.odp":        "application/vnd.oasis.opendocument.presentation",
+		"README.md":         "text/markdown; charset=utf-8",
+		"notes.markdown":    "text/markdown; charset=utf-8",
+		"export.tsv":        "text/tab-separated-values; charset=utf-8",
+		"comptes.csv":       "text/csv; charset=utf-8",
+		"notes.txt":         "text/plain; charset=utf-8",
+	} {
+		// The content says zip or text; the extension wins.
+		if got := detectMIME(p, []byte("PK\x03\x04")); got != want {
+			t.Errorf("detectMIME(%q) = %q, want %q", p, got, want)
+		}
+	}
+}
+
 func TestVideosAreRecognisedByExtensionAndContent(t *testing.T) {
 	box := func(brand, compat string) []byte {
 		return []byte("\x00\x00\x00\x18ftyp" + brand + "\x00\x00\x02\x00" + compat + "\x00\x00\x00\x08free")

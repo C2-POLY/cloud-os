@@ -43,7 +43,7 @@ stateDiagram-v2
 
 Le worker fait tourner deux fils d'exécution, chacun avec sa propre connexion et sa reconnexion automatique : le battement de vie, et la boucle des tâches (`tasks.work`).
 - **Boucle :** elle prend une tâche des types qu'il sait faire (`HANDLERS`), l'exécute en repoussant son bail, puis la termine ou enregistre l'échec. Une exception dans une tâche est enregistrée, et n'arrête jamais le worker ; l'exception `Permanent` fait passer la tâche en `failed` sans nouvel essai.
-- **Ajouter un type de tâche :** écrire sa fonction `(task, conn)` et l'ajouter à `HANDLERS`. Types actuels : `selftest`, `thumb` ([thumbnails.md](thumbnails.md)), `meta` ([metadata.md](metadata.md)). Les modules des tâches importent `Permanent` depuis `worker/src/worker/errors.py`, pas depuis `tasks.py`, pour pouvoir être importés avant la file.
+- **Ajouter un type de tâche :** écrire sa fonction `(task, conn)` et l'ajouter à `HANDLERS`. Types actuels : `selftest`, `thumb` ([thumbnails.md](thumbnails.md)), `meta` ([metadata.md](metadata.md)), `text` ([documents.md](documents.md)). Les modules des tâches importent `Permanent` depuis `worker/src/worker/errors.py`, pas depuis `tasks.py`, pour pouvoir être importés avant la file.
 
 ## Santé et preuve de bout en bout
 

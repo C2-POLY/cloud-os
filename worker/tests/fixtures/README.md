@@ -15,3 +15,30 @@
   it plays upright as 240×320, as a phone held upright records it.
   Both were encoded with ffmpeg in a throwaway container; free to use, under
   the project's licence.
+
+## Documents (text extraction, #67)
+
+All their text is invented for these tests (a lease for a flat "rue des
+Tilleuls à Nantes", a household budget, a moving plan, a plumber's invoice):
+no personal data, no third-party content; free to use, under the project's
+licence. French with accents on purpose (é, è, ê, ô, É, €).
+
+- `letter.pdf`: 2 pages, 26 KB, a text layer with embedded fonts. An HTML
+  page printed by headless Chrome (`--print-to-pdf --no-pdf-header-footer`,
+  Skia/PDF); page 2 starts at "État des lieux".
+- `letter.docx`, `letter.odt`: the same HTML page converted by macOS
+  `textutil -strip -author "" -convert docx|odt` (Cocoa writers, no author).
+  `textutil` writes the HTML table as plain paragraphs in the docx and as a
+  real table in the odt.
+- `budget.xlsx`: two sheets, "Budget 2024" (text in shared strings, numbers
+  850, 62.5, 18) and "Notes", made with openpyxl 3.1.5 (MIT).
+- `slides.pptx`: two slides (title and body), made with python-pptx 1.0.2
+  (MIT) from its default template.
+- `budget.ods`, `slides.odp`: the same spreadsheet and slides in
+  OpenDocument, made with odfpy 1.4.1 (Apache-2.0).
+- `scan.pdf`: one A4 page at 75 dpi, an image without any text layer, as a
+  scanner makes it: the invoice's lines drawn with Pillow's default font,
+  saved as PDF by Pillow (JPEG inside), 16 KB.
+
+openpyxl, python-pptx and odfpy were only used once, in a throwaway
+environment, to make these files: they are not dependencies of the worker.
