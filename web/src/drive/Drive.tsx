@@ -9,6 +9,7 @@ import { createFolder, join, listFolder, moveEntry, parentOf, restoreTrash, tras
 import { ShareDialog } from '../share/ShareDialog.tsx'
 import { UploadPanel } from './UploadPanel.tsx'
 import { uploadQueue, type UploadQueue } from './uploads.ts'
+import { DocViewer } from '../preview/DocViewer.tsx'
 
 type Listing = { kind: 'loading' } | { kind: 'ok'; folder: string; entries: Entry[] } | { kind: 'missing' } | { kind: 'error'; message: string }
 
@@ -25,6 +26,7 @@ export function Drive({ folder, queue = uploadQueue }: { folder: string; queue?:
   const [listing, setListing] = useState<Listing>({ kind: 'loading' })
   const [version, setVersion] = useState(0)
   const [dialog, setDialog] = useState<Dialog>(null)
+  const [previewing, setPreviewing] = useState<Entry | null>(null)
   const [dragging, setDragging] = useState(false)
   const [trashed, setTrashed] = useState<TrashEntry | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -119,6 +121,7 @@ export function Drive({ folder, queue = uploadQueue }: { folder: string; queue?:
           onMove={(entry) => setDialog({ kind: 'move', entry })}
           onVersions={(entry) => setDialog({ kind: 'versions', entry })}
           onShare={(entry) => setDialog({ kind: 'share', entry })}
+          onPreview={setPreviewing}
           onTrash={async (entry) => {
             try {
               setTrashed(await trashEntry(entry.path))
@@ -195,6 +198,7 @@ export function Drive({ folder, queue = uploadQueue }: { folder: string; queue?:
           }}
         />
       )}
+      {previewing && <DocViewer entry={previewing} onClose={() => setPreviewing(null)} />}
     </section>
   )
 }

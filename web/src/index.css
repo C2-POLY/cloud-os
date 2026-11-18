@@ -1317,6 +1317,42 @@ html:has(.desktop) body {
   height: 48px;
 }
 
+/* The visual is a button when it opens the viewer (#52) */
+button.palette-visual {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  cursor: zoom-in;
+}
+
+button.palette-visual:hover,
+button.palette-visual:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.palette-visual canvas {
+  align-self: start;
+  max-width: 100%;
+  background: #fff;
+}
+
+.palette-text {
+  align-self: start;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  overflow: hidden;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--fg);
+}
+
 .palette-preview h3 {
   margin: 0;
   overflow-wrap: anywhere;
@@ -2143,3 +2179,101 @@ html:has(.desktop) body {
     height: 44px;
   }
 }
+
+/* Document viewer (#52): a PDF page by page, an image, a text */
+
+.doc-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  display: grid;
+  place-items: center;
+  padding: 2rem 1rem;
+  background: rgb(8 6 14 / 80%);
+  backdrop-filter: blur(16px);
+}
+
+.doc-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(1060px, 100%);
+  height: 100%;
+  border-radius: 14px;
+  overflow: hidden;
+  color: var(--fg);
+  background: var(--bg);
+  box-shadow: 0 20px 60px rgb(0 0 0 / 40%);
+}
+
+.doc-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem 0.6rem 1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+}
+
+.doc-head h2 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-head .muted {
+  margin-right: auto;
+  white-space: nowrap;
+}
+
+.doc-pages {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.doc-stage {
+  flex: 1;
+  overflow: auto;
+  padding: 1rem;
+  text-align: center;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
+.doc-stage img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.pdf-page {
+  display: block;
+  margin: 0 auto;
+  background: #fff;
+  box-shadow: 0 2px 12px rgb(0 0 0 / 20%);
+}
+
+.doc-text {
+  margin: 0;
+  padding: 1rem 1.25rem;
+  text-align: left;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+button.name-link {
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+}
+
+button.name-link:hover {
+  text-decoration: underline;
+}
+

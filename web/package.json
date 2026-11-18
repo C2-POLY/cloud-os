@@ -17,6 +17,7 @@
     "lucide-react": "1.74.0",
     "maplibre-gl": "^6.19.0",
     "motion": "14.14.0",
+    "pdfjs-dist": "^6.5.438",
     "pmtiles": "^4.5.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",

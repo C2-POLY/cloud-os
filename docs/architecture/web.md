@@ -101,6 +101,27 @@ flowchart TD
 - **Versions :** l'action Versions d'un fichier ouvre son historique (date, taille, date de remplacement), avec Télécharger et Restaurer. Restaurer garde le contenu remplacé comme version.
 - **Mobile :** en largeur mobile, les colonnes Taille et Modifié passent sous le nom, et les actions restent visibles.
 
+## Aperçu des documents (#52)
+
+Un PDF, une image ou un texte s'ouvre dans une visionneuse plein écran (`web/src/preview/DocViewer.tsx`), depuis l'aperçu de Demander ou d'un clic sur son nom dans Fichiers. Tout est rendu dans le navigateur à partir du contenu servi par la box : rien ne part ailleurs, et le cœur n'a rien de plus à faire.
+
+```mermaid
+flowchart LR
+    D[Demander : aperçu] -->|clic| V[Visionneuse plein écran]
+    F[Fichiers : clic sur un PDF, une image, un texte] --> V
+    V -->|PDF| P[pdf.js dans le navigateur, page par page]
+    V -->|image| I["img : /api/files/content"]
+    V -->|texte| T["fetch Range: bytes=0-65535, pre"]
+    P --> C["GET /api/files/content (session)"]
+    T --> C
+    I --> C
+```
+
+- **Types** (`previewKind`, `web/src/preview/preview.ts`) : `application/pdf` ; les images que les navigateurs dessinent (JPEG, PNG, WebP, GIF, AVIF ; un HEIC garde sa miniature) ; `text/*`, JSON, XML, YAML et les extensions de texte courantes (`.md`, `.csv`, `.log`…). Les autres gardent l'icône et le téléchargement.
+- **PDF** : `pdfjs-dist` (Apache-2.0), chargé au premier PDF ouvert, avec son worker comme un fichier que Vite construit. Il lit le fichier par plages HTTP, dessine une page à la fois dans un `<canvas>` (`PdfPage.tsx`) ; ← et → tournent les pages. pdf.js n'exécute jamais le JavaScript d'un PDF (sa couche d'affichage n'en a pas) et les formulaires XFA restent désactivés.
+- **Texte** : `textHead` lit les 64 premiers Kio (2 Kio dans Demander) par une plage `Range` et les affiche dans un `<pre>`, jamais interprétés en HTML ; un caractère coupé devient un signe de remplacement. Au-delà, la visionneuse invite à télécharger.
+- **Fermer** : Échap, la croix ou un clic sur le fond. Ouverte depuis Demander, la visionneuse capte Échap avant Demander, qui reste ouvert.
+
 ## Corbeille
 
 `drive/TrashPage.tsx` liste la corbeille : nom, dossier d'origine, taille, date de suppression et date d'effacement.
