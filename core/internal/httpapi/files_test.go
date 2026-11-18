@@ -262,6 +262,48 @@ func TestSearch(t *testing.T) {
 	}
 }
 
+func TestSearchContent(t *testing.T) {
+	enzo, johan, pool := newFilesAPIPool(t)
+	enzo.upload("Documents/bail.txt", "Le contrat de location", nil)
+	johan.upload("contrat.txt", "Un autre contrat", nil)
+	// What the workers write: the text of each content, keyed by its hash.
+	for _, text := range []string{"Le contrat de location", "Un autre contrat"} {
+		if _, err := pool.Exec(t.Context(), `INSERT INTO document_text (sha256, source, text, chars, truncated, pages, has_text)
+			VALUES (sha256(convert_to($1, 'UTF8')), 'text', $1, length($1), false, NULL, true)`, text); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rec := enzo.get("/api/search/content?q=CONTRATS", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("search content: %d %s", rec.Code, rec.Body)
+	}
+	var hits []ContentHit
+	if err := json.Unmarshal(rec.Body.Bytes(), &hits); err != nil {
+		t.Fatal(err)
+	}
+	// Owner-scoped: johan's contrat.txt is not enzo's.
+	if len(hits) != 1 || hits[0].Path != "Documents/bail.txt" || hits[0].Name != "bail.txt" {
+		t.Fatalf("hits %+v", hits)
+	}
+	want := []storage.SnippetPart{{Text: "contrat", Hit: true}, {Text: " de location"}}
+	if fmt.Sprint(hits[0].Snippet) != fmt.Sprint(want) {
+		t.Errorf("snippet %+v, want %+v", hits[0].Snippet, want)
+	}
+	if !strings.Contains(rec.Body.String(), `"snippet":[{"text":"contrat","hit":true},{"text":" de location"}]`) {
+		t.Errorf("JSON %s", rec.Body)
+	}
+	for _, q := range []string{"", "le", "introuvable"} {
+		if rec := enzo.get("/api/search/content?q="+q, nil); rec.Code != http.StatusOK || rec.Body.String() != "[]\n" {
+			t.Errorf("%q: %d %q", q, rec.Code, rec.Body)
+		}
+	}
+	anon := &client{t: t, h: enzo.h}
+	if rec := anon.get("/api/search/content?q=contrat", nil); rec.Code != http.StatusUnauthorized {
+		t.Errorf("signed out: %d", rec.Code)
+	}
+}
+
 func TestDesktopWidgets(t *testing.T) {
 	enzo, johan := newFilesAPI(t)
 	enzo.upload("Photos/a.jpg", "a", nil)

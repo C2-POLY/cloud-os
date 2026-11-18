@@ -23,6 +23,17 @@ export interface Entry {
   modified_at: string
 }
 
+/** A piece of an extract: a word found (hit) or the text around it, as the core's `storage.SnippetPart` writes it. */
+export interface SnippetPart {
+  text: string
+  hit?: boolean
+}
+
+/** A file whose text holds the words searched, with an extract, as the core's `httpapi.ContentHit` writes it (GET /api/search/content). */
+export interface ContentHit extends Entry {
+  snippet: SnippetPart[]
+}
+
 /**
  * A photo or video found by what it shows, as the core's `httpapi.PhotoHit`
  * writes it: GET /api/search/photos?q=…, best first. 503 when the workers

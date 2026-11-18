@@ -30,7 +30,7 @@ flowchart LR
         W --> V["vecteurs float32 unitaires"]
         W --> O["texte lu"]
         V -.-> P[("pgvector, une table par modèle : #70, photo_vectors_siglip2_b16_224")]
-        O -.-> D["texte des documents : #68"]
+        O --> D["worker.ocr : texte des images et des scans (documents.md)"]
     end
 ```
 
@@ -43,7 +43,7 @@ flowchart LR
 - **Le nom du modèle accompagne chaque vecteur** (`TEXT_MODEL`, `IMAGE_MODEL`, `OCR_MODEL`), avec sa version (`IMAGE_MODEL_VERSION`) : changer de modèle, c'est changer `fetch.sh` et la version, et le cœur réencode tout ([embeddings.md](embeddings.md)).
 - **Les recherches de photos sont lues comme des légendes** : « une photo de … » (`IMAGE_QUERY_TEMPLATE`), l'encodeur que `embedding_models()` donne au point de requête.
 - **4 fils ONNX Runtime par modèle**, les 4 cœurs d'un Pi 5 ; `CLOUDOS_MODEL_THREADS` en donne moins.
-- **L'OCR ne fait que tourner les modèles.** Le détecteur reçoit l'image ramenée entre 736 px pour le petit côté et 2 000 px pour le grand. La reconnaissance reçoit une ligne à 48 px de haut, en BGR ramené à -1…1, comme à l'entraînement de PaddleOCR. Elle décode en CTC avec la liste des caractères inscrite dans le modèle. Le découpage d'une page en lignes et leur ordre de lecture sont dans #68.
+- **L'OCR ne fait que tourner les modèles.** Le détecteur (`text_map`) reçoit l'image ramenée entre 736 px pour le petit côté et 2 000 px pour le grand, ou entre les bornes qu'on lui donne (`min_side`, `max_side` : le tri document ou photo regarde à 960 px). La reconnaissance (`read_lines`) reçoit des lignes à 48 px de haut, en BGR ramené à -1…1, comme à l'entraînement de PaddleOCR, 8 à la fois, chacune complétée à la largeur de la plus large de son lot. Elle décode en CTC avec la liste des caractères inscrite dans le modèle et rend, pour chaque ligne, la probabilité moyenne des caractères gardés. Le découpage d'une page en lignes et leur ordre de lecture sont dans `worker.ocr` ([documents.md](documents.md), #68).
 
 ## Mémoire et vitesse
 

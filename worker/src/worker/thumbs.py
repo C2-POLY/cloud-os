@@ -7,6 +7,7 @@ database, keyed by the content's SHA-256: it never writes a file.
 from __future__ import annotations
 
 import io
+import math
 import warnings
 from typing import TYPE_CHECKING
 
@@ -28,7 +29,7 @@ QUALITY = 80
 
 Image.MAX_IMAGE_PIXELS = MAX_PIXELS
 
-
+# What Pillow and worker.heif raise for a broken, truncated or oversized image.
 UNREADABLE = (
     UnidentifiedImageError,
     Image.DecompressionBombError,
@@ -39,11 +40,11 @@ UNREADABLE = (
 )
 
 
-def decode(data: bytes, at_least: int = SIZE * 2) -> Image.Image:
-    """Open a JPEG, PNG, WebP, HEIF or HEIC image, upright (its EXIF
-    orientation applied), refusing images over MAX_PIXELS. A JPEG is decoded
-    at the smallest scale that keeps both sides at least at_least pixels.
-    Raises Permanent for an unreadable image."""
+def open_upright(data: bytes, long_side: int | None = None) -> Image.Image:
+    """An image, loaded and upright: its EXIF orientation applied (libheif
+    applies a HEIF's own). A JPEG is decoded at a smaller scale when long_side
+    asks for less, never below long_side pixels on its long side. Raises
+    Permanent for an unreadable image, or one over MAX_PIXELS."""
     try:
         with warnings.catch_warnings():
             # Between MAX_PIXELS and twice that, Pillow only warns.
@@ -51,7 +52,9 @@ def decode(data: bytes, at_least: int = SIZE * 2) -> Image.Image:
             if heif.is_heif(data):
                 return heif.open_image(data)  # already upright
             with Image.open(io.BytesIO(data), formats=FORMATS) as im:
-                im.draft("RGB", (at_least, at_least))
+                ratio = long_side / max(im.size) if long_side else 1.0
+                if ratio < 1:  # JPEG: decode at a smaller scale
+                    im.draft("RGB", (math.ceil(im.width * ratio), math.ceil(im.height * ratio)))
                 img = ImageOps.exif_transpose(im)
                 img.load()
                 return img
@@ -62,8 +65,8 @@ def decode(data: bytes, at_least: int = SIZE * 2) -> Image.Image:
 def render(data: bytes) -> tuple[bytes, int, int]:
     """Return the WebP thumbnail of an image, upright, at most SIZE pixels on
     its longest side, and its size. Raises Permanent for an unreadable image."""
-    img = decode(data)
     try:
+        img = open_upright(data, SIZE * 2)
         img.thumbnail((SIZE, SIZE))
         if img.mode not in ("RGB", "RGBA"):
             img = img.convert(

@@ -35,6 +35,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/httpapi"
 	"github.com/C2-POLY/cloud-os/core/internal/meta"
 	"github.com/C2-POLY/cloud-os/core/internal/migrate"
+	"github.com/C2-POLY/cloud-os/core/internal/ocr"
 	"github.com/C2-POLY/cloud-os/core/internal/photovec"
 	"github.com/C2-POLY/cloud-os/core/internal/share"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
@@ -112,6 +113,15 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 			fmt.Fprintf(out, "%d text extractions queued\n", n)
 			return err
 		})
+	case "ocr":
+		if len(args) != 1 || args[0] != "backfill" {
+			return errors.New("usage: core ocr backfill")
+		}
+		return withCore(ctx, func(c core) error {
+			n, err := ocr.Backfill(ctx, &tasks.Queue{Pool: c.pool})
+			fmt.Fprintf(out, "%d OCR readings queued\n", n)
+			return err
+		})
 	case "photovec":
 		if len(args) != 1 || args[0] != "backfill" {
 			return errors.New("usage: core photovec backfill")
@@ -127,7 +137,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		}
 		return withCore(ctx, func(c core) error { return resetPassword(ctx, c, args[0], os.Stdin, out) })
 	default:
-		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, text, photovec, reset-password)", cmd)
+		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, text, ocr, photovec, reset-password)", cmd)
 	}
 }
 
@@ -287,10 +297,10 @@ func resetPassword(ctx context.Context, c core, name string, in io.Reader, out i
 }
 
 // queueBackgroundWork is the store's AfterStore hook: it queues the thumbnail,
-// the metadata and the vector of a new image or video content, and the text
-// of a new document. Best effort: a task lost here is caught up by `core
-// thumbs backfill`, `core meta backfill`, `core photovec backfill` and `core
-// text backfill`.
+// the metadata and the vector of a new image or video content, the text of a
+// new document, and the OCR of a new image. Best effort: a task lost here is
+// caught up by `core thumbs backfill`, `core meta backfill`, `core text
+// backfill`, `core ocr backfill` and `core photovec backfill`.
 func queueBackgroundWork(q *tasks.Queue, priority int) func(context.Context, storage.File, []byte) {
 	return func(ctx context.Context, f storage.File, head []byte) {
 		ctx = context.WithoutCancel(ctx)
@@ -302,6 +312,9 @@ func queueBackgroundWork(q *tasks.Queue, priority int) func(context.Context, sto
 		}
 		if _, err := doctext.Enqueue(ctx, q, f, priority); err != nil {
 			slog.Error("queue text", "owner", f.Owner, "path", f.Path, "err", err)
+		}
+		if _, err := ocr.Enqueue(ctx, q, f, head, priority); err != nil {
+			slog.Error("queue OCR", "owner", f.Owner, "path", f.Path, "err", err)
 		}
 		if _, err := photovec.Enqueue(ctx, q, f, head, priority); err != nil {
 			slog.Error("queue photo vector", "owner", f.Owner, "path", f.Path, "err", err)

@@ -5,7 +5,7 @@ Issue : #71 (Feature #65). Le mécanisme des requêtes et le registre des modèl
 
 | Pièce | Où | Rôle |
 |---|---|---|
-| `embedding_models` | `core/migrations/0018_photo_vectors.sql` | le nom, la version et la dimension de chaque modèle que sert le worker ; `requeued_at` dit si le cœur a remis les contenus en file pour cette version |
+| `embedding_models` | `core/migrations/0020_photo_vectors.sql` | le nom, la version et la dimension de chaque modèle que sert le worker ; `requeued_at` dit si le cœur a remis les contenus en file pour cette version |
 | `photo_vectors_siglip2_b16_224` | même migration | un `vector(768)` par contenu (clé SHA-256), avec `model`, `version` et `source` (`image` ou `video`), index HNSW cosinus |
 | Tâche `photovec` | `worker/src/worker/photovec.py` | lit la photo ou l'image clé de la vidéo, l'encode, écrit le vecteur |
 | Déclaration des modèles | `worker/src/worker/vectors.py` (`declare`) | au démarrage du worker, dans `embedding_models` |
@@ -57,7 +57,7 @@ sequenceDiagram
 ## Indexation
 
 - **Comme les miniatures.** `queueBackgroundWork` met une tâche `photovec` en file pour chaque nouveau contenu photo ou vidéo (`thumbs.IsMedia` : JPEG, PNG, WebP, HEIF, HEIC, MP4, QuickTime), à la priorité du nouveau fichier ; `core import` et le rattrapage la mettent à `PriorityBackfill`. La clé de déduplication est `photovec:<sha256>`, et rien n'est mis en file quand le contenu a déjà un vecteur de la version déclarée.
-- **La lecture.** Le worker lit `/data` en lecture seule et vérifie le SHA-256 de la copie lue (`content_path`, `read_content`). Une photo passe par `thumbs.decode` : orientation EXIF appliquée, HEIC par libheif, garde contre les images géantes, JPEG décodé à l'échelle réduite qui garde au moins 448 px de côté. Une vidéo est lue par l'image que montre sa miniature (`video.frame`, à 1 s). La transparence devient du blanc, pas du noir. Une image illisible donne `Permanent`.
+- **La lecture.** Le worker lit `/data` en lecture seule et vérifie le SHA-256 de la copie lue (`content_path`, `read_content`). Une photo passe par `thumbs.open_upright`, comme pour la miniature et l'OCR : orientation EXIF appliquée, HEIC par libheif, garde contre les images géantes. Un JPEG y est décodé à l'échelle réduite qui garde au moins 896 px sur le grand côté : le petit côté reste à 224 px ou plus, l'entrée du modèle, jusqu'à un panorama 4:1. Une vidéo est lue par l'image que montre sa miniature (`video.frame`, à 1 s). La transparence devient du blanc, pas du noir. Une image illisible donne `Permanent`.
 - **L'écriture.** Un upsert par contenu : un contenu partagé par deux fichiers ou deux comptes a un seul vecteur. Le worker n'écrit aucun fichier.
 - **Le nettoyage.** `Prune` efface, au tour de 30 s, les vecteurs qu'aucun fichier n'a plus. Un fichier à la corbeille garde le sien, pour sa restauration, mais n'est jamais rendu.
 

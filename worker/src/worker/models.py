@@ -208,10 +208,12 @@ class OcrModel:
     pixels scaled to -1…1, as PaddleOCR trained them.
 
     Turning the detector's map into line boxes and putting the lines in
-    reading order is the page pipeline of #68; this class only runs the two
-    models."""
+    reading order is the page pipeline of worker.ocr; this class only runs the
+    two models."""
 
     LINE_HEIGHT = 48  # pixels, the recogniser's input height
+    MIN_WIDTH = 320  # pixels, the narrowest input of the recogniser
+    BATCH = 8  # lines read in one run of the recogniser
     MIN_SIDE = 736  # the detector's input: short side at least this, multiples of 32,
     MAX_SIDE = 2000  # and long side at most this (a 12 Mpx photo is scaled down)
 
@@ -226,27 +228,55 @@ class OcrModel:
         x = np.asarray(image.convert("RGB"), dtype=np.float32)[..., ::-1]
         return (x / 255.0 - 0.5) / 0.5
 
-    def text_map(self, image: Image.Image) -> np.ndarray:
+    def text_map(
+        self, image: Image.Image, min_side: int | None = None, max_side: int | None = None
+    ) -> np.ndarray:
         """The probability that each pixel is text, for the image resized so
-        that its short side is at least MIN_SIDE, its long side at most
-        MAX_SIDE (that one wins), and both sides are multiples of 32 (the map
-        has that size)."""
+        that its short side is at least min_side (MIN_SIDE), its long side at
+        most max_side (MAX_SIDE; that one wins), and both sides are multiples
+        of 32 (the map has that size)."""
         w, h = image.size
-        ratio = min(max(1.0, self.MIN_SIDE / min(w, h)), self.MAX_SIDE / max(w, h))
+        lo, hi = min_side or self.MIN_SIDE, max_side or self.MAX_SIDE
+        ratio = min(max(1.0, lo / min(w, h)), hi / max(w, h))
         size = (max(32, round(w * ratio / 32) * 32), max(32, round(h * ratio / 32) * 32))
         x = self.bgr(image.resize(size, Image.Resampling.BILINEAR)).transpose(2, 0, 1)
         return self.det.run(None, {self.det.get_inputs()[0].name: x[None]})[0][0, 0]
 
     def read_line(self, image: Image.Image) -> str:
         """The text of an image holding one line of text."""
-        w, h = image.size
-        width = max(1, round(w * self.LINE_HEIGHT / h))
-        x = self.bgr(image.resize((width, self.LINE_HEIGHT), Image.Resampling.BILINEAR))
-        batch = np.zeros((1, 3, self.LINE_HEIGHT, max(width, 320)), dtype=np.float32)
-        batch[0, :, :, :width] = x.transpose(2, 0, 1)
-        best = self.rec.run(None, {self.rec.get_inputs()[0].name: batch})[0][0].argmax(axis=-1)
-        keep = (best != 0) & np.concatenate([[True], best[1:] != best[:-1]])
-        return "".join(self.chars[i] for i in best[keep] if i < len(self.chars))
+        return self.read_lines([image])[0][0]
+
+    def read_lines(self, images: Sequence[Image.Image]) -> list[tuple[str, float]]:
+        """The text of each image holding one line of text, and how sure the
+        recogniser is of it: the mean probability of the characters it kept,
+        from 0 to 1 (0 when it read nothing). Lines of similar widths are read
+        together, BATCH at a time, each padded to the widest of its batch."""
+        lines = [
+            self.bgr(
+                im.resize(
+                    (max(1, round(im.width * self.LINE_HEIGHT / im.height)), self.LINE_HEIGHT),
+                    Image.Resampling.BILINEAR,
+                )
+            )
+            for im in images
+        ]
+        order = sorted(range(len(lines)), key=lambda i: lines[i].shape[1])
+        out: list[tuple[str, float]] = [("", 0.0)] * len(lines)
+        for at in range(0, len(order), self.BATCH):
+            group = order[at : at + self.BATCH]
+            width = max(self.MIN_WIDTH, *(lines[i].shape[1] for i in group))
+            batch = np.zeros((len(group), 3, self.LINE_HEIGHT, width), dtype=np.float32)
+            for row, i in enumerate(group):
+                batch[row, :, :, : lines[i].shape[1]] = lines[i].transpose(2, 0, 1)
+            probs = self.rec.run(None, {self.rec.get_inputs()[0].name: batch})[0]
+            for row, i in enumerate(group):
+                best = probs[row].argmax(axis=-1)
+                keep = (best != 0) & np.concatenate([[True], best[1:] != best[:-1]])
+                keep &= best < len(self.chars)
+                text = "".join(self.chars[c] for c in best[keep])
+                score = float(probs[row].max(axis=-1)[keep].mean()) if keep.any() else 0.0
+                out[i] = (text, score)
+        return out
 
 
 class SiglipTextEncoder:

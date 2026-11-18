@@ -22,12 +22,14 @@ if TYPE_CHECKING:
     from worker.tasks import Task
 
 KIND = "photovec"
-# One table per model (core/migrations/0018_photo_vectors.sql).
+# One table per model (core/migrations/0020_photo_vectors.sql).
 TABLE = "photo_vectors_siglip2_b16_224"
 MODEL = models.IMAGE_MODEL
 VERSION = models.IMAGE_MODEL_VERSION
-# SigLIP 2 reads 224 × 224 pixels: a JPEG needs decoding at no more than this.
-AT_LEAST = 448
+# SigLIP 2 squashes the image to 224 × 224 pixels. A JPEG is decoded at the
+# smallest scale whose long side keeps this many pixels: its short side stays at
+# 224 or more up to a 4:1 panorama.
+DECODE_SIDE = 896
 
 
 def upright_rgb(image: Image.Image) -> Image.Image:
@@ -52,12 +54,12 @@ def make(task: Task, conn: psycopg.Connection) -> None:
     if src is None:
         return
     if video.is_video(head_of(src)):
-        image, source = thumbs.decode(video.frame(src), AT_LEAST), "video"
+        image, source = thumbs.open_upright(video.frame(src), DECODE_SIDE), "video"
     else:
         data = read_content(conn, sha, "image")
         if data is None:
             return
-        image, source = thumbs.decode(data, AT_LEAST), "image"
+        image, source = thumbs.open_upright(data, DECODE_SIDE), "image"
     vector = models.image_encoder().embed([upright_rgb(image)])[0]
     conn.execute(
         f"""INSERT INTO {TABLE} (sha256, model, version, source, embedding)

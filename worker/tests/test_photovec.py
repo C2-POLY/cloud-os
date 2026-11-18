@@ -146,7 +146,9 @@ def test_task_encodes_a_video_by_its_key_frame(conn: psycopg.Connection, root: P
     assert row and row[2:4] == ("video", 768)
     # The same frame the thumbnail shows.
     frame = photovec.upright_rgb(
-        photovec.thumbs.decode(video.frame(root / "enzo" / "Vidéos" / "clip.mp4"))
+        photovec.thumbs.open_upright(
+            video.frame(root / "enzo" / "Vidéos" / "clip.mp4"), photovec.DECODE_SIDE
+        )
     )
     expected = models.image_encoder().embed([frame])[0]
     got = conn.execute(

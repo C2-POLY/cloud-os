@@ -105,6 +105,7 @@ func routes(c Config) []route {
 		{"GET /api/files/thumb", member, f.thumb},
 		{"GET /api/files/meta", member, f.meta},
 		{"GET /api/search", member, f.search},
+		{"GET /api/search/content", member, f.searchContent},
 		{"GET /api/search/photos", member, ps.search},
 		{"POST /api/files/known", member, f.known},
 		{"POST /api/files/dedupe", member, f.dedupe},

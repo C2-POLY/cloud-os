@@ -79,6 +79,9 @@ docker compose run --rm core meta backfill
 # Queue the text extraction of every stored document (PDF, Office, OpenDocument, text) that has none
 docker compose run --rm core text backfill
 
+# Queue the OCR of every stored image the OCR has not looked at, and of every scanned PDF (found without text) it has not read
+docker compose run --rm core ocr backfill
+
 # Queue the vector of every stored photo and video that has none of the workers' model version
 # (also done once by the core whenever a worker declares a new version)
 docker compose run --rm core photovec backfill

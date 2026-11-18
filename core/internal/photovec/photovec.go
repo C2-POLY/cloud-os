@@ -25,7 +25,7 @@ import (
 const Kind = "photovec"
 
 // Model is the name the workers give the model, in embedding_models and in
-// each row; the table is its own (core/migrations/0018_photo_vectors.sql).
+// each row; the table is its own (core/migrations/0020_photo_vectors.sql).
 const Model = "siglip2-base-patch16-224"
 
 // table holds the vectors of Model. A new model is a new table, by migration.
