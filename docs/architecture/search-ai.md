@@ -139,7 +139,7 @@ Le cœur n'a pas ONNX Runtime. Il demande le vecteur d'une requête au worker, q
   - la mise en file : à la priorité de la tâche texte, et pas pour un scan ;
   - `requeue_stale` : seulement les contenus vivants sans la version courante, à la priorité 0 ;
   - `POST /encode` : le protocole, avec de faux modèles ; le vecteur d'Arctic, préfixe de requête compris ;
-  - de bout en bout : les 30 documents du banc indexés par la tâche, chaque requête encodée par `POST /encode`. « contrat de l'appart » met le bail en premier, et le recall@1 reste au niveau de l'ADR 005 : 32 requêtes sur 33, la manquée étant déjà « montant du dépôt de garantie » quand chaque document était encodé entier.
+  - de bout en bout : les 30 documents du banc indexés par la tâche, chaque requête encodée par `POST /encode`. « contrat de l'appart » met le bail en premier, et le recall@1 reste au niveau de l'ADR 005 : 32 requêtes sur 33, la manquée étant déjà « montant du dépôt de garantie » quand chaque document était encodé entier. Même résultat sur x86-64 sans VNNI (les machines de la CI, mesuré en émulation `linux/amd64`), où les produits int8 d'Arctic saturent un peu.
 - **Cœur** (`core/internal/textemb`, `encoder`, `httpapi/semantic_test.go`, `migrate`) :
   - `Search` avec des vecteurs posés à la main : ordre, meilleure fenêtre par contenu, extrait, limite ;
   - le même contenu dans deux comptes, chacun ne voyant que son fichier ; la corbeille exclue ;
