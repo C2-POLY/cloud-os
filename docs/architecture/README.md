@@ -19,6 +19,7 @@ Comment Cloud OS est construit, domaine par domaine, avec ses schémas. Le besoi
 | Carte des photos : tuiles PMTiles locales, points géolocalisés | [map.md](map.md) | `core/internal/httpapi/map.go`, `core/internal/storage/geo.go`, `web/src/desktop/MapView.tsx` | #40 |
 | App mobile (Expo) : connexion, fichiers, photos | [mobile.md](mobile.md) | `mobile/`, `shared/api-types.ts` | #37 |
 | Modèles d'IA locaux : texte, photos, OCR, dans l'image du worker | [models.md](models.md) | `worker/src/worker/models.py`, `worker/models/fetch.sh`, `worker/bench/` | #66 |
+| Vecteurs et recherche par le sens : photos, registre des modèles, requêtes encodées par le worker | [embeddings.md](embeddings.md) | `core/internal/photovec`, `core/internal/embed`, `worker/src/worker/photovec.py`, `embedserver.py` | #71 |
 
 ## Quand mettre un fichier à jour
 

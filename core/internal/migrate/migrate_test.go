@@ -57,6 +57,10 @@ var tables = []struct {
 	{19, []string{}, `UPDATE document_text SET text = 'Facture', chars = 7, has_text = true, ocr_model = 'pp-ocrv5-latin';
 		INSERT INTO document_text (sha256, source, text, chars, truncated, has_text, ocr_model)
 		VALUES (sha256('b'), 'image', '', 0, false, false, 'pp-ocrv5-latin')`},
+	{20, []string{"embedding_models", "photo_vectors_siglip2_b16_224"}, `INSERT INTO embedding_models (name, version, dims)
+		VALUES ('siglip2-base-patch16-224', 'v1', 768);
+		INSERT INTO photo_vectors_siglip2_b16_224 (sha256, model, version, source, embedding)
+		SELECT sha256('a'), 'siglip2-base-patch16-224', 'v1', 'image', array_fill(0.036::real, ARRAY[768])::vector`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {

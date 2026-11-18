@@ -63,13 +63,17 @@ def run(url: str, worker_id: str, stop: threading.Event) -> None:
 
 def run_tasks(url: str, worker_id: str, stop: threading.Event) -> None:
     """Run queued tasks until stopped, reconnecting whenever the database goes away."""
-    from worker import tasks
+    from worker import tasks, vectors
 
     while not stop.is_set():
         try:
             with psycopg.connect(url, autocommit=True) as conn:
                 if not wait_for_table(conn, "tasks", stop):
                     return
+                # The core encodes every content again when a model's version changes.
+                if not wait_for_table(conn, "embedding_models", stop):
+                    return
+                vectors.declare(conn)
                 log.info("worker %s takes tasks: %s", worker_id, ", ".join(tasks.HANDLERS))
                 tasks.work(conn, worker_id, stop)
         except psycopg.OperationalError as err:
@@ -93,6 +97,12 @@ def main() -> None:
         target=run, args=(url, worker_id, stop), name="heartbeat", daemon=True
     )
     heartbeat.start()
+    from worker import embedserver
+
+    try:
+        embedserver.start(stop)
+    except OSError as err:  # the port is taken: tasks still run, searches answer 503
+        log.error("query endpoint not started: %s", err)
     run_tasks(url, worker_id, stop)
     heartbeat.join(timeout=5)
     log.info("worker %s stopped", worker_id)

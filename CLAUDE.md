@@ -14,7 +14,7 @@ An all-in-one home cloud OS installed on a box: drive, photos, documents and med
 Containers first: the whole application runs in Docker Compose, and the OS is only a wrapper around it. Daily development happens on a Mac with Docker Desktop; OS image tests in a QEMU/UTM VM; real-hardware tests on the box.
 
 - Core (accounts, storage, index, API, WebDAV, sharing, task queue): Go.
-- AI workers (text and image embeddings, OCR, speech, classification): Python, models run with ONNX Runtime, no PyTorch in the image. They read the task queue and write results to the database; they read user files from a read-only mount and never modify them. The models (Arctic Embed M v2.0, SigLIP 2, PP-OCRv5; `docs/decisions/005-modeles-locaux.md`) are baked into the worker image at build time by `worker/models/fetch.sh`, each checked against its SHA-256, and loaded by `worker/src/worker/models.py`; ONNX Runtime's telemetry is switched off (`ORT_DISABLE_TELEMETRY`).
+- AI workers (text and image embeddings, OCR, speech, classification): Python, models run with ONNX Runtime, no PyTorch in the image. They read the task queue and write results to the database; they read user files from a read-only mount and never modify them. The models (Arctic Embed M v2.0, SigLIP 2, PP-OCRv5; `docs/decisions/005-modeles-locaux.md`) are baked into the worker image at build time by `worker/models/fetch.sh`, each checked against its SHA-256, and loaded by `worker/src/worker/models.py`; ONNX Runtime's telemetry is switched off (`ORT_DISABLE_TELEMETRY`). The one call from the core to a worker is `POST /embed` (`worker/src/worker/embedserver.py`, port 8090 on the Compose network only, never published): the vector of a search, which cannot wait behind the queue. Each worker declares the embedding models and versions it serves in `embedding_models`; a new version makes the core queue every content again (`docs/architecture/embeddings.md`).
 - Task queue: a PostgreSQL table (`SELECT … FOR UPDATE SKIP LOCKED`), no Redis.
 - Database: PostgreSQL with pgvector (HNSW index, one table per embedding model, model name and version stored with each vector).
 - LLM: Ollama or llama.cpp, behind the AI provider interface.
@@ -81,6 +81,10 @@ docker compose run --rm core text backfill
 
 # Queue the OCR of every stored image the OCR has not looked at, and of every scanned PDF (found without text) it has not read
 docker compose run --rm core ocr backfill
+
+# Queue the vector of every stored photo and video that has none of the workers' model version
+# (also done once by the core whenever a worker declares a new version)
+docker compose run --rm core photovec backfill
 
 # The mobile app (Expo) in the iOS simulator; the box is at localhost:<core port>
 cd mobile && npx expo run:ios
