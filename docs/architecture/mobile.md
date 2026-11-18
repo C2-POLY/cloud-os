@@ -45,6 +45,7 @@ flowchart TD
 ```
 
 - **Fichiers** (`src/app/(tabs)/files`) : les dossiers d'abord, puis les fichiers, avec la miniature des images et la taille. On rafraîchit en tirant vers le bas. Un dossier s'empile avec le retour natif. Un fichier est téléchargé dans le cache (`Paths.cache/cloudos/<empreinte>/<nom>`) puis ouvert dans l'aperçu d'iOS (`File.preview`), ou à défaut dans la feuille de partage.
+- **Albums** (`src/components/AlbumList.tsx`, #39) : dans l'onglet Photos, le sélecteur « Tout / Albums » montre la liste des albums ; un album s'ouvre dans la même grille (`PhotoGrid`), avec la visionneuse. Voir [albums.md](albums.md).
 - **Photos** (`src/app/(tabs)/photos.tsx`) : `GET /api/timeline?filter=media`, comme l'app Photos du bureau (#35). Les miniatures sont en grille de 4 colonnes, avec un titre par mois, et la suite se charge en descendant.
 - **Visionneuse** (`src/components/Viewer.tsx`) : en plein écran, on balaie d'une photo à l'autre. L'image d'origine s'affiche si iOS sait la dessiner, HEIC compris, sinon la miniature. Un panneau montre la date de prise de vue, l'appareil, les dimensions, le GPS et le dossier (`GET /api/files/meta`).
 - **Sauvegarde** (`src/app/(tabs)/backup.tsx`) : l'interrupteur de la sauvegarde automatique (il demande l'accès aux photos et programme la tâche de fond), le dossier du téléphone sur la box, ce qui reste à envoyer, la dernière sauvegarde complète et la dernière erreur, et un bouton pour sauvegarder tout de suite.

@@ -13,6 +13,8 @@ import { Palette } from './Palette.tsx'
 import { Widgets } from './Widgets.tsx'
 import { Window } from './Window.tsx'
 import { useGeometries, useWindows, type Win } from './windows.ts'
+import { AlbumPage, AlbumsPage } from './Albums.tsx'
+import { albumFromURL, albumsPath, photosPath } from './albums.ts'
 
 /** The signed-in box: a living wallpaper, a menu bar, the app windows and the dock. */
 export function Desktop({ me, onSignedOut }: { me: Account; onSignedOut: () => void }) {
@@ -96,8 +98,15 @@ function AppContent({ win, me }: { win: Win; me: Account }) {
           {win.path === timelinePath ? <Timeline /> : <Drive folder={folderFromURL(win.path) ?? ''} />}
         </>
       )
-    case 'photos':
-      return <Timeline photos />
+    case 'photos': {
+      const album = albumFromURL(win.path)
+      return (
+        <>
+          <PhotosViews path={win.path} />
+          {album !== null ? <AlbumPage id={album} /> : win.path === albumsPath ? <AlbumsPage /> : <Timeline photos />}
+        </>
+      )
+    }
     case 'shares':
       return <SharesPage />
     case 'trash':
@@ -110,6 +119,30 @@ function AppContent({ win, me }: { win: Win; me: Account }) {
         </>
       )
   }
+}
+
+/** Photos' two views: every photo by day, or the albums. */
+function PhotosViews({ path }: { path: string }) {
+  const onAlbums = path !== photosPath
+  const link = (to: string, label: string, active: boolean) => (
+    <a
+      href={to}
+      className={active ? 'seg on' : 'seg'}
+      aria-current={active ? 'page' : undefined}
+      onClick={(e) => {
+        e.preventDefault()
+        navigate(to)
+      }}
+    >
+      {label}
+    </a>
+  )
+  return (
+    <nav className="files-views" aria-label="Vue de Photos">
+      {link(photosPath, 'Photos', !onAlbums)}
+      {link(albumsPath, 'Albums', onAlbums)}
+    </nav>
+  )
 }
 
 /** Fichiers' two views: its folders, or everything on one timeline. */

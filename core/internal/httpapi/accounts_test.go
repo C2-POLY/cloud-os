@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/C2-POLY/cloud-os/core/internal/albums"
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/share"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
@@ -49,7 +50,7 @@ func newAPI(t *testing.T) (Config, http.Handler) {
 	t.Helper()
 	pool, p := testdb.Migrated(t)
 	files := &storage.Store{Root: t.TempDir(), Pool: pool}
-	cfg := Config{Version: "test", Auth: auth.NewService(pool), Health: &fakeStore{version: 3}, Files: files, Shares: share.NewService(pool, files)}
+	cfg := Config{Version: "test", Auth: auth.NewService(pool), Health: &fakeStore{version: 3}, Files: files, Shares: share.NewService(pool, files), Albums: &albums.Service{Pool: pool, Files: files}}
 	_ = p
 	return cfg, NewHandler(cfg)
 }

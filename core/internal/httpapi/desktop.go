@@ -94,6 +94,14 @@ func timelineFilter(r *http.Request) storage.TimelineFilter {
 // timeline lists the account's files newest first, photos at the date they
 // were taken, others at their last modification, a page at a time.
 func (a *desktopAPI) timeline(w http.ResponseWriter, r *http.Request) {
+	writeTimelinePage(w, r, func(after *storage.TimelineCursor, limit int) ([]storage.TimelineItem, error) {
+		return a.files.Timeline(r.Context(), owner(r), timeZoneOf(r), timelineFilter(r), after, limit)
+	})
+}
+
+// writeTimelinePage reads the page asked (before_at, before_path, limit),
+// fetches it and writes it with the cursor of the next one.
+func writeTimelinePage(w http.ResponseWriter, r *http.Request, fetch func(*storage.TimelineCursor, int) ([]storage.TimelineItem, error)) {
 	q := r.URL.Query()
 	var after *storage.TimelineCursor
 	if s := q.Get("before_at"); s != "" {
@@ -108,9 +116,9 @@ func (a *desktopAPI) timeline(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 {
 		limit = storage.DefaultTimelinePage
 	}
-	items, err := a.files.Timeline(r.Context(), owner(r), timeZoneOf(r), timelineFilter(r), after, limit)
+	items, err := fetch(after, limit)
 	if err != nil {
-		failFiles(w, err)
+		failAlbums(w, err)
 		return
 	}
 	page := TimelinePage{Items: make([]TimelineEntry, len(items))}
