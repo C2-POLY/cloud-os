@@ -192,7 +192,7 @@ type ContentHit struct {
 // (storage.DefaultContentLimit, storage.MaxSearchLimit).
 func (a *filesAPI) searchContent(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	hits, err := a.store.SearchContent(r.Context(), owner(r), r.URL.Query().Get("q"), limit)
+	hits, err := a.store.SearchContent(r.Context(), owner(r), r.URL.Query().Get("q"), limit, storage.Filter{})
 	if err != nil {
 		failFiles(w, err)
 		return

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FileList } from '../drive/FileList.tsx'
 import type { Entry } from '../drive/files.ts'
@@ -104,17 +104,21 @@ describe('DocViewer', () => {
   })
 })
 
+/** The search field of Demander (the period is a combobox too). */
+const box = () => screen.getByRole('combobox', { name: /Chercher/ })
+const list = () => screen.getByRole('listbox', { name: 'Résultats' })
+
 describe('Demander and Fichiers', () => {
   it('shows the start of a text in Demander, opens the viewer, and Escape closes the viewer only', async () => {
     const onClose = vi.fn()
-    serve({ 'Documents/notes.md': 'Acheter du pain' }, { '/api/search?q=notes&limit=30': [notes] })
+    serve({ 'Documents/notes.md': 'Acheter du pain' }, { '/api/search/all?q=notes&limit=30': { results: [{ ...notes, score: 0.9, found_by: ['name'] }], partial: false } })
     render(<Palette onClose={onClose} />)
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'notes' } })
-    await screen.findAllByRole('option')
+    fireEvent.change(box(), { target: { value: 'notes' } })
+    await within(list()).findAllByRole('option')
     expect(await screen.findByText('Acheter du pain')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: "Ouvrir l'aperçu de notes.md" }))
     expect(screen.getByRole('dialog', { name: 'notes.md' })).toBeInTheDocument()
-    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Escape' })
+    fireEvent.keyDown(box(), { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: 'notes.md' })).not.toBeInTheDocument()
     expect(onClose).not.toHaveBeenCalled()
   })

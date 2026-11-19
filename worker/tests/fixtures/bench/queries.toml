@@ -194,3 +194,26 @@ expect = ["port"]
 [[image]]
 q = "la tour Eiffel"
 expect = ["tour-eiffel"]
+
+# Mixed queries (#72): Demander's one list gives photos and documents for
+# them, at least one of each among its first 8 results.
+
+[[mixed]]
+q = "chien"
+photos = ["chien-plage-1", "chien-plage-2", "chien-plage-3", "chien-neige", "chien-parc"]
+docs = ["facture-veterinaire"]
+
+[[mixed]]
+q = "plage"
+photos = ["plage", "plage-2", "chien-plage-1", "chien-plage-2", "chien-plage-3", "coucher-soleil"]
+docs = ["location-vacances"]
+
+[[mixed]]
+q = "voiture"
+photos = ["voiture-rouge"]
+docs = ["certificat-immatriculation", "contrat-assurance-auto", "facture-garage", "billet-train"]
+
+[[mixed]]
+q = "vacances au bord de la mer"
+photos = ["plage", "plage-2", "coucher-soleil"]
+docs = ["location-vacances"]

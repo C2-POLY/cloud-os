@@ -18,6 +18,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/davfs"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
 	"github.com/C2-POLY/cloud-os/core/internal/photovec"
+	"github.com/C2-POLY/cloud-os/core/internal/search"
 	"github.com/C2-POLY/cloud-os/core/internal/share"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 	"github.com/C2-POLY/cloud-os/core/internal/tasks"
@@ -53,9 +54,11 @@ type Config struct {
 	Files   *storage.Store
 	Shares  *share.Service
 	Albums  *albums.Service
-	// Photos searches photos by what they show; nil answers 503.
+	// Photos searches photos by what they show; nil answers 503, and
+	// Demander lists names and words only (partial).
 	Photos *photovec.Searcher
-	// Documents searches documents by meaning; nil answers 503.
+	// Documents searches documents by meaning; nil answers 503, and
+	// Demander lists names and words only (partial).
 	Documents *textemb.Searcher
 	// MapsDir holds the .pmtiles file of the Photos map; "" when none.
 	MapsDir   string
@@ -92,6 +95,7 @@ func routes(c Config) []route {
 	al := &albumsAPI{albums: c.Albums}
 	ps := &photoSearchAPI{photos: c.Photos}
 	sem := &semanticAPI{docs: c.Documents}
+	sa := &searchAPI{search: &search.Searcher{Files: c.Files, Docs: c.Documents, Photos: c.Photos}}
 	return []route{
 		{"GET /api/health", public, healthHandler(c.Version, c.Health)},
 		{"GET /api/setup", public, a.setupNeeded},
@@ -109,6 +113,7 @@ func routes(c Config) []route {
 		{"GET /api/files/thumb", member, f.thumb},
 		{"GET /api/files/meta", member, f.meta},
 		{"GET /api/search", member, f.search},
+		{"GET /api/search/all", member, sa.all},
 		{"GET /api/search/content", member, f.searchContent},
 		{"GET /api/search/photos", member, ps.search},
 		{"GET /api/search/semantic", member, sem.search},

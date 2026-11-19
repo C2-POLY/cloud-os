@@ -122,8 +122,9 @@ type Searcher struct {
 // model version are compared, so a document waits for its new vectors after
 // a model change. The owner is the caller's session, never a parameter: the
 // vectors are shared by contents, and only the owner's live files make them
-// visible. An empty q finds nothing.
-func (s *Searcher) Search(ctx context.Context, owner, q string, limit int) ([]Hit, error) {
+// visible. filter narrows the files, while the index is walked. An empty q
+// finds nothing.
+func (s *Searcher) Search(ctx context.Context, owner, q string, limit int, filter storage.Filter) ([]Hit, error) {
 	owner, err := storage.CleanOwner(owner)
 	if err != nil {
 		return nil, err
@@ -161,13 +162,15 @@ func (s *Searcher) Search(ctx context.Context, owner, q string, limit int) ([]Hi
 	if _, err := tx.Exec(ctx, `SET LOCAL hnsw.ef_search = 100`); err != nil {
 		return nil, err
 	}
+	args := []any{v.Literal(), owner, limit, candidates, excerptChars, v.Version}
+	narrow, args := filter.SQL("f", args)
 	rows, err := tx.Query(ctx, `
 		WITH near AS MATERIALIZED (
 		    SELECT v.sha256, v.start_char, v.end_char, v.embedding <=> $1::halfvec AS distance
 		    FROM `+Table+` v
 		    WHERE v.version = $6
 		      AND EXISTS (SELECT 1 FROM files f WHERE f.sha256 = v.sha256 AND f.owner = $2
-		                  AND f.kind = 'file' AND f.trash_id IS NULL)
+		                  AND f.kind = 'file' AND f.trash_id IS NULL`+narrow+`)
 		    ORDER BY v.embedding <=> $1::halfvec
 		    LIMIT $4
 		), best AS (
@@ -179,10 +182,10 @@ func (s *Searcher) Search(ctx context.Context, owner, q string, limit int) ([]Hi
 		       -- accented character when it slices a compressed value in place.
 		       substr(d.text || '', b.start_char + 1, LEAST(b.end_char - b.start_char, $5))
 		FROM best b
-		JOIN files f ON f.sha256 = b.sha256 AND f.owner = $2 AND f.kind = 'file' AND f.trash_id IS NULL
+		JOIN files f ON f.sha256 = b.sha256 AND f.owner = $2 AND f.kind = 'file' AND f.trash_id IS NULL`+narrow+`
 		JOIN document_text d ON d.sha256 = b.sha256
 		ORDER BY b.distance, f.modified_at DESC, f.path
-		LIMIT $3`, v.Literal(), owner, limit, candidates, excerptChars, v.Version)
+		LIMIT $3`, args...)
 	if err != nil {
 		return nil, err
 	}
