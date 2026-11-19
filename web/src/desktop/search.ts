@@ -1,36 +1,59 @@
-import { parentOf, type ContentHit, type Entry, type SnippetPart } from '../drive/files.ts'
+import { parentOf, type Entry, type FoundBy, type SearchFilters } from '../drive/files.ts'
 
-/** The groups of the results, in the order they are shown. */
-export const groups = ['Dossiers', 'Photos et vidéos', 'Documents', 'Dans le texte'] as const
-export type Group = (typeof groups)[number]
+/** The type of file Demander's list keeps: everything, documents or photos and videos. */
+export type Kind = '' | 'docs' | 'photos'
 
-/** The group of an entry found by its name. */
-export function groupOf(e: Entry): Group {
-  if (e.kind === 'dir') return 'Dossiers'
-  if (e.mime.startsWith('image/') || e.mime.startsWith('video/')) return 'Photos et vidéos'
-  return 'Documents'
+export const kinds: { value: Kind; label: string }[] = [
+  { value: '', label: 'Tout' },
+  { value: 'docs', label: 'Documents' },
+  { value: 'photos', label: 'Photos' },
+]
+
+/** The period Demander's list keeps, by the date of each file: taken for a photo, else modified. */
+export type Period = '' | 'month' | 'year' | 'last-year' | 'older'
+
+export const periods: { value: Period; label: string }[] = [
+  { value: '', label: 'Toutes les dates' },
+  { value: 'month', label: '30 derniers jours' },
+  { value: 'year', label: 'Cette année' },
+  { value: 'last-year', label: "L'an dernier" },
+  { value: 'older', label: 'Plus ancien' },
+]
+
+/** A day on the browser's wall clock, as the core reads it: YYYY-MM-DD. */
+function dayOf(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-/** A line of the palette: an entry, its group, and the extract of its text when the words are in it. */
-export interface Row {
-  entry: Entry
-  group: Group
-  snippet?: SnippetPart[]
+/** The filters of the core for a kind and a period, the period counted from today. */
+export function filtersOf(kind: Kind, period: Period, today: Date): SearchFilters {
+  const f: SearchFilters = kind ? { type: kind } : {}
+  const year = today.getFullYear()
+  switch (period) {
+    case 'month':
+      return { ...f, from: dayOf(new Date(year, today.getMonth(), today.getDate() - 29)), to: dayOf(today) }
+    case 'year':
+      return { ...f, from: `${year}-01-01` }
+    case 'last-year':
+      return { ...f, from: `${year - 1}-01-01`, to: `${year - 1}-12-31` }
+    case 'older':
+      return { ...f, to: `${year - 2}-12-31` }
+    default:
+      return f
+  }
 }
 
-/**
- * The lines of the palette, in the order shown: the entries found by name,
- * grouped, with the extract of those whose text holds the words too; then, in
- * « Dans le texte », the files found only by their text, in the core's order.
- */
-export function rowsOf(names: Entry[], contents: ContentHit[]): Row[] {
-  const extracts = new Map(contents.map((h) => [h.path, h.snippet]))
-  const named: Row[] = names
-    .map((e) => ({ entry: e, group: groupOf(e), snippet: extracts.get(e.path) }))
-    .sort((a, b) => groups.indexOf(a.group) - groups.indexOf(b.group))
-  const seen = new Set(names.map((e) => e.path))
-  const inText: Row[] = contents.filter((h) => !seen.has(h.path)).map((h) => ({ entry: h, group: 'Dans le texte', snippet: h.snippet }))
-  return [...named, ...inText]
+const foundByLabels: Record<FoundBy, string> = {
+  name: 'le nom',
+  text: 'les mots du texte',
+  meaning: 'le sens du texte',
+  image: "ce que montre l'image",
+}
+
+/** How a file was found, in words: "le nom, le sens du texte". */
+export function foundByText(found: FoundBy[]): string {
+  return found.map((f) => foundByLabels[f]).join(', ')
 }
 
 /** The folder that shows an entry in Fichiers: itself for a folder, its parent for a file. */

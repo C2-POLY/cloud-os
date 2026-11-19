@@ -55,6 +55,27 @@ export interface SemanticHit extends Entry {
   excerpt: string // the window's first characters
 }
 
+/** How a file of Demander's list was found. */
+export type FoundBy = 'name' | 'text' | 'meaning' | 'image'
+
+/**
+ * A file of Demander's one list, as the core's `httpapi.SearchHit` writes it
+ * (GET /api/search/all): found by its name, the words of its text, the
+ * meaning of its text or what its photo shows.
+ */
+export interface SearchHit extends Entry {
+  score: number // orders the list of one query; does not compare across queries
+  found_by: FoundBy[]
+  snippet?: SnippetPart[] // the words found in its text
+  excerpt?: string // else its passage nearest in meaning
+}
+
+/** GET /api/search/all?q=…&limit=…[&type=docs|photos][&from=…&to=…&tz=…], best first. */
+export interface SearchAnswer {
+  results: SearchHit[]
+  partial: boolean // the search by meaning did not answer: names and words only
+}
+
 /**
  * The categories of documents (#73), in the order the app Documents shows
  * them: those of the core's `doccat.Categories` and of the workers.

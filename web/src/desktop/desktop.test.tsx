@@ -155,7 +155,7 @@ describe('Desktop', () => {
     const palette = () => screen.queryByRole('dialog', { name: 'Demander' })
     fireEvent.click(screen.getByRole('button', { name: 'Demander' }))
     expect(palette()).toBeInTheDocument()
-    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Escape' })
+    fireEvent.keyDown(screen.getByRole('combobox', { name: /Chercher/ }), { key: 'Escape' })
     expect(palette()).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Demander ⌘K/ }))
     expect(palette()).toBeInTheDocument()

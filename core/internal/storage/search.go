@@ -18,13 +18,39 @@ const (
 // start with the first word come first, then names that hold it, then the
 // rest; within each, the most recently modified first. An empty q finds nothing.
 func (s *Store) Search(ctx context.Context, owner, q string, limit int) ([]File, error) {
+	hits, err := s.SearchNames(ctx, owner, q, limit, Filter{})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]File, len(hits))
+	for i, h := range hits {
+		out[i] = h.File
+	}
+	return out, nil
+}
+
+// How the name of a file found by Search holds the first word searched.
+const (
+	TierStart = iota // the name starts with it
+	TierName         // the name holds it
+	TierPath         // only a folder of its path does
+)
+
+// NameHit is a file or folder found by its path, and how its name matched (Tier).
+type NameHit struct {
+	File
+	Tier int
+}
+
+// SearchNames is Search with the tier of each hit, narrowed by filter.
+func (s *Store) SearchNames(ctx context.Context, owner, q string, limit int, filter Filter) ([]NameHit, error) {
 	owner, err := CleanOwner(owner)
 	if err != nil {
 		return nil, err
 	}
 	words := strings.Fields(q)
 	if len(words) == 0 {
-		return []File{}, nil
+		return []NameHit{}, nil
 	}
 	if len(words) > maxSearchWords {
 		words = words[:maxSearchWords]
@@ -41,26 +67,27 @@ func (s *Store) Search(ctx context.Context, owner, q string, limit int) ([]File,
 		args = append(args, escapeLike(w))
 		fmt.Fprintf(&where, ` AND cloudos_fold(path) LIKE '%%' || cloudos_fold($%d) || '%%' ESCAPE '\'`, len(args))
 	}
+	narrow, args := filter.SQL("files", args)
 	first := `cloudos_fold($3)`
 	name := `cloudos_fold(regexp_replace(path, '^.*/', ''))`
-	rows, err := s.Pool.Query(ctx, `SELECT `+fileColumns+` FROM files
-		WHERE owner = $1 AND trash_id IS NULL`+where.String()+`
-		ORDER BY CASE WHEN `+name+` LIKE `+first+` || '%' ESCAPE '\' THEN 0
-		              WHEN `+name+` LIKE '%' || `+first+` || '%' ESCAPE '\' THEN 1
-		              ELSE 2 END,
-		         modified_at DESC, path
+	tier := `CASE WHEN ` + name + ` LIKE ` + first + ` || '%' ESCAPE '\' THEN 0
+		          WHEN ` + name + ` LIKE '%' || ` + first + ` || '%' ESCAPE '\' THEN 1
+		          ELSE 2 END`
+	rows, err := s.Pool.Query(ctx, `SELECT `+fileColumns+`, `+tier+` AS tier FROM files
+		WHERE owner = $1 AND trash_id IS NULL`+where.String()+narrow+`
+		ORDER BY tier, modified_at DESC, path
 		LIMIT $2`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []File{}
+	out := []NameHit{}
 	for rows.Next() {
-		f, err := scanFile(rows)
-		if err != nil {
+		var h NameHit
+		if h.File, err = ScanFile(rows, &h.Tier); err != nil {
 			return nil, err
 		}
-		out = append(out, f)
+		out = append(out, h)
 	}
 	return out, rows.Err()
 }
@@ -101,8 +128,8 @@ const headlineOptions = "MaxFragments=2, MaxWords=15, MinWords=6, FragmentDelimi
 // found, not from the whole text: ts_headline parses everything it is given,
 // 40 to 100 ms for a 460 000-character document. When the window has no word
 // found (a stem that does not start the word, "chevaux" for 'cheval'), it
-// falls back to the whole text.
-func (s *Store) SearchContent(ctx context.Context, owner, q string, limit int) ([]ContentHit, error) {
+// falls back to the whole text. filter narrows the files listed.
+func (s *Store) SearchContent(ctx context.Context, owner, q string, limit int, filter Filter) ([]ContentHit, error) {
 	owner, err := CleanOwner(owner)
 	if err != nil {
 		return nil, err
@@ -130,6 +157,8 @@ func (s *Store) SearchContent(ctx context.Context, owner, q string, limit int) (
 	// d.text || '' is a full copy: substr() on the stored, compressed text can
 	// fail on PostgreSQL 17.8 when its slice cuts an accented character. OFFSET 0
 	// keeps the copy and the search for the first word from being done twice.
+	args := []any{owner, strings.Join(words, " "), limit, firstWordPattern(lexemes), headlineOptions}
+	narrow, args := filter.SQL("f", args)
 	rows, err := s.Pool.Query(ctx, `
 		WITH q AS (SELECT websearch_to_tsquery('public.cloudos_fr', $2) AS query),
 		hits AS (
@@ -137,7 +166,7 @@ func (s *Store) SearchContent(ctx context.Context, owner, q string, limit int) (
 			FROM document_text d, q
 			WHERE d.tsv @@ q.query
 			  AND EXISTS (SELECT 1 FROM files f
-			              WHERE f.sha256 = d.sha256 AND f.kind = 'file' AND f.owner = $1 AND f.trash_id IS NULL)
+			              WHERE f.sha256 = d.sha256 AND f.kind = 'file' AND f.owner = $1 AND f.trash_id IS NULL`+narrow+`)
 			ORDER BY rank DESC
 			LIMIT $3),
 		extracts AS (
@@ -154,10 +183,9 @@ func (s *Store) SearchContent(ctx context.Context, owner, q string, limit int) (
 			    ELSE '' END AS near) w)
 		SELECT `+qualified("f", fileColumns)+`, e.rank, e.snippet
 		FROM extracts e
-		JOIN files f ON f.sha256 = e.sha256 AND f.kind = 'file' AND f.owner = $1 AND f.trash_id IS NULL
+		JOIN files f ON f.sha256 = e.sha256 AND f.kind = 'file' AND f.owner = $1 AND f.trash_id IS NULL`+narrow+`
 		ORDER BY e.rank DESC, f.modified_at DESC, f.path
-		LIMIT $3`,
-		owner, strings.Join(words, " "), limit, firstWordPattern(lexemes), headlineOptions)
+		LIMIT $3`, args...)
 	if err != nil {
 		return nil, err
 	}

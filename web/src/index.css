@@ -1217,6 +1217,55 @@ html:has(.desktop) body {
   padding: 2px 6px;
 }
 
+/* Type and period that narrow the list (#72) */
+.palette-filters {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.55rem 1.1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 9%, transparent);
+}
+
+.palette-kinds {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+}
+
+.palette-kinds button {
+  padding: 0.2rem 0.75rem;
+  border: 0;
+  border-radius: 7px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: transparent;
+}
+
+.palette-kinds button[aria-pressed='true'] {
+  color: var(--fg);
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(10, 5, 30, 0.18);
+}
+
+.palette-kinds button:focus-visible,
+.palette-filters select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.palette-filters select {
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--fg);
+  background: var(--surface);
+}
+
 .palette-main {
   flex: 1;
   min-height: 0;
@@ -1241,13 +1290,14 @@ html:has(.desktop) body {
   padding: 0.9rem 0.8rem;
 }
 
-.palette-group {
-  padding: 0.7rem 0.75rem 0.3rem;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
+/* The thumbnail of a photo in its line (#72) */
+.palette-thumb {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 7px;
+  object-fit: cover;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
 
 .palette-row {
@@ -1265,8 +1315,9 @@ html:has(.desktop) body {
 }
 
 /* The icon keeps its size beside a long extract. */
+/* As wide as a photo's thumbnail, so that every name starts at the same place */
 .palette-row > svg {
-  flex: none;
+  flex: 0 0 36px;
 }
 
 .palette-row.on .icon-folder {

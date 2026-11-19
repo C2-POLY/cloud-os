@@ -139,8 +139,9 @@ type Searcher struct {
 // Search returns the owner's live photos and videos closest to q, best
 // first, at most limit, none under MinScore. The workers encode q (an
 // embed.ErrUnavailable error when they cannot); only vectors of the same
-// model version are compared. An empty q finds nothing.
-func (s *Searcher) Search(ctx context.Context, owner, q string, limit int) ([]Hit, error) {
+// model version are compared. filter narrows the files, while the index is
+// walked. An empty q finds nothing.
+func (s *Searcher) Search(ctx context.Context, owner, q string, limit int, filter storage.Filter) ([]Hit, error) {
 	owner, err := storage.CleanOwner(owner)
 	if err != nil {
 		return nil, err
@@ -175,19 +176,20 @@ func (s *Searcher) Search(ctx context.Context, owner, q string, limit int) ([]Hi
 	if _, err := tx.Exec(ctx, `SELECT set_config('hnsw.ef_search', $1, true)`, strconv.Itoa(max(efSearch, limit))); err != nil {
 		return nil, err
 	}
+	args := []any{vec.Literal(), vec.Version, owner, limit, MinScore}
+	narrow, args := filter.SQL("f", args)
 	rows, err := tx.Query(ctx,
 		`WITH near AS MATERIALIZED (
 		     SELECT v.sha256, v.embedding <=> $1::vector AS distance FROM `+table+` v
 		     WHERE v.version = $2 AND EXISTS (SELECT 1 FROM files f WHERE f.sha256 = v.sha256
-		           AND f.owner = $3 AND f.kind = 'file' AND f.trash_id IS NULL)
+		           AND f.owner = $3 AND f.kind = 'file' AND f.trash_id IS NULL`+narrow+`)
 		     ORDER BY v.embedding <=> $1::vector
 		     LIMIT $4)
 		 SELECT f.id, f.owner, f.path, f.kind, f.size, f.mime, f.sha256, f.created_at, f.modified_at, 1 - near.distance
 		 FROM near JOIN files f ON f.sha256 = near.sha256
-		 WHERE f.owner = $3 AND f.kind = 'file' AND f.trash_id IS NULL AND 1 - near.distance >= $5
+		 WHERE f.owner = $3 AND f.kind = 'file' AND f.trash_id IS NULL AND 1 - near.distance >= $5`+narrow+`
 		 ORDER BY near.distance, f.path
-		 LIMIT $4`,
-		vec.Literal(), vec.Version, owner, limit, MinScore)
+		 LIMIT $4`, args...)
 	if err != nil {
 		return nil, err
 	}

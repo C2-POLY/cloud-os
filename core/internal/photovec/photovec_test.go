@@ -300,7 +300,7 @@ func TestSearchFindsTheAccountsLivePhotosClosestFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hits, err := s.Search(e.ctx, "enzo", "  chien   à la plage ", 0)
+	hits, err := s.Search(e.ctx, "enzo", "  chien   à la plage ", 0, storage.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,12 +317,12 @@ func TestSearchFindsTheAccountsLivePhotosClosestFirst(t *testing.T) {
 		t.Errorf("worker asked %q", q)
 	}
 
-	hits, err = s.Search(e.ctx, "johan", "chien à la plage", 0)
+	hits, err = s.Search(e.ctx, "johan", "chien à la plage", 0, storage.Filter{})
 	if got, want := paths(hits), []string{"johan/Vacances/chien.jpg", "johan/Vacances/sable.mp4"}; err != nil || !slices.Equal(got, want) {
 		t.Errorf("johan found %v (%v), want %v", got, err, want)
 	}
 
-	if hits, err := s.Search(e.ctx, "enzo", "chien", 1); err != nil || len(hits) != 1 {
+	if hits, err := s.Search(e.ctx, "enzo", "chien", 1, storage.Filter{}); err != nil || len(hits) != 1 {
 		t.Errorf("limit 1: %v %v", paths(hits), err)
 	}
 }
@@ -331,18 +331,18 @@ func TestSearchOfNothingAsksNoWorker(t *testing.T) {
 	e := newEnv(t)
 	worker := newFakeWorker(t, "v1", vec(1))
 	s := &photovec.Searcher{Pool: e.pool, Embed: &embed.Client{URL: worker.URL}}
-	hits, err := s.Search(e.ctx, "enzo", "   ", 0)
+	hits, err := s.Search(e.ctx, "enzo", "   ", 0, storage.Filter{})
 	if err != nil || hits == nil || len(hits) != 0 || worker.queries.Load() != 0 {
 		t.Errorf("empty search = %v, %v, %d queries", hits, err, worker.queries.Load())
 	}
 	// A long query is cut, whole characters, before the worker reads it.
-	if _, err := s.Search(e.ctx, "enzo", strings.Repeat("é", 500), 0); err != nil {
+	if _, err := s.Search(e.ctx, "enzo", strings.Repeat("é", 500), 0, storage.Filter{}); err != nil {
 		t.Fatal(err)
 	}
 	if q, _ := worker.last.Load().(string); utf8.RuneCountInString(q) != 200 || !utf8.ValidString(q) {
 		t.Errorf("worker asked %d characters", utf8.RuneCountInString(q))
 	}
-	if _, err := s.Search(e.ctx, "../enzo", "plage", 0); !errors.Is(err, storage.ErrInvalidPath) {
+	if _, err := s.Search(e.ctx, "../enzo", "plage", 0, storage.Filter{}); !errors.Is(err, storage.ErrInvalidPath) {
 		t.Errorf("bad owner: %v, want ErrInvalidPath", err)
 	}
 }
@@ -351,7 +351,7 @@ func TestSearchIsUnavailableWithoutAWorker(t *testing.T) {
 	e := newEnv(t)
 	for _, c := range []*embed.Client{nil, {}, {URL: "http://127.0.0.1:1"}} {
 		s := &photovec.Searcher{Pool: e.pool, Embed: c}
-		if _, err := s.Search(e.ctx, "enzo", "plage", 0); !errors.Is(err, embed.ErrUnavailable) {
+		if _, err := s.Search(e.ctx, "enzo", "plage", 0, storage.Filter{}); !errors.Is(err, embed.ErrUnavailable) {
 			t.Errorf("client %+v: %v, want ErrUnavailable", c, err)
 		}
 	}

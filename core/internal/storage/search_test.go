@@ -154,7 +154,7 @@ func withText(t *testing.T, s *Store, owner, p, text string) File {
 
 func searchContent(t *testing.T, s *Store, owner, q string, limit int) []ContentHit {
 	t.Helper()
-	hits, err := s.SearchContent(context.Background(), owner, q, limit)
+	hits, err := s.SearchContent(context.Background(), owner, q, limit, Filter{})
 	if err != nil {
 		t.Fatalf("search content %q: %v", q, err)
 	}
@@ -363,5 +363,57 @@ func TestSplitSnippetSetsTheWordsFoundApart(t *testing.T) {
 	}
 	if got := splitSnippet(""); got == nil || len(got) != 0 {
 		t.Errorf("empty: %#v", got)
+	}
+}
+
+func TestSearchNamesTellsHowTheNameMatchedAndFilters(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	put(t, s, "enzo", "Plage/photo.jpg", "\xFF\xD8\xFF\xE0 une photo")
+	put(t, s, "enzo", "Documents/la plage.txt", "un texte")
+	put(t, s, "enzo", "Documents/plage.txt", "un autre texte")
+	hits, err := s.SearchNames(ctx, "enzo", "plage", 0, Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	for _, h := range hits {
+		got[h.Path] = h.Tier
+	}
+	want := map[string]int{"Plage": TierStart, "Documents/plage.txt": TierStart, "Documents/la plage.txt": TierName, "Plage/photo.jpg": TierPath}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("tiers %v, want %v", got, want)
+	}
+
+	paths := func(f Filter) []string {
+		hits, err := s.SearchNames(ctx, "enzo", "plage", 0, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, h := range hits {
+			out = append(out, h.Path)
+		}
+		slices.Sort(out)
+		return out
+	}
+	if got := paths(Filter{Type: TypePhotos}); fmt.Sprint(got) != "[Plage/photo.jpg]" {
+		t.Errorf("photos: %v", got)
+	}
+	if got := paths(Filter{Type: TypeDocs}); fmt.Sprint(got) != "[Documents/la plage.txt Documents/plage.txt]" {
+		t.Errorf("documents: %v", got)
+	}
+	// Today is in the period; folders are left out of a period too.
+	today := time.Now().UTC()
+	if got := paths(Filter{From: today.AddDate(0, 0, -1), To: today.AddDate(0, 0, 1)}); len(got) != 3 {
+		t.Errorf("today: %v", got)
+	}
+	if got := paths(Filter{To: today.AddDate(-1, 0, 0)}); len(got) != 0 {
+		t.Errorf("a year ago: %v", got)
+	}
+
+	content, err := s.SearchContent(ctx, "enzo", "plage", 0, Filter{Type: TypePhotos})
+	if err != nil || len(content) != 0 {
+		t.Errorf("content of photos: %v, %v", content, err)
 	}
 }

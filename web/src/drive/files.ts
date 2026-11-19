@@ -1,18 +1,29 @@
 import { api } from '../api.ts'
-import type { ContentHit, Entry, SnippetPart } from '../../../shared/api-types.ts'
+import type { Entry, FoundBy, SearchAnswer, SearchHit, SnippetPart } from '../../../shared/api-types.ts'
 
-export type { ContentHit, Entry, SnippetPart }
+export type { Entry, FoundBy, SearchAnswer, SearchHit, SnippetPart }
 
 const q = (path: string) => encodeURIComponent(path)
 
-/** The account's files and folders whose path holds every word of q (accents and case ignored). */
-export function searchFiles(query: string, limit = 30): Promise<Entry[]> {
-  return api<Entry[]>('GET', `/api/search?q=${encodeURIComponent(query)}&limit=${limit}`)
+/** What narrows Demander's list: a type of file, and days (YYYY-MM-DD, included, in the browser's time zone). */
+export interface SearchFilters {
+  type?: 'docs' | 'photos'
+  from?: string
+  to?: string
 }
 
-/** The account's files whose text holds the words of q (French stems, accents and case ignored), with an extract. */
-export function searchContent(query: string, limit = 20): Promise<ContentHit[]> {
-  return api<ContentHit[]>('GET', `/api/search/content?q=${encodeURIComponent(query)}&limit=${limit}`)
+/**
+ * Demander's one list: the account's files found by name, by the words of
+ * their text, by its meaning and by what their photo shows, best first
+ * (GET /api/search/all).
+ */
+export function searchAll(query: string, filters: SearchFilters = {}, limit = 30): Promise<SearchAnswer> {
+  const params = new URLSearchParams({ q: query, limit: String(limit) })
+  if (filters.type) params.set('type', filters.type)
+  if (filters.from) params.set('from', filters.from)
+  if (filters.to) params.set('to', filters.to)
+  if (filters.from || filters.to) params.set('tz', Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
+  return api<SearchAnswer>('GET', `/api/search/all?${params}`)
 }
 
 /** The direct children of a folder ("" is the root). */

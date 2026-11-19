@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/C2-POLY/cloud-os/core/internal/embed"
+	"github.com/C2-POLY/cloud-os/core/internal/storage"
 	"github.com/C2-POLY/cloud-os/core/internal/textemb"
 )
 
@@ -37,7 +38,7 @@ func (a *semanticAPI) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	hits, err := a.docs.Search(r.Context(), owner(r), r.URL.Query().Get("q"), limit)
+	hits, err := a.docs.Search(r.Context(), owner(r), r.URL.Query().Get("q"), limit, storage.Filter{})
 	if errors.Is(err, embed.ErrUnavailable) {
 		slog.Warn("search by meaning", "err", err)
 		writeJSON(w, http.StatusServiceUnavailable, unavailable)
