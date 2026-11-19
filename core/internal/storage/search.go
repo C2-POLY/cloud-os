@@ -97,11 +97,13 @@ func (s *Store) SearchNames(ctx context.Context, owner, q string, limit int, fil
 const DefaultContentLimit = 20
 
 // ContentHit is a live file whose text holds the words searched: the rank of
-// its content (higher first) and an extract of the text around the words.
+// its content (higher first), an extract of the text around the words, and
+// how the words were found (MatchWords, MatchPrefix, MatchFuzzy).
 type ContentHit struct {
 	File
 	Rank    float32
 	Snippet []SnippetPart
+	Match   string
 }
 
 // SnippetPart is a piece of an extract: a word found (Hit) or the text around it.
@@ -123,6 +125,10 @@ const headlineOptions = "MaxFragments=2, MaxWords=15, MinWords=6, FragmentDelimi
 // together and dense come first, then the most recently modified; every live
 // file of the owner with that content is listed. A q without a word to look
 // for (only stop words, only exclusions) finds nothing.
+//
+// A word that no text has is looked up in the vocabulary of the texts
+// (textQuery, migration 0022): typed in part, it is completed; with a typo, it
+// is replaced by the words nearest to it. Without quotes or exclusions only.
 //
 // The extract is read from a 2 400-character window around the first word
 // found, not from the whole text: ts_headline parses everything it is given,
@@ -153,14 +159,26 @@ func (s *Store) SearchContent(ctx context.Context, owner, q string, limit int, f
 	if len(lexemes) == 0 {
 		return []ContentHit{}, nil
 	}
+	query := "websearch_to_tsquery('public.cloudos_fr', $2)"
+	text := strings.Join(words, " ")
+	tq, err := s.textQuery(ctx, words, lexemes)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case tq.unknown:
+		return []ContentHit{}, nil
+	case tq.match != MatchWords:
+		query, text, lexemes = "$2::tsquery", tq.query, tq.lexemes
+	}
 
 	// d.text || '' is a full copy: substr() on the stored, compressed text can
 	// fail on PostgreSQL 17.8 when its slice cuts an accented character. OFFSET 0
 	// keeps the copy and the search for the first word from being done twice.
-	args := []any{owner, strings.Join(words, " "), limit, firstWordPattern(lexemes), headlineOptions}
+	args := []any{owner, text, limit, firstWordPattern(lexemes), headlineOptions}
 	narrow, args := filter.SQL("f", args)
 	rows, err := s.Pool.Query(ctx, `
-		WITH q AS (SELECT websearch_to_tsquery('public.cloudos_fr', $2) AS query),
+		WITH q AS (SELECT `+query+` AS query),
 		hits AS (
 			SELECT d.sha256, ts_rank_cd(d.tsv, q.query, 2) AS rank
 			FROM document_text d, q
@@ -199,6 +217,7 @@ func (s *Store) SearchContent(ctx context.Context, owner, q string, limit int, f
 			return nil, err
 		}
 		h.Snippet = splitSnippet(snippet)
+		h.Match = tq.match
 		out = append(out, h)
 	}
 	return out, rows.Err()

@@ -417,3 +417,54 @@ func TestSearchNamesTellsHowTheNameMatchedAndFilters(t *testing.T) {
 		t.Errorf("content of photos: %v, %v", content, err)
 	}
 }
+
+func TestSearchContentCompletesAndCorrectsWords(t *testing.T) {
+	s := newStore(t)
+	withText(t, s, "enzo", "Warhallow.txt", "Rapport de la société Warhallow sur le périmètre du projet, en 2025.")
+	withText(t, s, "enzo", "Quittance.txt", "Quittance de loyer d'avril pour l'appartement.")
+	withText(t, s, "enzo", "Assurance.txt", "Contrat d'assurance habitation.")
+	withText(t, s, "enzo", "Jeux.txt", "Un Metroidvania suisse, édité par SWISSITUDE.")
+
+	type found struct {
+		paths   []string
+		match   string
+		extract string
+	}
+	got := func(q string) found {
+		t.Helper()
+		hits := searchContent(t, s, "enzo", q, 0)
+		var f found
+		f.paths = hitPaths(hits)
+		if len(hits) > 0 {
+			f.match, f.extract = hits[0].Match, marked(hits[0].Snippet)
+		}
+		return f
+	}
+	for q, want := range map[string]found{
+		// As typed, as before.
+		"Warhallow":    {[]string{"Warhallow.txt"}, MatchWords, ""},
+		"quittance":    {[]string{"Quittance.txt"}, MatchWords, ""},
+		"2025 rapport": {[]string{"Warhallow.txt"}, MatchWords, ""}, // a number is never corrected
+		// Typed in part.
+		"Warhal":        {[]string{"Warhallow.txt"}, MatchPrefix, "[Warhallow]"},
+		"périm":         {[]string{"Warhallow.txt"}, MatchPrefix, "[périmètre]"},
+		"rapport périm": {[]string{"Warhallow.txt"}, MatchPrefix, "[Rapport]"},
+		"Metroid":       {[]string{"Jeux.txt"}, MatchPrefix, "[Metroidvania]"},
+		"SWISSITU":      {[]string{"Jeux.txt"}, MatchPrefix, "[SWISSITUDE]"},
+		// With a typo.
+		"Warolo":            {[]string{"Warhallow.txt"}, MatchFuzzy, "[Warhallow]"},
+		"quitance de loyer": {[]string{"Quittance.txt"}, MatchFuzzy, "[Quittance]"},
+		"asurance":          {[]string{"Assurance.txt"}, MatchFuzzy, "[assurance]"},
+		// A word no text has, near or far, finds nothing; so does a whole query with one.
+		"chat":           {nil, "", ""},
+		"quittance chat": {nil, "", ""},
+		// Quotes and exclusions keep the words as typed.
+		`"Warhal"`:          {nil, "", ""},
+		"quittance -Warhal": {[]string{"Quittance.txt"}, MatchWords, ""},
+	} {
+		f := got(q)
+		if fmt.Sprint(f.paths) != fmt.Sprint(want.paths) || f.match != want.match || !strings.Contains(f.extract, want.extract) {
+			t.Errorf("%q: %v %q %q, want %v %q containing %q", q, f.paths, f.match, f.extract, want.paths, want.match, want.extract)
+		}
+	}
+}

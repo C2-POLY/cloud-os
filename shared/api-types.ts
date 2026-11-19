@@ -55,8 +55,8 @@ export interface SemanticHit extends Entry {
   excerpt: string // the window's first characters
 }
 
-/** How a file of Demander's list was found. */
-export type FoundBy = 'name' | 'text' | 'meaning' | 'image'
+/** How a file of Demander's list was found: its name, the words of its text (as typed, a word begun, a word near one with a typo), its meaning, what its photo shows. */
+export type FoundBy = 'name' | 'text' | 'prefix' | 'fuzzy' | 'meaning' | 'image'
 
 /**
  * A file of Demander's one list, as the core's `httpapi.SearchHit` writes it
