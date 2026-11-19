@@ -1,5 +1,6 @@
 import * as tus from 'tus-js-client'
 import { useSyncExternalStore } from 'react'
+import { FILE_STORED } from '../analysis/analysis.ts'
 
 // The upload queue: files dropped in the drive go to the core with tus, two at
 // a time. tus-js-client keeps each upload's URL in localStorage, so a cut
@@ -146,6 +147,7 @@ export class UploadQueue {
         },
         onSuccess: () => {
           this.set(id, { sent: file.size, state: 'done' })
+          window.dispatchEvent(new Event(FILE_STORED))
           this.uploads.delete(id)
           this.files.delete(id)
           const folder = item.path.includes('/') ? item.path.slice(0, item.path.lastIndexOf('/')) : ''

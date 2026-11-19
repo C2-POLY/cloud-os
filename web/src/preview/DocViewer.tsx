@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, Download, X } from 'lucide-react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { AnalysisSteps } from '../analysis/AnalysisSteps.tsx'
 import { messageOf } from '../api.ts'
 import { downloadURL, formatSize, type Entry } from '../drive/files.ts'
 import { enter } from '../motion/animate.ts'
@@ -94,6 +95,7 @@ export function DocViewer({ entry, onClose }: { entry: Entry; onClose: () => voi
             <X size={18} aria-hidden />
           </button>
         </header>
+        <AnalysisSteps path={entry.path} />
         <div ref={stage} className="doc-stage" data-lenis-prevent>
           {error && <p className="bad">{error}</p>}
           {!error && kind === 'pdf' && doc && <PdfPage doc={doc} page={page} width={width} label={`Page ${page} de ${entry.name}`} />}

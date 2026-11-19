@@ -69,6 +69,9 @@ var tables = []struct {
 	{23, []string{"document_categories", "file_categories"}, `INSERT INTO document_categories (sha256, category, score, margin, version)
 		VALUES (sha256('a'), 'contrats', 0.45, 0.15, 'v');
 		INSERT INTO file_categories (file_id, category) SELECT id, 'autre' FROM files WHERE path = 'a.txt'`},
+	// Migration 24 only adds an index on the tasks of a content.
+	{24, []string{"tasks_kind_sha"}, `INSERT INTO tasks (kind, payload) VALUES ('ocr', '{"sha256": "00"}');
+		SELECT 1 FROM tasks WHERE kind = 'ocr' AND payload ->> 'sha256' = '00'`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {

@@ -13,6 +13,7 @@ const johan: Account = { ...enzo, name: 'johan', display_name: 'Johan', role: 'm
 function api() {
   return mockApi({
     'GET /api/health': { status: 200, body: { version: '0.1.0', db: 'ok', migration: 10, tasks: { queued: 2, running: 1, failed: 0 } } },
+    'GET /api/analysis': { status: 200, body: { analysing: 0, failed: 0 } },
     'GET /api/files?path=': { status: 200, body: [] },
     'GET /api/files?path=Photos': { status: 200, body: [] },
     'GET /api/trash': { status: 200, body: [] },
@@ -57,7 +58,7 @@ describe('Desktop', () => {
     api()
     render(<Desktop me={enzo} onSignedOut={() => {}} />)
     expect(screen.getByRole('main', { name: 'Bureau' })).toBeInTheDocument()
-    expect(await screen.findByText('3 tâches en cours')).toBeInTheDocument()
+    expect(await screen.findByText('Sauvegarde à jour')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Fichiers' }))
     expect(window.location.pathname).toBe('/drive')

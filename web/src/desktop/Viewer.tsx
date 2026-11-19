@@ -1,6 +1,7 @@
 import { ChevronLeft, ChevronRight, Download, FolderOpen, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { AnalysisSteps } from '../analysis/AnalysisSteps.tsx'
 import { api } from '../api.ts'
 import { downloadURL, formatSize, parentOf, thumbURL } from '../drive/files.ts'
 import { enter } from '../motion/animate.ts'
@@ -132,6 +133,7 @@ export function Viewer({
           <dt>Dossier</dt>
           <dd>{parentOf(item.path) || 'Mon drive'}</dd>
         </dl>
+        <AnalysisSteps path={item.path} tone="dark" />
         <div className="viewer-actions">
           <a className="button secondary" href={downloadURL(item.path)} download={item.name}>
             <Download size={16} aria-hidden /> Télécharger
