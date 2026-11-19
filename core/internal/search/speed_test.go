@@ -123,7 +123,8 @@ func TestSpeedOn10000Files(t *testing.T) {
 		"taken in 2021":     {From: day("2021-01-01"), To: day("2021-12-31")},
 	}
 	queries := []string{"contrat de l'appart", "facture d'électricité", "chien à la plage", "relevé de compte de janvier",
-		"montant du dépôt de garantie", "assurance", "bail", "vacances au bord de la mer", "ordonnance pour l'angine", "loyer avril"}
+		"montant du dépôt de garantie", "assurance", "bail", "vacances au bord de la mer", "ordonnance pour l'angine", "loyer avril",
+		"quitance de loyer", "asurance habitation", "électrici", "kinési", "Warolo"}
 	for name, f := range filters {
 		var took []time.Duration
 		results := 0

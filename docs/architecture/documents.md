@@ -90,6 +90,8 @@ Table `document_text` (migrations `0017_document_text.sql` et `0019_document_ocr
 | `ocr_model` | Le modèle qui a lu le texte (`pp-ocrv5-latin`, `worker.models.OCR_MODEL`) ; NULL quand le texte vient du fichier. Toujours posé pour une `image` (contrainte `document_text_image_ocr`) |
 | `tsv` | Le `tsvector` du texte (`cloudos_doc_tsv`, configuration `cloudos_fr`), colonne générée pour la recherche dans le contenu ([search.md](search.md)) |
 
+Trois triggers par instruction tiennent à jour `search_words`, le vocabulaire des textes qui corrige les fautes de frappe de la recherche (#85, [search.md](search.md)) : ils comptent les mots de chaque texte écrit, réécrit par l'OCR ou supprimé.
+
 Postgres compresse le texte (TOAST) : 10 000 documents d'une vingtaine de pages font environ 200 Mo avant compression.
 
 Pas de clé étrangère vers `files` : toutes les 30 s, avec `Reap`, `thumbs.Prune` et `meta.Prune`, le cœur fait `doctext.Prune`, qui supprime les lignes dont aucun fichier (vivant ou en corbeille) n'a l'empreinte. Un document restauré de la corbeille retrouve donc la sienne. Les vecteurs du texte (#70) partent avec la ligne, en cascade.
@@ -185,7 +187,7 @@ Chaque document avec du texte reçoit une catégorie : Factures, Contrats, Impô
 |---|---|---|
 | Catégories, phrases, règle, tâche `doccat` | `worker/src/worker/doccat.py` | `CATEGORIES`, `classify`, `version`, `make` |
 | Classement à l'indexation | `worker/src/worker/textemb.py` | dans la transaction des vecteurs |
-| Tables | `core/migrations/0022_document_categories.sql` | `document_categories` (par contenu), `file_categories` (la correction, par fichier) |
+| Tables | `core/migrations/0023_document_categories.sql` | `document_categories` (par contenu), `file_categories` (la correction, par fichier) |
 | Rattrapage, listes, corrections | `core/internal/doccat` | `Backfill`, `Sync`, `Summary`, `List`, `Get`, `Set` |
 | Routes | `core/internal/httpapi/documents.go` | `/api/documents…` (session exigée) |
 | App Documents | `web/src/documents/` | [web.md](web.md) |

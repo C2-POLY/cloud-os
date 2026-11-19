@@ -47,6 +47,8 @@ export function filtersOf(kind: Kind, period: Period, today: Date): SearchFilter
 const foundByLabels: Record<FoundBy, string> = {
   name: 'le nom',
   text: 'les mots du texte',
+  prefix: "le début d'un mot du texte",
+  fuzzy: 'un mot approchant du texte',
   meaning: 'le sens du texte',
   image: "ce que montre l'image",
 }

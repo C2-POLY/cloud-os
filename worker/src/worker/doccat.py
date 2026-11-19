@@ -47,7 +47,7 @@ THRESHOLD = 0.15
 
 # The categories, in the order the web shows them, each with sentences that
 # describe its documents. The ids are those of the migration's CHECK
-# (core/migrations/0022_document_categories.sql), core/internal/doccat and the
+# (core/migrations/0023_document_categories.sql), core/internal/doccat and the
 # web. Changing a sentence changes the version: every document is classified
 # again, from its stored vectors.
 CATEGORIES: dict[str, tuple[str, ...]] = {

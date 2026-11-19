@@ -39,7 +39,7 @@ const (
 
 // Categories are the ids of the categories, in the order the web shows them:
 // those of worker.doccat.CATEGORIES and of the CHECK of
-// core/migrations/0022_document_categories.sql. Other is the last one, for
+// core/migrations/0023_document_categories.sql. Other is the last one, for
 // documents near none of the others.
 var Categories = []string{"factures", "contrats", "impots", "sante", "banque", "travail", "administratif", Other}
 

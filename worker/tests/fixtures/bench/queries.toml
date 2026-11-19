@@ -217,3 +217,50 @@ docs = ["certificat-immatriculation", "contrat-assurance-auto", "facture-garage"
 q = "vacances au bord de la mer"
 photos = ["plage", "plage-2", "coucher-soleil"]
 docs = ["location-vacances"]
+
+# Words typed in part and with typos (#85): the document first, found in its
+# text by the word completed (prefix) or corrected (fuzzy).
+
+[[partial]]
+q = "quittan"
+expect = ["quittance-loyer-avril"]
+
+[[partial]]
+q = "kinési"
+expect = ["ordonnance-kine"]
+
+[[partial]]
+q = "Biarr"
+expect = ["location-vacances"]
+
+[[partial]]
+q = "radiogra"
+expect = ["compte-rendu-radio"]
+
+[[partial]]
+q = "vidan"
+expect = ["facture-garage"]
+
+[[partial]]
+q = "scolar"
+expect = ["certificat-scolarite"]
+
+[[typo]]
+q = "quitance de loyer"
+expect = ["quittance-loyer-avril"]
+
+[[typo]]
+q = "location à Biaritz"
+expect = ["location-vacances"]
+
+[[typo]]
+q = "facture d'electrisite"
+expect = ["facture-electricite-mars"]
+
+[[typo]]
+q = "asurance habitation"
+expect = ["assurance-habitation"]
+
+[[typo]]
+q = "kinésitérapie"
+expect = ["ordonnance-kine"]

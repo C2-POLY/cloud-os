@@ -20,7 +20,7 @@ from worker import doccat, models, tasks, textemb, vectors
 
 FIXTURES = Path(__file__).parent / "fixtures"
 MIGRATION = (
-    Path(__file__).resolve().parents[2] / "core" / "migrations" / "0022_document_categories.sql"
+    Path(__file__).resolve().parents[2] / "core" / "migrations" / "0023_document_categories.sql"
 )
 INVOICE = (FIXTURES / "bench" / "docs" / "facture-electricite-mars.txt").read_text()
 

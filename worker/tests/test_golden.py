@@ -32,7 +32,7 @@ def test_the_vectors_are_of_the_corpus_and_queries_of_today() -> None:
     photos = {p.stem for p in (BENCH / "photos").glob("*.jpg")}
     assert {p["name"] for p in g["photos"]} == photos, AGAIN
     toml = tomllib.loads((BENCH / "queries.toml").read_text())
-    want = [{"kind": kind, **q} for kind in ("text", "image", "mixed") for q in toml[kind]]
+    want = [{"kind": kind, **q} for kind, qs in toml.items() for q in qs]
     got = [{k: v for k, v in q.items() if k != "vectors"} for q in g["queries"]]
     assert got == want, AGAIN
     for q in g["queries"]:
