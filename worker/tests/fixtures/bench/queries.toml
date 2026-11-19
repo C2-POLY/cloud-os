@@ -264,3 +264,31 @@ expect = ["assurance-habitation"]
 [[typo]]
 q = "kinésitérapie"
 expect = ["ordonnance-kine"]
+
+# The start of a proper noun, a word neither model knows (#88): SigLIP 2
+# gives every photo about the same cosine, which must not pass the document
+# whose text has the word.
+
+[[partial]]
+q = "Etchev"
+expect = ["location-vacances"]
+
+[[partial]]
+q = "Stalingr"
+expect = ["ordonnance-kine"]
+
+[[partial]]
+q = "Augagn"
+expect = ["facture-veterinaire"]
+
+[[partial]]
+q = "Garni"
+expect = ["ordonnance-antibiotiques"]
+
+[[partial]]
+q = "Dunoi"
+expect = ["devis-plombier"]
+
+[[partial]]
+q = "Synte"
+expect = ["bulletin-salaire-mars", "contrat-travail"]

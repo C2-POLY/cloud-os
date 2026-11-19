@@ -27,7 +27,7 @@ func TestScalesMapCosinesOntoConfidences(t *testing.T) {
 		want   float64
 	}{
 		{docScale, 0.10, 0}, {docScale, 0.15, 0}, {docScale, 0.30, 0.5}, {docScale, 0.45, 1}, {docScale, 0.68, 1},
-		{photoScale, 0.06, 0}, {photoScale, 0.065, 0}, {photoScale, 0.0925, 0.5}, {photoScale, 0.12, 1}, {photoScale, 0.14, 1},
+		{photoScale, 0.01, 0}, {photoScale, 0.02, 0}, {photoScale, 0.04, 0.5}, {photoScale, 0.06, 1}, {photoScale, 0.08, 1},
 	} {
 		if got := c.s.of(c.cosine); !near(got, c.want) {
 			t.Errorf("%v.of(%v) = %v, want %v", c.s, c.cosine, got, c.want)
@@ -86,7 +86,7 @@ func TestNameTiers(t *testing.T) {
 }
 
 func TestPhotosThatAreMerelyTheLeastFarGo(t *testing.T) {
-	photos := []photovec.Hit{{File: file("plage.jpg"), Score: 0.0815}, {File: file("chat.jpg"), Score: 0.07}}
+	photos := []photovec.Hit{{File: file("plage.jpg"), Lift: 0.032}, {File: file("chat.jpg"), Lift: 0.0236}}
 	// Beside a document that answers clearly (score 1, so the floor is 0.3),
 	// a photo at 0.3 stays and one under 0.2 goes.
 	hits := fuse(nil, nil, []textemb.Hit{{File: file("bail.pdf"), Score: 0.5}}, photos)
@@ -94,7 +94,7 @@ func TestPhotosThatAreMerelyTheLeastFarGo(t *testing.T) {
 		t.Errorf("with a clear document: %v, want %v", paths(hits), want)
 	}
 	// A clear photo makes the floor 0.3 too.
-	hits = fuse(nil, nil, nil, []photovec.Hit{{File: file("chien.jpg"), Score: 0.13}, {File: file("chat.jpg"), Score: 0.08}})
+	hits = fuse(nil, nil, nil, []photovec.Hit{{File: file("chien.jpg"), Lift: 0.07}, {File: file("chat.jpg"), Lift: 0.031}})
 	if want := []string{"chien.jpg"}; !slices.Equal(paths(hits), want) {
 		t.Errorf("with a clear photo: %v, want %v", paths(hits), want)
 	}
@@ -124,20 +124,39 @@ func TestTiesKeepTheOrderOfTheSearches(t *testing.T) {
 		t.Errorf("by place: %v, want %v", got, want)
 	}
 	// Sure of both (confidence 1) and first of their lists: the most recent first.
-	got = paths(fuse(nil, nil, []textemb.Hit{{File: older, Score: 0.6}}, []photovec.Hit{{File: newer, Score: 0.2}}))
+	got = paths(fuse(nil, nil, []textemb.Hit{{File: older, Score: 0.6}}, []photovec.Hit{{File: newer, Lift: 0.1}}))
 	if want := []string{"c-newer", "b-older"}; !slices.Equal(got, want) {
 		t.Errorf("same place: %v, want %v", got, want)
 	}
 	// Then the path.
-	got = paths(fuse(nil, nil, []textemb.Hit{{File: file("b"), Score: 0.6}}, []photovec.Hit{{File: file("a"), Score: 0.2}}))
+	got = paths(fuse(nil, nil, []textemb.Hit{{File: file("b"), Score: 0.6}}, []photovec.Hit{{File: file("a"), Lift: 0.1}}))
 	if want := []string{"a", "b"}; !slices.Equal(got, want) {
 		t.Errorf("same date: %v, want %v", got, want)
 	}
 }
 
+func TestAPhotoThatDoesNotStandOutNeverPassesAWordBegun(t *testing.T) {
+	// « Etchev »: SigLIP 2 gives every photo about the same cosine (0.085),
+	// so the best one stands 0.015 over the mean. The document whose text
+	// has Etcheverry comes first, and the photos go.
+	photos := []photovec.Hit{
+		{File: file("montagne.jpg"), Score: 0.085, Lift: 0.015},
+		{File: file("chat.jpg"), Score: 0.08, Lift: 0.01},
+	}
+	hits := fuse(nil, []storage.ContentHit{{File: file("location.txt"), Match: storage.MatchPrefix}}, nil, photos)
+	if want := []string{"location.txt"}; !slices.Equal(paths(hits), want) {
+		t.Errorf("%v, want %v", paths(hits), want)
+	}
+	// A photo that stands out keeps its place beside the word begun.
+	photos[0].Lift = 0.06
+	if got := paths(fuse(nil, []storage.ContentHit{{File: file("location.txt"), Match: storage.MatchPrefix}}, nil, photos)); !slices.Equal(got, []string{"montagne.jpg", "location.txt"}) {
+		t.Errorf("a photo that stands out: %v", got)
+	}
+}
+
 func TestTheSameFileFromTwoSearchesIsOneHit(t *testing.T) {
 	f := file("Photos/plage.jpg")
-	hits := fuse([]storage.NameHit{{File: f, Tier: storage.TierStart}}, nil, nil, []photovec.Hit{{File: f, Score: 0.12}})
+	hits := fuse([]storage.NameHit{{File: f, Tier: storage.TierStart}}, nil, nil, []photovec.Hit{{File: f, Lift: 0.07}})
 	if len(hits) != 1 || !near(hits[0].Score, 1) || fmt.Sprint(hits[0].FoundBy) != "[name image]" {
 		t.Errorf("hits %+v", hits)
 	}

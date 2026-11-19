@@ -69,11 +69,15 @@ func (s scale) of(cosine float64) float64 {
 }
 
 // The cosines of the two models are on scales of their own: a right document
-// scores 0.27 to 0.68 with Arctic Embed, a right photo 0.09 to 0.14 with
-// SigLIP 2, which gives unrelated photos up to 0.10.
+// scores 0.27 to 0.68 with Arctic Embed. A right photo scores 0.09 to 0.14
+// with SigLIP 2, which gives unrelated photos up to 0.10, and every photo
+// about 0.08 for a word it does not know: a photo's confidence comes from its
+// lift over the mean of the account's photos (photovec.Hit.Lift), 0.036 or
+// more for a right photo, 0.024 at most when the query is a word typed in
+// part or with a typo.
 var (
 	docScale   = scale{floor: 0.15, full: 0.45}
-	photoScale = scale{floor: 0.065, full: 0.12}
+	photoScale = scale{floor: 0.02, full: 0.06}
 )
 
 // A file found only by meaning is kept when its score reaches keepAbs and
@@ -232,7 +236,7 @@ func fuse(names []storage.NameHit, texts []storage.ContentHit, docs []textemb.Hi
 		add(h.File, i, ByMeaning, docScale.of(h.Score)).hit.Excerpt = h.Excerpt
 	}
 	for i, h := range photos {
-		add(h.File, i, ByImage, photoScale.of(h.Score))
+		add(h.File, i, ByImage, photoScale.of(h.Lift))
 	}
 
 	best := 0.0

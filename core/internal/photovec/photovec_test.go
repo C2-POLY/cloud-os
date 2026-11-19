@@ -310,6 +310,13 @@ func TestSearchFindsTheAccountsLivePhotosClosestFirst(t *testing.T) {
 	if len(hits) == 3 && (math.Abs(hits[0].Score-1) > 1e-6 || math.Abs(hits[2].Score-0.8) > 1e-6) {
 		t.Errorf("scores %v %v %v", hits[0].Score, hits[1].Score, hits[2].Score)
 	}
+	// The lift is over the mean of enzo's live contents of the version, the
+	// cat under MinScore included, each content once, started from 10 photos
+	// at MinScore: (1 + 0.8 + 0 + 10 × 0.06) / 13.
+	mean := (1 + 0.8 + 0 + 10*photovec.MinScore) / 13
+	if len(hits) == 3 && (math.Abs(hits[0].Lift-(1-mean)) > 1e-6 || math.Abs(hits[1].Lift-(1-mean)) > 1e-6 || math.Abs(hits[2].Lift-(0.8-mean)) > 1e-6) {
+		t.Errorf("lifts %v %v %v, want %v %v %v", hits[0].Lift, hits[1].Lift, hits[2].Lift, 1-mean, 1-mean, 0.8-mean)
+	}
 	if len(hits) > 0 && (hits[0].MIME != "image/jpeg" || hex.EncodeToString(hits[0].SHA256) != hexsum(jpeg+"dog on the beach") || hits[0].Kind != "file") {
 		t.Errorf("hit = %+v", hits[0].File)
 	}
@@ -320,6 +327,13 @@ func TestSearchFindsTheAccountsLivePhotosClosestFirst(t *testing.T) {
 	hits, err = s.Search(e.ctx, "johan", "chien à la plage", 0, storage.Filter{})
 	if got, want := paths(hits), []string{"johan/Vacances/chien.jpg", "johan/Vacances/sable.mp4"}; err != nil || !slices.Equal(got, want) {
 		t.Errorf("johan found %v (%v), want %v", got, err, want)
+	}
+	// johan's mean is his own: his dog and the video, never enzo's photos.
+	if len(hits) == 2 {
+		mean := (hits[0].Score + hits[1].Score + 10*photovec.MinScore) / 12
+		if math.Abs(hits[0].Lift-(hits[0].Score-mean)) > 1e-6 || math.Abs(hits[1].Lift-(hits[1].Score-mean)) > 1e-6 {
+			t.Errorf("johan's lifts %v %v, want over his mean %v", hits[0].Lift, hits[1].Lift, mean)
+		}
 	}
 
 	if hits, err := s.Search(e.ctx, "enzo", "chien", 1, storage.Filter{}); err != nil || len(hits) != 1 {

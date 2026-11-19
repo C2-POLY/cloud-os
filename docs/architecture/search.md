@@ -139,7 +139,7 @@ sequenceDiagram
 
 **Le budget.** Les deux recherches par le sens ont 800 ms en tout (`DefaultBudget`), du vecteur demandé au worker jusqu'au parcours de l'index. Passé ce délai, ou si le worker est arrêté ou n'a pas le modèle, la réponse part avec les noms et les mots, et `partial: true` ; Demander l'écrit en une ligne. Une erreur des noms ou des mots fait échouer la route ; une erreur du sens la rend seulement partielle, et s'écrit dans le journal (jamais la requête).
 
-**La fusion : des scores calibrés, pas RRF.** Les cosinus des deux modèles ne se comparent pas tels quels : un bon document fait 0,27 à 0,68 avec Arctic, une bonne photo 0,09 à 0,14 avec SigLIP 2, qui donne jusqu'à 0,10 à une photo sans rapport. Chaque recherche donne donc, pour chaque fichier trouvé, une confiance entre 0 et 1 :
+**La fusion : des scores calibrés, pas RRF.** Les cosinus des deux modèles ne se comparent pas tels quels : un bon document fait 0,27 à 0,68 avec Arctic, une bonne photo 0,09 à 0,14 avec SigLIP 2, qui donne jusqu'à 0,10 à une photo sans rapport, et environ 0,08 à toutes les photos pour un mot qu'il ne connaît pas (« périm », « Etchev »). Chaque recherche donne donc, pour chaque fichier trouvé, une confiance entre 0 et 1 :
 
 | Recherche | Confiance |
 |---|---|
@@ -148,13 +148,16 @@ sequenceDiagram
 | Début de mot (`confPrefix`) | 0,3 : un mot tapé en partie, complété |
 | Mot approché (`confFuzzy`) | 0,25 : un mot tapé avec une faute, corrigé |
 | Sens d'un document (`docScale`) | `(cos − 0,15) / 0,30`, bornée à [0, 1] |
-| Sens d'une photo (`photoScale`) | `(cos − 0,065) / 0,055`, bornée à [0, 1] |
+| Sens d'une photo (`photoScale`) | `(écart − 0,02) / 0,04`, bornée à [0, 1], où l'écart (`photovec.Hit.Lift`) est le cosinus de la photo moins la moyenne des photos du compte pour la même requête |
 
 - **Le score d'un fichier** est `1 − Π(1 − c)` sur les recherches qui l'ont trouvé : une recherche sûre suffit, deux qui s'accordent se renforcent. Il classe la liste d'une requête et ne se compare pas d'une requête à l'autre.
 - **Le seuil** (`keepAbs`, `keepRel`) : un fichier trouvé seulement par le sens, ou par un mot approché, reste si son score atteint `max(0,2 ; 0,3 × le meilleur score de la requête)`. Le nom et les mots, tels quels ou complétés, ne sont jamais coupés : une faute ne passe jamais devant une réponse sûre. Pour « contrat de l'appart », le bail fait 1 et les photos les plus proches 0,2 : elles partent. Une requête vague, où rien n'est sûr, garde sa liste.
 - **À score égal**, le fichier le mieux placé dans l'une des listes passe d'abord, puis le plus récent, puis le chemin.
 - **Pourquoi pas RRF** : la fusion par rangs réciproques donne le même poids au premier de chaque liste, quel que soit son score. Le premier document par le sens est donc ex aequo avec la première photo, même pour « un chat qui dort » : simulée sur les réponses des quatre routes, elle ne met la bonne photo en premier que pour 1 requête de photo sur 15. La pondérer par le score demanderait la même calibration.
-- **Les constantes** viennent du banc d'essai (30 documents, 17 photos, 52 requêtes, `worker/tests/fixtures/bench`). Dans une grille de 2 916 jeux de constantes autour d'elles, 1 582 gardent 32 sur 33, 15 sur 15, les chiens en tête et aucune photo devant le bon document : elles ne tiennent pas à un cheveu. À revoir avec le matériel de référence, et si un modèle change.
+- **L'écart d'une photo, pas son cosinus** (#88). Le cosinus brut ne sépare pas une bonne photo du bruit : 0,090 pour le chat de « un chat qui dort », 0,097 pour la montagne de « facture de gaz de l'hiver ». L'écart avec la moyenne les sépare : sur le banc, 0,036 ou plus pour une bonne photo (requêtes de photo et mixtes), 0,024 au plus pour un mot tapé en partie ou avec une faute. Avant, une photo sans rapport à 0,085 valait 0,36 de confiance et passait devant le document d'un début de mot (0,3) : « Etchev » sortait la montagne avant la location à Biarritz.
+  - La moyenne est prise sur 1 000 photos du compte au plus, les premières par empreinte, donc au hasard, dans toutes ses photos quel que soit le filtre.
+  - Elle part de 10 photos à `MinScore` (0,06) : un compte qui n'a que quelques photos, dont la bonne tire la moyenne vers le haut, est traité comme une bibliothèque moyenne. Au-delà de quelques dizaines de photos, sa propre moyenne l'emporte.
+- **Les constantes** viennent du banc d'essai (30 documents, 17 photos, 52 requêtes, `worker/tests/fixtures/bench`). Dans une grille de 2 916 jeux de constantes autour d'elles, 1 582 gardent 32 sur 33, 15 sur 15, les chiens en tête et aucune photo devant le bon document : elles ne tiennent pas à un cheveu. Pour l'écart des photos, 55 jeux sur 80 passent tout le banc (zéro de 0,01 à 0,03, plein de 0,05 à 0,08, 0 à 20 photos de départ), dont tous les voisins directs du jeu retenu ; ceux qui échouent donnent trop peu de confiance aux photos. À revoir avec le matériel de référence, et si un modèle change.
 
 **Réponse.** `SearchAnswer` (`shared/api-types.ts`) : `results`, des `SearchHit` (l'entrée du fichier, son `score`, `found_by` parmi `name`, `text`, `prefix`, `fuzzy`, `meaning`, `image`, l'extrait des mots `snippet` ou, à défaut, le passage le plus proche par le sens `excerpt`), et `partial`. 30 résultats par défaut, 100 au plus.
 
@@ -170,9 +173,9 @@ sequenceDiagram
 - **Résultats** : la bonne réponse arrive en premier pour 32 requêtes de document sur 33 et pour les 15 requêtes de photo.
   - La manquée, « montant du dépôt de garantie », l'est déjà par Arctic seul ([search-ai.md](search-ai.md)).
   - Les trois photos de chien à la plage sont en tête de « chien à la plage », et aucune photo ne passe devant le bon document.
-  - Sur les 33 requêtes de document, 9 photos sont listées en tout, après le document ; sur les 15 requêtes de photo, 5 documents, après la photo.
+  - Sur les 33 requêtes de document, 4 photos sont listées en tout, après le document (9 avec le cosinus brut) ; sur les 15 requêtes de photo, 5 documents, après la photo.
   - « chien », « plage », « voiture » et « vacances au bord de la mer » mêlent photos et documents dans leurs 8 premiers.
-  - Les 6 débuts de mots (« quittan », « kinési », « Biarr », « radiogra », « vidan », « scolar ») et les 5 fautes (« quitance de loyer », « location à Biaritz », « facture d'electrisite », « asurance habitation », « kinésitérapie ») trouvent leur document en premier, complété (`prefix`) ou corrigé (`fuzzy`).
+  - Les 12 débuts de mots (« quittan », « kinési », « Biarr », « radiogra », « vidan », « scolar », et les noms propres « Etchev », « Stalingr », « Augagn », « Garni », « Dunoi », « Synte ») et les 5 fautes (« quitance de loyer », « location à Biaritz », « facture d'electrisite », « asurance habitation », « kinésitérapie ») trouvent leur document en premier, complété (`prefix`) ou corrigé (`fuzzy`).
   - Sans le worker, 20 requêtes de document sur 33 trouvent encore le leur en premier, par les noms et les mots (18 avant les débuts de mots).
 - **Les vecteurs se font sous Linux**, comme sur la box. Sous macOS, l'export int8 de la partie texte de SigLIP 2 donne d'autres vecteurs, qui notent jusqu'à 0,02 plus haut des photos sans rapport : avec eux, des photos passaient le seuil sous des requêtes de document.
 
