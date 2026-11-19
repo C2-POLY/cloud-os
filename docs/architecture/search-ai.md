@@ -52,6 +52,7 @@ sequenceDiagram
   - Les offsets viennent du tokenizer du modèle, sans le reconfigurer : il est partagé avec le point de requête (`worker.embedserver`). Sa troncature découpe un long texte en morceaux (`overflowing`), et ces morceaux mis bout à bout donnent chaque token avec sa place dans le texte. Charger une seconde copie du tokenizer coûterait 280 Mo.
 - **Encodage :** un morceau à la fois, sans préfixe (Arctic ne met `query: ` que devant une requête), avec l'export fp16 d'Arctic (voir plus bas). Mesuré sous Linux arm64 sur le Mac, 4 fils, comme dans l'ADR 005 : 189 ms par fenêtre, 16 ms par requête. Estimé sur un Pi 5 (×6) : 1,1 s par fenêtre, 70 s au pire pour un document de 64 fenêtres, le bail de la tâche étant prolongé par `keep_lease` ([tasks.md](tasks.md)). Encoder les fenêtres par lots de quatre ne fait rien gagner et coûte 600 Mo de RAM de plus.
 - **Écriture :** dans une transaction, la tâche supprime les lignes du contenu puis insère les nouvelles. Une recherche voit l'ancienne version ou la nouvelle, jamais un mélange. Elle ne lit que `document_text` : aucun fichier n'est lu ni écrit.
+- **Catégorie :** la même transaction écrit la catégorie du document (Factures, Contrats…), calculée avec les vecteurs qu'elle vient d'encoder (`worker.doccat`, #73, [documents.md](documents.md)).
 - **Rien à faire** quand le contenu n'a plus de texte (aucun fichier ne l'a plus) ou pas encore de mots (un scan), ou quand ses vecteurs sont déjà à la version courante.
 
 ### Pourquoi 512 tokens, alors qu'Arctic en lit 8 192

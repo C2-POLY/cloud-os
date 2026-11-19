@@ -63,6 +63,9 @@ var tables = []struct {
 		SELECT sha256('a'), 'siglip2-base-patch16-224', 'v1', 'image', array_fill(0.036::real, ARRAY[768])::vector`},
 	{21, []string{"text_vectors_arctic_m_v2"}, `INSERT INTO text_vectors_arctic_m_v2 (sha256, chunk, start_char, end_char, model, version, embedding)
 		VALUES (sha256('a'), 0, 0, 19, 'arctic-embed-m-v2.0', 'v', array_fill(0.036, ARRAY[768])::halfvec)`},
+	{22, []string{"document_categories", "file_categories"}, `INSERT INTO document_categories (sha256, category, score, margin, version)
+		VALUES (sha256('a'), 'contrats', 0.45, 0.15, 'v');
+		INSERT INTO file_categories (file_id, category) SELECT id, 'autre' FROM files WHERE path = 'a.txt'`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {

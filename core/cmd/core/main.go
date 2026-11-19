@@ -7,6 +7,7 @@
 //	core selftest [N]        queue N selftest tasks and wait for the workers to run them
 //	core photovec backfill   queue the vector of every stored photo and video that has none
 //	core textemb backfill    queue the vectors of every stored document with text that has none
+//	core doccat backfill     queue the category of every stored document whose vectors have none of the workers' version
 package main
 
 import (
@@ -31,6 +32,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/albums"
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
+	"github.com/C2-POLY/cloud-os/core/internal/doccat"
 	"github.com/C2-POLY/cloud-os/core/internal/doctext"
 	"github.com/C2-POLY/cloud-os/core/internal/embed"
 	"github.com/C2-POLY/cloud-os/core/internal/httpapi"
@@ -142,13 +144,22 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 			fmt.Fprintf(out, "%d document vectors queued\n", n)
 			return err
 		})
+	case "doccat":
+		if len(args) != 1 || args[0] != "backfill" {
+			return errors.New("usage: core doccat backfill")
+		}
+		return withCore(ctx, func(c core) error {
+			n, err := doccat.Backfill(ctx, &tasks.Queue{Pool: c.pool})
+			fmt.Fprintf(out, "%d document classifications queued\n", n)
+			return err
+		})
 	case "reset-password":
 		if len(args) != 1 {
 			return errors.New("usage: core reset-password NAME (the new password is read from stdin)")
 		}
 		return withCore(ctx, func(c core) error { return resetPassword(ctx, c, args[0], os.Stdin, out) })
 	default:
-		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, text, ocr, photovec, textemb, reset-password)", cmd)
+		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, text, ocr, photovec, textemb, doccat, reset-password)", cmd)
 	}
 }
 
@@ -237,18 +248,19 @@ func serve(ctx context.Context, c core) error {
 	srv := &http.Server{
 		Addr: addr,
 		Handler: httpapi.NewHandler(httpapi.Config{
-			Version:   version,
-			Health:    &db.Store{Pool: c.pool, Migrations: c.provider},
-			Auth:      auth.NewService(c.pool),
-			Files:     c.files,
-			Shares:    shares,
-			MapsDir:   os.Getenv("MAPS_DIR"),
-			Albums:    &albums.Service{Pool: c.pool, Files: c.files},
-			Photos:    &photovec.Searcher{Pool: c.pool, Embed: workers},
-			Documents: &textemb.Searcher{Pool: c.pool, Embed: workers},
-			Activity:  &activity.Log{Pool: c.pool},
-			MaxUpload: maxUpload(),
-			StaticDir: os.Getenv("STATIC_DIR"),
+			Version:    version,
+			Health:     &db.Store{Pool: c.pool, Migrations: c.provider},
+			Auth:       auth.NewService(c.pool),
+			Files:      c.files,
+			Shares:     shares,
+			MapsDir:    os.Getenv("MAPS_DIR"),
+			Albums:     &albums.Service{Pool: c.pool, Files: c.files},
+			Photos:     &photovec.Searcher{Pool: c.pool, Embed: workers},
+			Documents:  &textemb.Searcher{Pool: c.pool, Embed: workers},
+			Categories: &doccat.Store{Pool: c.pool},
+			Activity:   &activity.Log{Pool: c.pool},
+			MaxUpload:  maxUpload(),
+			StaticDir:  os.Getenv("STATIC_DIR"),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -339,7 +351,8 @@ func queueBackgroundWork(q *tasks.Queue, priority int) func(context.Context, sto
 
 // reapTasksEvery gives back the tasks of dead workers, prunes old done tasks
 // and what no file has any more, and queues every photo and document again
-// when the workers declare a new model version.
+// when the workers declare a new model version, or a new version of the
+// classifier of documents.
 func reapTasksEvery(ctx context.Context, q *tasks.Queue, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
@@ -377,6 +390,11 @@ func reapTasksEvery(ctx context.Context, q *tasks.Queue, every time.Duration) {
 				slog.Error("queue document vectors for the model", "err", err)
 			} else if n > 0 {
 				slog.Info("document vectors queued for the workers' model", "model", textemb.Model, "count", n)
+			}
+			if n, err := doccat.Sync(ctx, q); err != nil {
+				slog.Error("queue document categories for the classifier", "err", err)
+			} else if n > 0 {
+				slog.Info("document categories queued for the workers' classifier", "count", n)
 			}
 			if _, err := (&activity.Log{Pool: q.Pool}).Prune(ctx); err != nil {
 				slog.Error("prune activity", "err", err)

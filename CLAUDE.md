@@ -17,6 +17,7 @@ Containers first: the whole application runs in Docker Compose, and the OS is on
 - AI workers (text and image embeddings, OCR, speech, classification): Python, models run with ONNX Runtime, no PyTorch in the image. They read the task queue and write results to the database; they read user files from a read-only mount and never modify them. The models (Arctic Embed M v2.0, SigLIP 2, PP-OCRv5; `docs/decisions/005-modeles-locaux.md`) are baked into the worker image at build time by `worker/models/fetch.sh`, each checked against its SHA-256, and loaded by `worker/src/worker/models.py`; ONNX Runtime's telemetry is switched off (`ORT_DISABLE_TELEMETRY`). The one call from the core to a worker is `POST /embed` (`worker/src/worker/embedserver.py`, port 8090 on the Compose network only, never published): the vector of a search, which cannot wait behind the queue. Each worker declares the embedding models and versions it serves in `embedding_models`; a new version makes the core queue every content again (`docs/architecture/embeddings.md`). The worker runs at `nice 10` so the core stays responsive.
 - Task queue: a PostgreSQL table (`SELECT … FOR UPDATE SKIP LOCKED`), no Redis.
 - Database: PostgreSQL with pgvector (HNSW index, one table per embedding model, model name and version stored with each vector). Text vectors: `text_vectors_arctic_m_v2`, `halfvec(768)`, one row per window of 512 tokens of a document's text, re-queued by the core when a worker declares a new version (model or cutting).
+- Document categories (factures, contrats, impots, sante, banque, travail, administratif, autre): the worker compares the mean of a document's text vectors with French sentences describing each category (`worker/src/worker/doccat.py`, no LLM), in the transaction that writes the vectors; `document_categories` per content, a member's correction in `file_categories` per file, which wins and survives every re-classification. The classifier's version (sentences, threshold, vectors) is declared in `embedding_models` as `doccat`; a new one re-classifies from the stored vectors (`docs/architecture/documents.md`).
 - LLM: Ollama or llama.cpp, behind the AI provider interface.
 - AI is local by default; an external API key is opt-in per module.
 - Web front: React with Vite, in TypeScript, served as static files by the core.
@@ -89,6 +90,10 @@ docker compose run --rm core photovec backfill
 # Queue the vectors of every stored document with text that has none of the workers' model version
 # (also done once by the core whenever a worker declares a new version)
 docker compose run --rm core textemb backfill
+
+# Queue the category of every stored document whose vectors have none of the workers' classifier version
+# (also done once by the core whenever a worker declares new sentences, threshold or model)
+docker compose run --rm core doccat backfill
 
 # The mobile app (Expo) in the iOS simulator; the box is at localhost:<core port>
 cd mobile && npx expo run:ios

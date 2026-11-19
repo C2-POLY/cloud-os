@@ -14,6 +14,9 @@ cutting. The worker declares it in embedding_models (worker.vectors) with the
 model it serves for queries (worker.embedserver); when it changes, the core
 queues every content again at backfill priority (core/internal/textemb Sync):
 another model or another cutting indexes everything again, without a command.
+
+The same transaction writes the document's category (worker.doccat, #73),
+computed from the vectors just encoded.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import numpy as np
 import psycopg
 
 from worker import models, vectors
@@ -98,19 +102,15 @@ def make(task: Task, conn: psycopg.Connection) -> None:
     ).fetchone()
     if done:
         return
+    from worker import doccat
+
     text = row[0]
     enc = models.text_encoder()
+    windows = chunks(text, enc.tok)
+    vecs = [enc.embed([text[c.start : c.end]])[0] for c in windows]
     rows = [
-        (
-            sha,
-            i,
-            c.start,
-            c.end,
-            MODEL,
-            current,
-            vectors.literal(enc.embed([text[c.start : c.end]])[0]),
-        )
-        for i, c in enumerate(chunks(text, enc.tok))
+        (sha, i, c.start, c.end, MODEL, current, vectors.literal(v))
+        for i, (c, v) in enumerate(zip(windows, vecs, strict=True))
     ]
     with conn.transaction(), conn.cursor() as cur:
         cur.execute(f"DELETE FROM {TABLE} WHERE sha256 = %s", (sha,))
@@ -119,3 +119,9 @@ def make(task: Task, conn: psycopg.Connection) -> None:
                 VALUES (%s, %s, %s, %s, %s, %s, %s::halfvec)""",
             rows,
         )
+        # The category, from the vectors just computed: the document is never
+        # listed with vectors and no category (worker.doccat).
+        if vecs:
+            doccat.store(cur, sha, doccat.classify(np.stack(vecs)), doccat.version())
+        else:
+            cur.execute(f"DELETE FROM {doccat.TABLE} WHERE sha256 = %s", (sha,))
