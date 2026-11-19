@@ -1,7 +1,7 @@
 # Recherche par le sens
 
 Retrouver un document avec ses propres mots, pas seulement ceux du document : « contrat de l'appart » trouve le bail. Les workers transforment le texte de chaque document en vecteurs, rangés dans pgvector ; une recherche transforme la requête en vecteur et cherche les plus proches. Tout se calcule sur la box, avec les modèles locaux ([models.md](models.md)).
-Issue : #70 (Feature #65). Le vecteur d'une requête et la remise en file à un changement de modèle passent par le mécanisme commun aux recherches par le sens, décrit avec celle des photos (#71) dans [embeddings.md](embeddings.md). La liste fusionnée de Demander viendra avec #72.
+Issue : #70 (Feature #65). Le vecteur d'une requête et la remise en file à un changement de modèle passent par le mécanisme commun aux recherches par le sens, décrit avec celle des photos (#71) dans [embeddings.md](embeddings.md). Demander mêle ces résultats à ceux des noms, des mots et des photos en une seule liste (#72, [search.md](search.md)).
 
 ## Parcours
 
@@ -15,7 +15,7 @@ sequenceDiagram
     participant TV as Postgres : text_vectors_arctic_m_v2
     participant E as worker : embedserver (:8090)
     participant API as cœur : GET /api/search/semantic
-    participant U as client (Demander, #72)
+    participant U as client
 
     Note over W,Q: Au démarrage du worker : vectors.declare écrit (arctic-embed-m-v2.0, version) dans embedding_models. Toutes les 30 s, textemb.Sync (cœur) met en file, priorité 0, chaque contenu has_text sans vecteurs de la version déclarée, une fois par version
     ST->>Q: doctext.Enqueue : text {sha256}, priorité 10 (nouveau) ou 0 (rattrapage)
@@ -136,7 +136,7 @@ Le cœur n'a pas ONNX Runtime : il demande le vecteur d'une requête au worker, 
   - puis la meilleure par contenu (`DISTINCT ON`), jointe à `files` et à `document_text` pour l'extrait.
   - Les filtres (version, compte, corbeille) s'appliquent pendant le parcours de l'index HNSW : avec `hnsw.iterative_scan = relaxed_order` (pgvector 0.8), Postgres poursuit le parcours jusqu'à avoir assez de fenêtres, au lieu de filtrer un nombre fixe de voisins. Les résultats sont triés de nouveau par distance (CTE `MATERIALIZED`). `hnsw.ef_search = 100`.
   - L'extrait est découpé dans `d.text || ''`, une copie entière : PostgreSQL 17.8 peut couper un caractère accentué quand il découpe en place une valeur compressée.
-- **Pas d'interface ici :** Demander fusionnera ces résultats avec la recherche dans le texte et celle des photos (#72).
+- **Demander** n'appelle pas cette route : `GET /api/search/all` passe par `textemb.Searcher.Search` avec le filtre de type et de date, et mêle ses résultats aux autres ([search.md](search.md)).
 
 ## Interface fluide
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/C2-POLY/cloud-os/core/internal/embed"
 	"github.com/C2-POLY/cloud-os/core/internal/photovec"
+	"github.com/C2-POLY/cloud-os/core/internal/storage"
 )
 
 // PhotoHit is one result of GET /api/search/photos: a photo or video of the
@@ -31,7 +32,7 @@ func (a *photoSearchAPI) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	hits, err := a.photos.Search(r.Context(), owner(r), r.URL.Query().Get("q"), limit)
+	hits, err := a.photos.Search(r.Context(), owner(r), r.URL.Query().Get("q"), limit, storage.Filter{})
 	if errors.Is(err, embed.ErrUnavailable) {
 		slog.Warn("photo search", "err", err)
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "photo search unavailable"})

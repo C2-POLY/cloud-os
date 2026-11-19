@@ -148,7 +148,7 @@ func TestSearchRanksTheAccountsDocumentsByTheirBestWindow(t *testing.T) {
 	e := newEnv(t)
 	e.corpus(t)
 	s, w := e.searcher(t, axis(map[int]float64{0: 1}))
-	hits, err := s.Search(e.ctx, "enzo", "  contrat   de l'appart ", 0)
+	hits, err := s.Search(e.ctx, "enzo", "  contrat   de l'appart ", 0, storage.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,19 +172,19 @@ func TestSearchRanksTheAccountsDocumentsByTheirBestWindow(t *testing.T) {
 	}
 
 	// limit, and its bounds.
-	if hits, err := s.Search(e.ctx, "enzo", "contrat", 1); err != nil || len(hits) != 1 {
+	if hits, err := s.Search(e.ctx, "enzo", "contrat", 1, storage.Filter{}); err != nil || len(hits) != 1 {
 		t.Errorf("limit 1: %v, %v", paths(hits), err)
 	}
-	if hits, err := s.Search(e.ctx, "enzo", "contrat", 1000); err != nil || len(hits) != 3 {
+	if hits, err := s.Search(e.ctx, "enzo", "contrat", 1000, storage.Filter{}); err != nil || len(hits) != 3 {
 		t.Errorf("limit 1000: %v, %v", paths(hits), err)
 	}
 
 	// An empty query asks nothing; a long one is cut to what the workers read.
 	w.queries = nil
-	if hits, err := s.Search(e.ctx, "enzo", " \t ", 0); err != nil || hits == nil || len(hits) != 0 {
+	if hits, err := s.Search(e.ctx, "enzo", " \t ", 0, storage.Filter{}); err != nil || hits == nil || len(hits) != 0 {
 		t.Errorf("empty query: %v, %v", hits, err)
 	}
-	if _, err := s.Search(e.ctx, "enzo", strings.Repeat("é", textemb.MaxQueryChars+5), 0); err != nil {
+	if _, err := s.Search(e.ctx, "enzo", strings.Repeat("é", textemb.MaxQueryChars+5), 0, storage.Filter{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(w.queries) != 1 || len([]rune(w.queries[0])) != textemb.MaxQueryChars {
@@ -202,7 +202,7 @@ func TestSearchComparesOnlyVectorsOfTheQuerysVersion(t *testing.T) {
 	}
 	s, w := e.searcher(t, axis(map[int]float64{0: 1}))
 	w.version = "v2"
-	hits, err := s.Search(e.ctx, "enzo", "contrat", 0)
+	hits, err := s.Search(e.ctx, "enzo", "contrat", 0, storage.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestSearchIsUnavailableWithoutTheWorkersVector(t *testing.T) {
 		"no worker":         {Pool: e.pool, Embed: &embed.Client{URL: down.URL}},
 		"no worker URL":     {Pool: e.pool, Embed: &embed.Client{}},
 	} {
-		if _, err := s.Search(e.ctx, "enzo", "contrat", 0); !errors.Is(err, embed.ErrUnavailable) {
+		if _, err := s.Search(e.ctx, "enzo", "contrat", 0, storage.Filter{}); !errors.Is(err, embed.ErrUnavailable) {
 			t.Errorf("%s: %v, want ErrUnavailable", name, err)
 		}
 	}
@@ -242,24 +242,24 @@ func TestSearchShowsOnlyTheAccountsLiveFiles(t *testing.T) {
 	}
 
 	s, _ := e.searcher(t, axis(map[int]float64{0: 1}))
-	enzo, err := s.Search(e.ctx, "enzo", "contrat", 0)
+	enzo, err := s.Search(e.ctx, "enzo", "contrat", 0, storage.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, want := paths(enzo), []string{"enzo:Logement/bail.pdf", "enzo:Voiture/carte-grise.pdf"}; !slices.Equal(got, want) {
 		t.Errorf("enzo sees %v, want %v", got, want)
 	}
-	lea, err := s.Search(e.ctx, "lea", "contrat", 0)
+	lea, err := s.Search(e.ctx, "lea", "contrat", 0, storage.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, want := paths(lea), []string{"lea:impots.pdf", "lea:Mes papiers/bail.pdf"}; !slices.Equal(got, want) {
 		t.Errorf("léa sees %v, want %v", got, want)
 	}
-	if hits, err := s.Search(e.ctx, "nobody", "contrat", 0); err != nil || len(hits) != 0 {
+	if hits, err := s.Search(e.ctx, "nobody", "contrat", 0, storage.Filter{}); err != nil || len(hits) != 0 {
 		t.Errorf("an account without files: %v, %v", paths(hits), err)
 	}
-	if _, err := s.Search(e.ctx, "../enzo", "contrat", 0); err == nil {
+	if _, err := s.Search(e.ctx, "../enzo", "contrat", 0, storage.Filter{}); err == nil {
 		t.Error("a bad owner name was accepted")
 	}
 }
