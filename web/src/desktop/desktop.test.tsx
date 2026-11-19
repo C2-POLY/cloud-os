@@ -5,7 +5,7 @@ import { navigate } from '../router.ts'
 import { mockApi } from '../test-api.ts'
 import { appOf } from './apps.ts'
 import { Desktop } from './Desktop.tsx'
-import { clampPosition } from './windows.ts'
+import { clampPosition, defaultGeometry } from './windows.ts'
 
 const enzo: Account = { name: 'enzo', display_name: 'Enzo', role: 'admin', created_at: '2026-11-17T10:00:00Z' }
 const johan: Account = { ...enzo, name: 'johan', display_name: 'Johan', role: 'member' }
@@ -42,6 +42,15 @@ describe('appOf', () => {
     expect(appOf('/comptes')).toBe('accounts')
     expect(appOf('/')).toBeNull()
     expect(appOf('/nimporte')).toBeNull()
+  })
+})
+
+describe('defaultGeometry', () => {
+  it('keeps every new window above the dock, however far down the cascade', () => {
+    for (let i = 0; i < 8; i++) {
+      const g = defaultGeometry(i)
+      expect(g.y + g.h).toBeLessThanOrEqual(window.innerHeight - 110)
+    }
   })
 })
 

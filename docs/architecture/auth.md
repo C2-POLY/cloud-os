@@ -17,6 +17,7 @@ Issue : #6.
 
 - `accounts` : `name` (aussi le nom du dossier de l'utilisateur, même règle que `storage.CleanOwner`), `display_name`, `password_hash`, `role` (`admin` ou `member`), `disabled_at`, `created_at`.
 - `sessions` : `token_hash` (SHA-256), `account`, `created_at`, `last_seen_at`, `expires_at`. L'expiration est glissante : 30 jours après le dernier usage. Désactiver un compte ou réinitialiser son mot de passe supprime ses sessions.
+- `smb_passwords` : `account` (clé, supprimée avec le compte), `nt_hash` (16 octets), `created_at`, `last_used_at`. Voir « Mot de passe SMB ».
 
 ## Premier démarrage et connexion
 
@@ -61,7 +62,7 @@ La table `routes()` de `core/internal/httpapi/httpapi.go` donne à chaque route 
 | Niveau | Routes |
 |---|---|
 | `public` | `GET /api/health`, `GET` et `POST /api/setup`, `POST /api/login`, `POST /api/logout`, et les routes de l'invité d'un lien de partage : `GET /api/s/{token}`, `POST /api/s/{token}/unlock`, `GET /api/s/{token}/files`, `/content` et `/zip` (voir [share.md](share.md)) |
-| `member` | `GET /api/me`, toutes les routes `/api/files…` (voir [storage.md](storage.md)), `/api/trash…`, `/api/uploads…`, et `POST`, `GET /api/shares`, `DELETE /api/shares/{id}` |
+| `member` | `GET /api/me`, `GET`, `POST` et `DELETE /api/me/smb-password` (voir « Mot de passe SMB »), toutes les routes `/api/files…` (voir [storage.md](storage.md)), `/api/trash…`, `/api/uploads…`, et `POST`, `GET /api/shares`, `DELETE /api/shares/{id}` |
 | `admin` | `GET` et `POST /api/accounts`, `PATCH /api/accounts/{name}` (rôle, désactivé) |
 
 `TestEveryRouteIsProtected` parcourt cette table :
@@ -76,3 +77,59 @@ printf '%s\n' '<nouveau mot de passe>' | docker compose run --rm -T core reset-p
 ```
 
 Cette commande se lance depuis le terminal de la box, pas depuis l'API. Elle change le mot de passe et ferme toutes les sessions du compte.
+
+## Mot de passe SMB
+
+Issue : #91, sous-issue de #15 (monter le drive en SMB). Le code est dans `core/internal/auth/smb.go` et `core/internal/httpapi/smbpassword.go`, l'écran dans `web/src/settings/Settings.tsx`.
+
+**Pourquoi un mot de passe à part.** SMB authentifie en NTLMv2, qui demande au serveur l'empreinte NT du mot de passe : le MD4 de son UTF-16LE, sans sel. Le mot de passe du compte n'est gardé qu'en argon2id et n'a pas d'empreinte NT. En garder une affaiblirait tout le compte, car elle suffit à se connecter sans casser le mot de passe. Chaque compte peut donc tirer un mot de passe réservé à SMB, dont une fuite de la base n'expose que l'accès SMB, et qui se révoque.
+
+**Ce qui est garanti.**
+- **Seule l'empreinte NT est gardée.** `NewSMBPassword` tire 24 caractères parmi 56 (sans I, O, l, o, 0 ni 1), environ 139 bits, avec `crypto/rand`, et ne stocke que `NTHash` (`golang.org/x/crypto/md4`). La réponse de `POST /api/me/smb-password` est la seule fois où le mot de passe sort du cœur, en `Cache-Control: no-store`. Avec 139 bits, chercher le mot de passe depuis son empreinte non salée est hors de portée.
+- **Deux secrets séparés.** Le mot de passe SMB n'est lu ni par `Login`, ni par `CheckCredentials`, ni par `BasicAuth` (WebDAV), qui ne regardent que `accounts.password_hash`. `SMBHash` ne lit que `smb_passwords` : le mot de passe du compte n'ouvre pas SMB.
+- **Régénérer remplace.** Un nouveau tirage écrase l'empreinte (`ON CONFLICT … DO UPDATE`), remet `created_at` et efface `last_used_at`.
+- **Révoquer coupe les sessions.** `RevokeSMBPassword`, un nouveau tirage et la désactivation du compte appellent le crochet `Service.OnSMBRevoke(compte)`, que le serveur SMB branche (#92) pour fermer les sessions ouvertes du compte.
+- **Compte désactivé refusé.** `SMBHash` et `NewSMBPassword` ignorent un compte désactivé ; le réactiver rend l'accès avec le même mot de passe.
+- **Essais limités** comme pour la connexion web : 5 échecs par minute, sous la clé `smb:<compte>|<ip>`, à part de celle du web. Un essai compte comme un échec dès que `SMBHash` rend l'empreinte, et `SMBCredential.Succeeded` l'efface quand le serveur a vérifié la réponse NTLMv2 : un client qui coupe la connexion en route consomme quand même un essai. Un nom inconnu ou un compte sans mot de passe SMB consomme aussi un essai et reçoit le même `ErrBadCredentials`.
+- **Chaque compte ne voit que le sien.** Les routes ne prennent pas de nom : le compte est celui de la session.
+
+```mermaid
+sequenceDiagram
+  participant W as Réglages (web)
+  participant C as Cœur (/api/me/smb-password)
+  participant DB as smb_passwords
+  participant S as Serveur SMB (#92)
+  participant F as Finder
+  W->>C: POST (session, JSON)
+  C->>DB: UPSERT nt_hash = MD4(UTF-16LE(mdp)), created_at, last_used_at = NULL
+  C->>S: OnSMBRevoke(compte) : ferme les sessions de l'ancien
+  C-->>W: 201 {password, created_at}, une seule fois
+  F->>S: SESSION_SETUP NTLMv2 (compte, réponse au défi)
+  S->>C: auth.SMBHash(compte, ip)
+  C->>C: Limiter « smb:compte|ip » : essai compté
+  C->>DB: SELECT nt_hash, compte actif ?
+  alt inconnu, désactivé ou sans mot de passe SMB
+    C-->>S: ErrBadCredentials
+    S-->>F: STATUS_LOGON_FAILURE
+  else 5 échecs en 1 min
+    C-->>S: ErrThrottled
+  else
+    C-->>S: SMBCredential{NTHash}
+    S->>S: vérifie la réponse NTLMv2
+    S->>C: Succeeded() si elle est juste
+    C->>DB: UPDATE last_used_at (même empreinte seulement)
+    S-->>F: session ouverte
+  end
+  W->>C: DELETE
+  C->>DB: DELETE
+  C->>S: OnSMBRevoke(compte) : ferme ses sessions
+```
+
+**Routes** (membre, session, JSON pour les changements) :
+- `GET /api/me/smb-password` : `{exists, created_at, last_used_at}`, jamais le mot de passe.
+- `POST /api/me/smb-password` : tire un mot de passe, en remplace un éventuel, et répond 201 avec le statut et `password`.
+- `DELETE /api/me/smb-password` : révoque, 204. Révoquer deux fois n'est pas une erreur.
+
+**Réglages.** Une fenêtre du dock pour chaque membre (`/reglages`), avec la section « Accès SMB » : générer le mot de passe, montré une fois avec un bouton Copier et la phrase qui dit qu'il ne sera plus affiché ; le régénérer ou le révoquer, chacun après une confirmation parce qu'il coupe les sessions SMB ouvertes ; les dates de création et de dernière utilisation.
+
+**Risque restant.** Une copie de la base donne l'empreinte NT, qui suffit à ouvrir une session SMB du compte (pas l'interface web, pas WebDAV) tant que le mot de passe n'est pas révoqué ou régénéré.

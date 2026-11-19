@@ -18,6 +18,7 @@ Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (
 | `/documents`, `/documents/<catégorie>` | Documents, sur cette catégorie ; sans catégorie, la première qui a des documents ([documents.md](documents.md)) | Tout compte |
 | `/partages` | Partages : ses liens, avec Révoquer | Tout compte |
 | `/corbeille` | Corbeille | Tout compte |
+| `/reglages` | Réglages : l'accès SMB du compte (voir [auth.md](auth.md#mot-de-passe-smb)) | Tout compte |
 | `/s/<jeton>` | Hors du bureau : la page de l'invité d'un lien de partage | Sans compte |
 | `/comptes` | Comptes : la santé de la box et la gestion des comptes | Admin |
 | Toute autre adresse, ou une app réservée à l'admin | Remplacée par `/` | |
@@ -31,7 +32,7 @@ Le compte connecté arrive sur un bureau : fond d'écran vivant, barre de menus,
 
 | Fichier | Rôle |
 |---|---|
-| `apps.ts` | Les apps (Fichiers, Photos, Documents, Partages, Corbeille, Comptes) : titre, icône, couleur du dock, adresse d'ouverture ; `appOf(adresse)` |
+| `apps.ts` | Les apps (Fichiers, Photos, Documents, Partages, Corbeille, Réglages, Comptes) : titre, icône, couleur du dock, adresse d'ouverture ; `appOf(adresse)` |
 | `windows.ts` | `useWindows` : les fenêtres ouvertes, de l'arrière vers l'avant, et `useGeometries` : leurs places, gardées dans `localStorage` (`cloudos.windows.v1`) |
 | `Window.tsx` | Une fenêtre : barre de titre (Fermer, Agrandir), déplacement au pointeur, double-clic pour agrandir |
 | `Desktop.tsx` | Le bureau : fond, barre de menus, horloge, fenêtres, dock, raccourci ⌘K |
@@ -65,7 +66,7 @@ Le compte connecté arrive sur un bureau : fond d'écran vivant, barre de menus,
   - **Regroupement :** fait en SQL, pour qu'un import de 50 000 photos donne une ligne, pas 50 000.
 - **Barre de menus :** l'app au premier plan, « Sauvegarde à jour » (`/api/health`, toutes les 20 s, tant que la base répond), l'état de l'analyse des fichiers du compte (voir [Où en est l'analyse](#où-en-est-lanalyse-82)), l'heure, le compte et la déconnexion.
 - **Dock :** Bureau, puis les apps de ce compte, avec un point sous celles qui sont ouvertes, puis Demander. Demander ouvre la palette de recherche, comme ⌘K ou Ctrl+K et la pilule de la barre de menus (voir [search.md](search.md)).
-- **Téléphone (moins de 768 px) :** une seule fenêtre, celle du premier plan, en plein écran entre la barre de menus et le dock. Ni déplacement ni agrandissement.
+- **Téléphone (moins de 768 px) :** une seule fenêtre, celle du premier plan, en plein écran entre la barre de menus et le dock. Ni déplacement ni agrandissement. Le dock garde toutes les apps : au-delà de la largeur de l'écran, ses boutons rétrécissent.
 - **Verre :** fond `--surface` à 86 % et `backdrop-filter`, dans les thèmes clair et sombre. Le fond d'écran a sa version sombre. N'écrire que `backdrop-filter` : le minifieur (lightningcss) ajoute lui-même le préfixe `-webkit-`, et supprime les deux quand on écrit les deux.
 - **Éléments fixes dans une fenêtre :** le verre (`backdrop-filter`) fait de la fenêtre le conteneur de ses enfants en `position: fixed`. Le panneau d'envoi et les messages restent donc dans la fenêtre Fichiers, ce qui est voulu. La boîte de dialogue (`Modal`) est dessinée sur `document.body` (`createPortal`) pour passer au-dessus de tout. Le bureau et les fenêtres sont en `overflow: clip`, pour que même un `focus()` ne les fasse pas défiler.
 - **Polices :** celles du système. Une police chargée depuis Google Fonts ferait sortir une requête de la box.
