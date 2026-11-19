@@ -63,6 +63,9 @@ var tables = []struct {
 		SELECT sha256('a'), 'siglip2-base-patch16-224', 'v1', 'image', array_fill(0.036::real, ARRAY[768])::vector`},
 	{21, []string{"text_vectors_arctic_m_v2"}, `INSERT INTO text_vectors_arctic_m_v2 (sha256, chunk, start_char, end_char, model, version, embedding)
 		VALUES (sha256('a'), 0, 0, 19, 'arctic-embed-m-v2.0', 'v', array_fill(0.036, ARRAY[768])::halfvec)`},
+	// Migration 22 fills search_words from the texts already there, then a trigger keeps it.
+	{22, []string{"search_words"}, `INSERT INTO document_text (sha256, source, text, chars, truncated, has_text)
+		VALUES (sha256('c'), 'text', 'Warhallow', 9, false, true)`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {
@@ -240,6 +243,83 @@ func TestDocumentSearchMigration(t *testing.T) {
 		if err := pool.QueryRow(ctx, `SELECT text FROM document_text`).Scan(&text); err != nil || text != "Facture d'ÉLECTRICITÉ" {
 			t.Errorf("after down: %q (%v)", text, err)
 		}
+	}
+}
+
+// TestSearchWordsMigration checks that migration 22 builds the vocabulary of
+// the texts already there, that its trigger follows every write of a text, and
+// that undoing it keeps every text.
+func TestSearchWordsMigration(t *testing.T) {
+	ctx := context.Background()
+	pool, err := db.Open(ctx, testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	p, err := migrate.NewProvider(db.SQL(pool))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.UpTo(ctx, 21); err != nil {
+		t.Fatal(err)
+	}
+	exec := func(sql string) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Two texts with « facture », one with « Warhallow » and numbers.
+	exec(`INSERT INTO document_text (sha256, source, text, chars, truncated, has_text) VALUES
+		(sha256('a'), 'text', 'Facture d''électricité', 21, false, true),
+		(sha256('b'), 'text', 'Facture Warhallow 2025 42', 25, false, true)`)
+	words := func() map[string]int {
+		t.Helper()
+		rows, err := pool.Query(ctx, `SELECT word, docs FROM search_words`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]int{}
+		for rows.Next() {
+			var w string
+			var n int
+			if err := rows.Scan(&w, &n); err != nil {
+				t.Fatal(err)
+			}
+			out[w] = n
+		}
+		return out
+	}
+	for _, step := range []string{"up", "up again"} {
+		if _, err := p.UpTo(ctx, 22); err != nil {
+			t.Fatalf("%s: %v", step, err)
+		}
+		if got := fmt.Sprint(words()); got != "map[electricit:1 factur:2 warhallow:1]" {
+			t.Errorf("%s: vocabulary %s", step, got)
+		}
+		if _, err := p.DownTo(ctx, 21); err != nil {
+			t.Fatalf("down: %v", err)
+		}
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM document_text`).Scan(&n); err != nil || n != 2 {
+			t.Errorf("after down: %d texts (%v)", n, err)
+		}
+	}
+
+	if _, err := p.UpTo(ctx, 22); err != nil {
+		t.Fatal(err)
+	}
+	// A scan read by OCR (UPDATE), a text pruned (DELETE), a new one (INSERT).
+	// « loyer » stems to loi.
+	exec(`INSERT INTO document_text (sha256, source, text, chars, truncated, has_text) VALUES (sha256('c'), 'pdf', '', 0, false, false)`)
+	exec(`UPDATE document_text SET text = 'Quittance de loyer', chars = 18, has_text = true WHERE sha256 = sha256('c')`)
+	exec(`DELETE FROM document_text WHERE sha256 = sha256('b')`)
+	if got := fmt.Sprint(words()); got != "map[electricit:1 factur:1 loi:1 quittanc:1]" {
+		t.Errorf("after the writes: %s", got)
+	}
+	var sound string
+	if err := pool.QueryRow(ctx, `SELECT cloudos_sound('warhallow') || ' ' || cloudos_sound('warolo') || ' ' || sound FROM search_words WHERE word = 'quittanc'`).Scan(&sound); err != nil || sound != "wrl wrl qtnc" {
+		t.Errorf("sounds %q (%v)", sound, err)
 	}
 }
 

@@ -313,6 +313,13 @@ func TestTheBenchmarkThroughTheFusedRoute(t *testing.T) {
 			if firstOf(top, q.Photos) < 0 || firstOf(top, q.Docs) < 0 {
 				t.Errorf("%q: %v, want photos and documents in the first 8", q.Q, top)
 			}
+		case "partial", "typo":
+			// The document first, found in its text by the word completed or corrected.
+			by := map[string]string{"partial": "prefix", "typo": "fuzzy"}[q.Kind]
+			if firstOf(got.names, q.Expect) != 0 || !slices.Contains(got.Results[0].FoundBy, by) {
+				t.Errorf("%s %q: %v, first found by %v; want %v first, found by %s",
+					q.Kind, q.Q, got.names, got.Results[0].FoundBy, q.Expect, by)
+			}
 		}
 	}
 	t.Logf("first: %d/%d documents, %d/%d photos; missed %q", first["text"], total["text"], first["image"], total["image"], missed)

@@ -142,3 +142,33 @@ func TestTheSameFileFromTwoSearchesIsOneHit(t *testing.T) {
 		t.Errorf("hits %+v", hits)
 	}
 }
+
+func TestAWordTypedInPartOrWithATypoComesAfterExactWords(t *testing.T) {
+	exact, begun, typo := file("exact.txt"), file("begun.txt"), file("typo.txt")
+	texts := []storage.ContentHit{
+		{File: typo, Match: storage.MatchFuzzy},
+		{File: begun, Match: storage.MatchPrefix},
+		{File: exact, Match: storage.MatchWords},
+	}
+	hits := fuse(nil, texts, nil, nil)
+	got := scores(hits)
+	if want := []string{"exact.txt", "begun.txt", "typo.txt"}; !slices.Equal(paths(hits), want) {
+		t.Errorf("order %v, want %v", paths(hits), want)
+	}
+	if !near(got["exact.txt"], 0.4) || !near(got["begun.txt"], 0.3) || !near(got["typo.txt"], 0.25) {
+		t.Errorf("scores %v", got)
+	}
+	if fmt.Sprint(hits[1].FoundBy, hits[2].FoundBy) != "[prefix] [fuzzy]" {
+		t.Errorf("found by %v %v", hits[1].FoundBy, hits[2].FoundBy)
+	}
+	// Beside a sure answer (score 1, floor 0.3) a guess goes; a word begun stays.
+	hits = fuse(nil, texts, []textemb.Hit{{File: file("bail.pdf"), Score: 0.6}}, nil)
+	if want := []string{"bail.pdf", "exact.txt", "begun.txt"}; !slices.Equal(paths(hits), want) {
+		t.Errorf("beside a sure answer: %v, want %v", paths(hits), want)
+	}
+	// A guess that the meaning confirms stays.
+	hits = fuse(nil, texts, []textemb.Hit{{File: file("bail.pdf"), Score: 0.6}, {File: typo, Score: 0.3}}, nil)
+	if !slices.Contains(paths(hits), "typo.txt") {
+		t.Errorf("a confirmed guess went: %v", paths(hits))
+	}
+}

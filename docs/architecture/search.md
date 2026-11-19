@@ -1,7 +1,7 @@
 # Recherche
 
 Trouver un fichier ou un dossier sans savoir où il est rangé : par nom et par chemin, et par le texte des documents. La recherche par le sens est dans [search-ai.md](search-ai.md) pour les documents (#70) et [embeddings.md](embeddings.md) pour les photos (#71). Demander réunit les quatre en une seule liste (#72, [plus bas](#une-seule-liste--get-apisearchall)).
-Issues : #48 (Feature #45) pour les noms, #69 (Feature #65) pour le texte, #72 (Feature #65) pour la liste fusionnée.
+Issues : #48 (Feature #45) pour les noms, #69 (Feature #65) pour le texte, #72 (Feature #65) pour la liste fusionnée, #85 (Feature #65) pour les mots tapés en partie ou avec une faute.
 
 ## Par nom : `GET /api/search`
 
@@ -46,7 +46,55 @@ Issues : #48 (Feature #45) pour les noms, #69 (Feature #65) pour le texte, #72 (
 
 **Vitesse.** Mesurée sur un corpus synthétique de 10 000 documents (211 millions de caractères, dont 100 documents de 460 000 caractères), sur le Mac de dev, base chaude : de 8 à 48 ms par recherche, pour un mot rare (50 documents) comme pour un mot présent dans 3 333 documents. Index GIN de 21 Mo ; la colonne `tsv` pèse à peu près la taille du texte compressé ; la calculer pour les 10 000 documents prend environ 100 s (à la migration, une seule fois). Les requêtes passent par un CTE : leur plan ne dépend pas des mots cherchés, et reste bon quand pgx les prépare.
 
-**Pas encore :** le préfixe pendant la frappe (« fact » ne trouve pas « facture » dans le texte ; la recherche par nom, elle, le trouve).
+### Mots tapés en partie, fautes de frappe
+
+Un mot qu'aucun texte n'a est cherché dans le vocabulaire des textes (#85) : tapé en partie, il est complété ; avec une faute, il est remplacé par les mots les plus proches. `storage.textQuery` (`core/internal/storage/words.go`) classe chaque mot, puis `SearchContent` cherche comme avant, avec l'index GIN.
+
+```mermaid
+flowchart TD
+    W["worker : INSERT ou UPDATE document_text"] --> TR["triggers par instruction : search_words.docs + n par mot"]
+    PR["cœur : doctext.Prune, DELETE document_text"] --> TR
+    TR --> V[("search_words : word, docs, sound")]
+    Q["Demander : « facture Warolo »"] --> L["lexèmes des mots (cloudos_fr) : factur, warolo"]
+    L --> C{"textQuery : chaque lexème contre search_words"}
+    V -.-> C
+    C -->|"factur : un mot du vocabulaire"| E["'factur'"]
+    C -->|"warhal : le début d'un mot"| P["'warhal':*"]
+    C -->|"warolo : aucun mot ne commence ainsi"| F["les 3 plus proches : trigrammes ≥ 0,55, ou même squelette (wrl) et ≥ 0,2"]
+    C -->|"rien de proche"| N["aucun résultat du texte"]
+    E --> T["$2::tsquery : ET des mots, OU des candidats"]
+    P --> T
+    F --> T
+    T --> S["SearchContent : index GIN tsv, Filter, extrait marqué"]
+    S --> H["ContentHit.Match : text, prefix ou fuzzy"]
+```
+
+**Le vocabulaire** (migration 0022, table `search_words`) : un lexème de `document_text.tsv` par ligne, avec le nombre de textes qui l'ont (`docs`) et son squelette (`sound`). Seuls les lexèmes de 3 à 40 caractères qui ont une lettre y entrent (`cloudos_search_word`) : pas les nombres d'un tableur.
+
+- **Trois triggers par instruction** (`AFTER INSERT`, `UPDATE`, `DELETE` sur `document_text`, avec tables de transition) le tiennent à jour, dans la transaction qui écrit le texte : celle du worker (texte, OCR) ou du cœur (`doctext.Prune`). Rien ne change dans le worker.
+- **Par instruction, pas par ligne** : chaque mot est compté une fois par instruction, quel que soit le nombre de textes. Par ligne, un `INSERT` de 4 000 textes réécrivait un mot courant des milliers de fois dans la même transaction : 10 minutes au lieu de 43 s pour remplir le test de vitesse. Le même cas se présente quand `doctext.Prune` supprime les textes d'une corbeille vidée.
+- **Les mots vont dans leur ordre** (`ORDER BY`), en une seule écriture chacun (`INSERT … ON CONFLICT`, ajouts et retraits mêlés), pour que deux écritures les verrouillent dans le même ordre. Seuls les mots que l'instruction a ramenés à 0 sont supprimés, jamais par un parcours de tout le vocabulaire. Rien ne peut refuser une ligne : un texte n'est jamais perdu à cause du vocabulaire.
+- **Commun aux comptes**, comme les textes : il ne sert qu'à corriger la requête, puis la recherche ne garde que les fichiers du compte.
+- **Index** : la clé primaire (mot exact), `text_pattern_ops` (début de mot), trigrammes (`pg_trgm`), btree sur `sound`.
+
+**Le classement d'un mot** (`textQuery`), en une requête, puis une seconde pour les mots à corriger :
+
+| Le lexème | Cherché comme |
+|---|---|
+| est dans le vocabulaire, ou le vocabulaire ne le garde pas (un nombre, deux lettres) | lui-même : `'factur'` |
+| commence un mot du vocabulaire (3 caractères au moins) | un début de mot : `'warhal':*` |
+| est proche de mots du vocabulaire (4 caractères au moins) | les 3 plus proches : `('warhallow')` |
+| rien de tout cela | la requête n'a pas de résultat dans le texte, comme avant |
+
+- **Proche** : une similarité en trigrammes de 0,55 au moins (`fuzzySimilarity`), ou, pour un mot de 5 lettres au moins, le même squelette de 3 lettres au moins et 0,2 de similarité (`soundSimilarity`). Le squelette (`cloudos_sound`) garde la première lettre, puis les consonnes sans h ni w, lettres doubles fusionnées : « warhallow » et « warolo » donnent tous deux « wrl ».
+- **Rien ne change** quand tous les mots sont dans le vocabulaire, ni quand la requête a des guillemets, un `-mot` ou `or` : `websearch_to_tsquery`, comme avant. Sinon `to_tsquery` fait le ET des mots et le OU des candidats ; l'extrait marque les mots complétés ou corrigés (`firstWordPattern` reçoit les candidats).
+- **Mesuré sur le vocabulaire du banc** (955 mots) :
+  - les fautes d'une ou deux lettres ont de 0,57 à 0,73 de similarité (« quitance », « asurance », « vetrinaire », « electrisite », « Biaritz ») ;
+  - les mots sans rapport qui partagent des lettres s'arrêtent à 0,50 (« sommet » et `somm`, « automne » et `automat`) ;
+  - « Warolo » n'a que 0,21 avec « warhallow » (distance d'édition 4), mais le même squelette ;
+  - les mots bien écrits absents du corpus (chat, dort, vélo, pizza, ciel, forêt) n'ont aucun candidat ;
+  - Double Metaphone, essayé d'abord, faisait de « chat » une chaudière et de « vélo » un vol.
+- **Les noms de fichiers** ne passent pas par là : la recherche par nom trouve déjà un mot tapé en partie, et une faute dans un nom n'est pas corrigée.
 
 ## Une seule liste : `GET /api/search/all`
 
@@ -96,17 +144,19 @@ sequenceDiagram
 | Recherche | Confiance |
 |---|---|
 | Nom (`confNameStart`, `confName`, `confPath`) | 0,9 si le nom commence par le premier mot, 0,8 s'il le contient, 0,6 si seul un dossier du chemin le contient |
-| Mots (`confText`) | 0,4 : le texte a tous les mots |
+| Mots (`confText`) | 0,4 : le texte a tous les mots, tels quels |
+| Début de mot (`confPrefix`) | 0,3 : un mot tapé en partie, complété |
+| Mot approché (`confFuzzy`) | 0,25 : un mot tapé avec une faute, corrigé |
 | Sens d'un document (`docScale`) | `(cos − 0,15) / 0,30`, bornée à [0, 1] |
 | Sens d'une photo (`photoScale`) | `(cos − 0,065) / 0,055`, bornée à [0, 1] |
 
 - **Le score d'un fichier** est `1 − Π(1 − c)` sur les recherches qui l'ont trouvé : une recherche sûre suffit, deux qui s'accordent se renforcent. Il classe la liste d'une requête et ne se compare pas d'une requête à l'autre.
-- **Le seuil** (`keepAbs`, `keepRel`) : un fichier trouvé seulement par le sens reste si son score atteint `max(0,2 ; 0,3 × le meilleur score de la requête)`. Le nom et les mots ne sont jamais coupés. Pour « contrat de l'appart », le bail fait 1 et les photos les plus proches 0,2 : elles partent. Une requête vague, où rien n'est sûr, garde sa liste.
+- **Le seuil** (`keepAbs`, `keepRel`) : un fichier trouvé seulement par le sens, ou par un mot approché, reste si son score atteint `max(0,2 ; 0,3 × le meilleur score de la requête)`. Le nom et les mots, tels quels ou complétés, ne sont jamais coupés : une faute ne passe jamais devant une réponse sûre. Pour « contrat de l'appart », le bail fait 1 et les photos les plus proches 0,2 : elles partent. Une requête vague, où rien n'est sûr, garde sa liste.
 - **À score égal**, le fichier le mieux placé dans l'une des listes passe d'abord, puis le plus récent, puis le chemin.
 - **Pourquoi pas RRF** : la fusion par rangs réciproques donne le même poids au premier de chaque liste, quel que soit son score. Le premier document par le sens est donc ex aequo avec la première photo, même pour « un chat qui dort » : simulée sur les réponses des quatre routes, elle ne met la bonne photo en premier que pour 1 requête de photo sur 15. La pondérer par le score demanderait la même calibration.
 - **Les constantes** viennent du banc d'essai (30 documents, 17 photos, 52 requêtes, `worker/tests/fixtures/bench`). Dans une grille de 2 916 jeux de constantes autour d'elles, 1 582 gardent 32 sur 33, 15 sur 15, les chiens en tête et aucune photo devant le bon document : elles ne tiennent pas à un cheveu. À revoir avec le matériel de référence, et si un modèle change.
 
-**Réponse.** `SearchAnswer` (`shared/api-types.ts`) : `results`, des `SearchHit` (l'entrée du fichier, son `score`, `found_by` parmi `name`, `text`, `meaning`, `image`, l'extrait des mots `snippet` ou, à défaut, le passage le plus proche par le sens `excerpt`), et `partial`. 30 résultats par défaut, 100 au plus.
+**Réponse.** `SearchAnswer` (`shared/api-types.ts`) : `results`, des `SearchHit` (l'entrée du fichier, son `score`, `found_by` parmi `name`, `text`, `prefix`, `fuzzy`, `meaning`, `image`, l'extrait des mots `snippet` ou, à défaut, le passage le plus proche par le sens `excerpt`), et `partial`. 30 résultats par défaut, 100 au plus.
 
 **Filtres** (`storage.Filter`, `core/internal/storage/filter.go`), appliqués dans le SQL de chaque recherche et non après la fusion, pour qu'un filtre étroit ne vide pas la liste :
 
@@ -122,13 +172,15 @@ sequenceDiagram
   - Les trois photos de chien à la plage sont en tête de « chien à la plage », et aucune photo ne passe devant le bon document.
   - Sur les 33 requêtes de document, 9 photos sont listées en tout, après le document ; sur les 15 requêtes de photo, 5 documents, après la photo.
   - « chien », « plage », « voiture » et « vacances au bord de la mer » mêlent photos et documents dans leurs 8 premiers.
-  - Sans le worker, 18 requêtes de document sur 33 trouvent encore le leur en premier, par les noms et les mots.
+  - Les 6 débuts de mots (« quittan », « kinési », « Biarr », « radiogra », « vidan », « scolar ») et les 5 fautes (« quitance de loyer », « location à Biaritz », « facture d'electrisite », « asurance habitation », « kinésitérapie ») trouvent leur document en premier, complété (`prefix`) ou corrigé (`fuzzy`).
+  - Sans le worker, 20 requêtes de document sur 33 trouvent encore le leur en premier, par les noms et les mots (18 avant les débuts de mots).
 - **Les vecteurs se font sous Linux**, comme sur la box. Sous macOS, l'export int8 de la partie texte de SigLIP 2 donne d'autres vecteurs, qui notent jusqu'à 0,02 plus haut des photos sans rapport : avec eux, des photos passaient le seuil sous des requêtes de document.
 
 **Vitesse.** Mesurée par `TestSpeedOn10000Files` (à part : `CLOUDOS_SEARCH_BENCH=1`) sur le Mac de dev, sur 10 000 fichiers synthétiques :
 
 - **Le fonds** : 6 000 photos, dont un tiers avec une date de prise de vue, et 4 000 documents de 300 à 900 mots du vocabulaire du banc, d'une à trois fenêtres chacun. Les vecteurs sont aléatoires, et un faux worker répond après un délai.
-- **Avec un worker à 20 ms** (Arctic encode une requête en 16 ms sur le Mac) : de 30 à 60 ms par recherche au 50e centile, 80 ms au plus au 95e, filtres compris.
+- **Avec un worker à 20 ms** (Arctic encode une requête en 16 ms sur le Mac) : de 32 à 59 ms par recherche au 50e centile, 65 ms au plus au 95e, filtres compris, sur 15 requêtes dont 5 avec une faute ou un mot tapé en partie (#85).
+- **Le vocabulaire des fautes** ne ralentit pas l'écriture : remplir les 10 000 fichiers prend 47 s, contre 43 s sans lui.
 - **Avec un worker à 100 ms** (estimé sur un Raspberry Pi 5) : de 114 à 157 ms au 95e centile.
 
 ## Web : la palette Demander
@@ -141,5 +193,5 @@ sequenceDiagram
 - **Filtres :** sous le champ, « Tout », « Documents », « Photos », et une période : « Toutes les dates », « 30 derniers jours », « Cette année », « L'an dernier », « Plus ancien » (`filtersOf`, comptée depuis aujourd'hui sur l'horloge du navigateur, envoyée avec son fuseau). Choisir un type rend la main au champ.
 - **Extrait :** deux lignes sous le nom : les mots trouvés en `<mark>`, ou à défaut le passage le plus proche par le sens. Rien du document n'est lu comme du HTML.
 - **Messages :** « Rien trouvé » (« avec ces filtres » s'il y en a), l'erreur de la route, et une ligne quand la recherche par le sens ne répond pas : les noms et les mots restent.
-- **Aperçu :** la miniature (#14), le PDF ou le début du texte (#52), sinon l'icône ; l'extrait ; le dossier, la taille, la date, et par quoi le fichier a été trouvé (« le nom, le sens du texte »). Masqué sur téléphone.
+- **Aperçu :** la miniature (#14), le PDF ou le début du texte (#52), sinon l'icône ; l'extrait ; le dossier, la taille, la date, et par quoi le fichier a été trouvé (« le nom, le sens du texte », « un mot approchant du texte »). Masqué sur téléphone.
 - **Actions :** Entrée ou un clic ouvre le dossier (ou le dossier du fichier) dans Fichiers. Télécharger récupère le fichier. Échap ou un clic à côté ferme la palette.

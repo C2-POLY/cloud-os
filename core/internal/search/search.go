@@ -40,6 +40,8 @@ const (
 const (
 	ByName    = "name"    // its path holds every word
 	ByText    = "text"    // its text holds every word
+	ByPrefix  = "prefix"  // its text holds a word typed in part (storage.MatchPrefix)
+	ByFuzzy   = "fuzzy"   // its text holds a word near one typed with a typo (storage.MatchFuzzy)
 	ByMeaning = "meaning" // its text is near in meaning
 	ByImage   = "image"   // its photo shows what was asked
 )
@@ -52,6 +54,10 @@ const (
 	confName      = 0.8 // the name holds it
 	confPath      = 0.6 // only a folder of the path does
 	confText      = 0.4 // the text holds every word
+	confPrefix    = 0.3 // and a word typed in part
+	// A word typed with a typo: the floor cuts it when a sure answer exists,
+	// so a guess never comes before an exact answer.
+	confFuzzy = 0.25
 )
 
 // scale maps a cosine similarity linearly onto a confidence: 0 at floor and
@@ -92,7 +98,7 @@ type Hit struct {
 	// it: one sure search is enough, two agreeing ones reinforce each other.
 	// It orders the list of one query; it does not compare across queries.
 	Score   float64
-	FoundBy []string              // ByName, ByText, ByMeaning, ByImage, in that order
+	FoundBy []string              // ByName, ByText (or ByPrefix, ByFuzzy), ByMeaning, ByImage, in that order
 	Snippet []storage.SnippetPart // the words found in its text, when they are
 	Excerpt string                // else its passage nearest in meaning, when it has one
 }
@@ -194,7 +200,7 @@ type candidate struct {
 	hit     Hit
 	miss    float64 // Π(1 − c) over the confidences so far
 	first   int     // the best place it has in one of the lists
-	lexical bool    // found by its name or its words: always kept
+	lexical bool    // found by its name or its words, as typed or begun: always kept
 }
 
 // fuse merges the four lists, each best first, into one, best first.
@@ -217,8 +223,9 @@ func fuse(names []storage.NameHit, texts []storage.ContentHit, docs []textemb.Hi
 		add(h.File, i, ByName, nameConfidence(h.Tier)).lexical = true
 	}
 	for i, h := range texts {
-		c := add(h.File, i, ByText, confText)
-		c.lexical = true
+		by, confidence := textSource(h.Match)
+		c := add(h.File, i, by, confidence)
+		c.lexical = c.lexical || by != ByFuzzy
 		c.hit.Snippet = h.Snippet
 	}
 	for i, h := range docs {
@@ -251,6 +258,18 @@ func fuse(names []storage.NameHit, texts []storage.ContentHit, docs []textemb.Hi
 		out = append(out, c.hit)
 	}
 	return out
+}
+
+// textSource is how a file found in its text was found, and the confidence of that.
+func textSource(match string) (string, float64) {
+	switch match {
+	case storage.MatchPrefix:
+		return ByPrefix, confPrefix
+	case storage.MatchFuzzy:
+		return ByFuzzy, confFuzzy
+	default:
+		return ByText, confText
+	}
 }
 
 // nameConfidence is the confidence of a file found by its path.

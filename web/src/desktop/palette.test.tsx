@@ -44,6 +44,8 @@ describe('search helpers', () => {
 
   it('says how a file was found', () => {
     expect(foundByText(['name', 'text', 'meaning', 'image'])).toBe("le nom, les mots du texte, le sens du texte, ce que montre l'image")
+    expect(foundByText(['prefix', 'meaning'])).toBe("le début d'un mot du texte, le sens du texte")
+    expect(foundByText(['fuzzy'])).toBe('un mot approchant du texte')
   })
 })
 

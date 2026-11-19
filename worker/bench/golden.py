@@ -62,8 +62,8 @@ def main() -> None:
 
     queries = []
     toml = tomllib.loads((BENCH / "queries.toml").read_text())
-    for kind in ("text", "image", "mixed"):
-        for q in toml[kind]:
+    for kind, qs in toml.items():  # text, image, mixed, partial, typo
+        for q in qs:
             vectors = {name: half(s.query([q["q"]])[0]) for name, s in sorted(served.items())}
             queries.append({"kind": kind, **q, "vectors": vectors})
 
