@@ -17,6 +17,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/davfs"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
+	"github.com/C2-POLY/cloud-os/core/internal/doccat"
 	"github.com/C2-POLY/cloud-os/core/internal/photovec"
 	"github.com/C2-POLY/cloud-os/core/internal/search"
 	"github.com/C2-POLY/cloud-os/core/internal/share"
@@ -60,6 +61,8 @@ type Config struct {
 	// Documents searches documents by meaning; nil answers 503, and
 	// Demander lists names and words only (partial).
 	Documents *textemb.Searcher
+	// Categories lists the documents by category and keeps the members' choices.
+	Categories *doccat.Store
 	// MapsDir holds the .pmtiles file of the Photos map; "" when none.
 	MapsDir   string
 	Activity  *activity.Log // nil: no journal (tests that do not need it)
@@ -95,6 +98,7 @@ func routes(c Config) []route {
 	al := &albumsAPI{albums: c.Albums}
 	ps := &photoSearchAPI{photos: c.Photos}
 	sem := &semanticAPI{docs: c.Documents}
+	dc := &documentsAPI{docs: c.Categories}
 	sa := &searchAPI{search: &search.Searcher{Files: c.Files, Docs: c.Documents, Photos: c.Photos}}
 	return []route{
 		{"GET /api/health", public, healthHandler(c.Version, c.Health)},
@@ -117,6 +121,9 @@ func routes(c Config) []route {
 		{"GET /api/search/content", member, f.searchContent},
 		{"GET /api/search/photos", member, ps.search},
 		{"GET /api/search/semantic", member, sem.search},
+		{"GET /api/documents/categories", member, dc.categories},
+		{"GET /api/documents", member, dc.list},
+		{"PUT /api/documents/category", member, dc.set},
 		{"POST /api/files/known", member, f.known},
 		{"POST /api/files/dedupe", member, f.dedupe},
 		{"GET /api/files/recent", member, d.recent},

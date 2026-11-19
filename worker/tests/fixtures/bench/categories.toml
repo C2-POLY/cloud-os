@@ -1,0 +1,37 @@
+# The category expected for each document of docs/ (#73, worker/src/worker/doccat.py),
+# named without extension. A document that is honestly both accepts a second
+# category: a work contract is a contract and work, a letter cancelling a
+# subscription is a letter about a contract. The first one is the expected one;
+# any of them counts as right.
+
+[expect]
+assurance-habitation = ["contrats"]
+attestation-caf = ["administratif"]
+attestation-mutuelle = ["sante"]
+avis-imposition-2025 = ["impots"]
+bail-appartement = ["contrats"]
+billet-train = ["autre"]
+bulletin-salaire-mars = ["travail"]
+carnet-vaccination = ["sante"]
+certificat-immatriculation = ["administratif"]
+certificat-scolarite = ["administratif"]
+compte-rendu-radio = ["sante"]
+compte-rendu-reunion-parents = ["autre"]
+contrat-assurance-auto = ["contrats"]
+contrat-travail = ["contrats", "travail"]
+devis-plombier = ["factures"]
+etat-des-lieux-entree = ["contrats"]
+facture-electricite-mars = ["factures"]
+facture-garage = ["factures"]
+facture-gaz-fevrier = ["factures"]
+facture-internet = ["factures"]
+facture-lave-linge = ["factures"]
+facture-veterinaire = ["factures"]
+location-vacances = ["contrats"]
+ordonnance-antibiotiques = ["sante"]
+ordonnance-kine = ["sante"]
+quittance-loyer-avril = ["factures"]
+recette-tarte-pommes = ["autre"]
+releve-bancaire-janvier = ["banque"]
+releve-livret-a = ["banque"]
+resiliation-internet = ["autre", "contrats"]

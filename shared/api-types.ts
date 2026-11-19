@@ -76,6 +76,36 @@ export interface SearchAnswer {
   partial: boolean // the search by meaning did not answer: names and words only
 }
 
+/**
+ * The categories of documents (#73), in the order the app Documents shows
+ * them: those of the core's `doccat.Categories` and of the workers.
+ */
+export type CategoryId = 'factures' | 'contrats' | 'impots' | 'sante' | 'banque' | 'travail' | 'administratif' | 'autre'
+
+/** A document with its category, as the core's `httpapi.DocumentEntry` writes it. */
+export interface DocumentEntry extends Entry {
+  category: CategoryId // the member's choice, else the automatic one
+  auto: CategoryId | null // the automatic one; null until the workers classify it
+  corrected: boolean // the member chose the category
+}
+
+export interface DocumentCursor {
+  at: string // modified_at of the last document, sent back as before_at
+  path: string // sent back as before_path
+}
+
+/** GET /api/documents?category=…, the most recently modified first. */
+export interface DocumentPage {
+  items: DocumentEntry[]
+  next: DocumentCursor | null
+}
+
+/** GET /api/documents/categories: every category, in order, and the documents not classified yet. */
+export interface CategoriesSummary {
+  categories: { id: CategoryId; count: number }[]
+  pending: number
+}
+
 /** A file on the timeline, as the core's `httpapi.TimelineEntry` writes it. */
 export interface TimelineEntry extends Entry {
   at: string // wall-clock date, "2024-07-14T18:03:22", no zone

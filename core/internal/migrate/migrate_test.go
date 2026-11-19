@@ -66,6 +66,9 @@ var tables = []struct {
 	// Migration 22 fills search_words from the texts already there, then a trigger keeps it.
 	{22, []string{"search_words"}, `INSERT INTO document_text (sha256, source, text, chars, truncated, has_text)
 		VALUES (sha256('c'), 'text', 'Warhallow', 9, false, true)`},
+	{23, []string{"document_categories", "file_categories"}, `INSERT INTO document_categories (sha256, category, score, margin, version)
+		VALUES (sha256('a'), 'contrats', 0.45, 0.15, 'v');
+		INSERT INTO file_categories (file_id, category) SELECT id, 'autre' FROM files WHERE path = 'a.txt'`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {

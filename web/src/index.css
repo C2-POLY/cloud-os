@@ -1782,6 +1782,127 @@ button.palette-visual:focus-visible {
   padding: 1rem 0 2rem;
 }
 
+/* Documents: the documents by category (#73) */
+
+.documents-body {
+  display: grid;
+  grid-template-columns: 12.5rem minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.doc-categories {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: sticky;
+  top: 0;
+}
+
+.doc-categories a {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.doc-categories a:hover {
+  background: var(--hover);
+}
+
+.doc-categories a.on {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  font-weight: 600;
+}
+
+.doc-categories svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.doc-categories a.on svg {
+  color: var(--accent);
+}
+
+.doc-category-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.doc-category-count {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.doc-list h2 {
+  margin-bottom: 0.5rem;
+}
+
+.doc-actions {
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.category-select {
+  width: 12.5rem;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--field);
+  border-radius: 0.45rem;
+  padding: 0.25rem 0.4rem;
+}
+
+.category-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.documents .more {
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--field);
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.85rem;
+}
+
+/* On a phone, the categories are a row of chips above the list. */
+@media (max-width: 640px) {
+  .documents-body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.75rem;
+  }
+
+  .doc-categories {
+    position: static;
+    flex-direction: row;
+    gap: 0.35rem;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+    scrollbar-width: none;
+  }
+
+  .doc-categories a {
+    flex: none;
+    padding: 0.3rem 0.65rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+  }
+
+  .doc-category-label {
+    flex: none;
+  }
+
+  .category-select {
+    width: 8.5rem;
+  }
+}
+
 /* Photos: the map (#40) */
 
 .map-view {

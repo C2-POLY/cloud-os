@@ -4,7 +4,9 @@ form pgvector reads (docs/architecture/embeddings.md).
 The worker is the one that knows which model and version it runs: at
 startup it writes them to embedding_models. When a version changes,
 requeued_at goes back to NULL, and the core queues every content again for
-it (core/internal/photovec Sync).
+it (core/internal/photovec Sync). The classifier of documents, which reads
+Arctic's vectors (worker.doccat, #73), is declared the same way: a new
+version of its sentences classifies every document again.
 """
 
 from __future__ import annotations
@@ -27,10 +29,14 @@ DECLARE = """
 
 def declare(conn: psycopg.Connection) -> None:
     """Record the name, version and dimension of every embedding model this
-    worker serves. A model already declared at the same version is left as
+    worker serves, and of the classifier of documents (the dimension of the
+    vectors it reads). One already declared at the same version is left as
     it is, so restarting a worker queues nothing again."""
+    from worker import doccat
+
     for name, served in models.embedding_models().items():
         conn.execute(DECLARE, (name, served.version, served.dims))
+    conn.execute(DECLARE, (doccat.NAME, doccat.version(), doccat.DIMS))
 
 
 def literal(vector: Iterable[float]) -> str:

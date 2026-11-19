@@ -1,0 +1,17 @@
+# The category expected for each document of docs/ (#73), named without
+# extension; any of them counts as right. Written with the documents, before
+# they were classified.
+
+[expect]
+acte-naissance = ["administratif"]
+bilan-sanguin = ["sante"]
+certificat-travail = ["travail"]
+contrat-salle-sport = ["contrats"]
+facture-eau = ["factures"]
+facture-opticien = ["factures"]
+notice-cafetiere = ["autre"]
+offre-pret-immobilier = ["banque"]
+pv-assemblee-copropriete = ["autre"]
+recepisse-carte-identite = ["administratif"]
+remboursements-assurance-maladie = ["sante"]
+taxe-fonciere-2024 = ["impots"]

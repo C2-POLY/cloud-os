@@ -1,7 +1,7 @@
 # Texte des documents
 
-Le texte des PDF, des fichiers Office (docx, xlsx, pptx), OpenDocument (odt, ods, odp) et des textes (txt, md, csv, tsv) est extrait par les workers, en tâche de fond, et rangé en base par contenu. Celui des documents photographiés ou scannés (images, PDF « sans texte ») est lu par l'OCR et rangé au même endroit. Les originaux ne sont jamais modifiés. Ce texte sert la recherche dans le contenu (#69), les embeddings texte (#70) et le classement (#73).
-Issues : #67 (extraction), #68 (OCR).
+Le texte des PDF, des fichiers Office (docx, xlsx, pptx), OpenDocument (odt, ods, odp) et des textes (txt, md, csv, tsv) est extrait par les workers, en tâche de fond, et rangé en base par contenu. Celui des documents photographiés ou scannés (images, PDF « sans texte ») est lu par l'OCR et rangé au même endroit. Les originaux ne sont jamais modifiés. Ce texte sert la recherche dans le contenu (#69), les embeddings texte (#70) et le classement par catégorie, que montre l'app Documents (#73, plus bas).
+Issues : #67 (extraction), #68 (OCR), #73 (classement).
 
 ## Parcours
 
@@ -179,6 +179,103 @@ La lecture tourne dans un sous-processus, `python -I -m worker.ocr`, qui reçoit
 
 Un PDF qui mêle pages de texte et pages scannées (« avec texte » pour #67, en moyenne) ; le texte d'un PDF dessiné en tracés, sans image ; les images JBIG2 ; une page à l'envers ou tournée sans `/Rotate`, faute de classifieur d'orientation ; l'écriture manuscrite ; les TIFF ; le texte des vidéos.
 
+## Classement : factures, contrats et autres
+
+Chaque document avec du texte reçoit une catégorie : Factures, Contrats, Impôts, Santé, Banque, Travail, Administratif ou Autre. Les workers la calculent avec les vecteurs Arctic de son texte ([search-ai.md](search-ai.md)), sans modèle de langage ni mot-clé ; l'app Documents les montre par catégorie, et un membre corrige celle d'un de ses fichiers. Issue : #73.
+
+| Pièce | Où | Rôle |
+|---|---|---|
+| Catégories, phrases, règle, tâche `doccat` | `worker/src/worker/doccat.py` | `CATEGORIES`, `classify`, `version`, `make` |
+| Classement à l'indexation | `worker/src/worker/textemb.py` | dans la transaction des vecteurs |
+| Tables | `core/migrations/0023_document_categories.sql` | `document_categories` (par contenu), `file_categories` (la correction, par fichier) |
+| Rattrapage, listes, corrections | `core/internal/doccat` | `Backfill`, `Sync`, `Summary`, `List`, `Get`, `Set` |
+| Routes | `core/internal/httpapi/documents.go` | `/api/documents…` (session exigée) |
+| App Documents | `web/src/documents/` | [web.md](web.md) |
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as worker : textemb.make, doccat.make
+    participant TV as text_vectors_arctic_m_v2
+    participant DC as document_categories (par contenu)
+    participant FC as file_categories (par fichier)
+    participant R as embedding_models
+    participant C as cœur : doccat.Sync
+    participant Q as tasks
+    participant API as cœur : /api/documents
+    participant U as web : app Documents
+
+    Note over W,R: Démarrage du worker : vectors.declare écrit doccat et doccat.version() dans embedding_models
+    W->>W: textemb.make encode les fenêtres du texte (Arctic fp16)
+    W->>W: doccat.classify : moyenne des fenêtres, cosinus avec chaque phrase de CATEGORIES (encodées une fois)
+    W->>TV: transaction : DELETE puis INSERT des fenêtres
+    W->>DC: même transaction : UPSERT category, score, margin, version
+    C->>R: toutes les 30 s, embed.Due(doccat)
+    alt nouvelle version (phrases, seuil ou modèle)
+        C->>Q: doccat.Backfill : tâche doccat {sha256}, priorité 0, contenus aux vecteurs à jour et à la catégorie d'une autre version
+        C->>R: embed.MarkRequeued
+        W->>Q: claim doccat
+        W->>TV: vecteurs du contenu, à la version déclarée d'Arctic
+        W->>DC: UPSERT, sans réencoder le document
+    end
+    U->>API: GET /api/documents?category=factures (cookie de session)
+    API->>DC: fichiers vivants du compte, COALESCE(fc.category, dc.category)
+    API-->>U: {items, next}
+    U->>API: PUT /api/documents/category {path, category}
+    API->>FC: UPSERT sur le file_id du compte, ou DELETE si category vaut null
+    Note over DC,FC: Un recalcul ne réécrit que document_categories : la correction reste
+```
+
+### La règle
+
+- **Des phrases par catégorie.** Chaque catégorie est décrite par 3 ou 4 phrases en français (`CATEGORIES`), Autre comprise : billets de voyage, recettes, lettres, comptes rendus de réunion. Le worker les encode une fois par processus avec Arctic et son préfixe de requête « query: », comme des recherches, une phrase à la fois (27 phrases, une demi-seconde).
+- **Le document** est la moyenne des vecteurs de ses fenêtres, ramenée à la longueur 1. Une seule fenêtre (une annexe, une liste de charges) ne décide pas du type d'un long document.
+- **Le score d'une catégorie** est le cosinus de sa phrase la plus proche. La plus haute l'emporte ; sous 0,15 (`THRESHOLD`), le document est Autre.
+- **Pas de marge minimale.** Le banc a des documents justes à très peu d'écart de la deuxième catégorie (l'attestation CAF à 0,003, la facture internet à 0,011, celle du vétérinaire à 0,016) : en exiger une les enverrait dans Autre. `score` et `margin` (premier moins deuxième) sont gardés en base, pour un « à vérifier » plus tard.
+- **Pourquoi huit catégories.** Avec les six de départ (sans Travail ni Administratif), la fiche de paie, l'attestation CAF, la carte grise et le certificat de scolarité finissaient dans Autre, et le banc plafonnait à 27 sur 30, pour un seul seuil.
+
+Mesures sur les 30 documents du banc, avec les phrases de `doccat.py` (prototype puis tests) :
+
+| Variante | Bien classés |
+|---|---|
+| 6 catégories, meilleur seuil | 27 / 30 (seuil 0,215 seulement) |
+| 8 catégories, Autre décrite, centre des phrases | 26 / 30 |
+| **8 catégories, Autre décrite, phrase la plus proche (retenu)** | **30 / 30, pour tout seuil de 0 à 0,20** |
+
+Trois phrases ont été ajoutées après les premiers essais (factures de vétérinaire, prescriptions de kiné, billets de voyage) : le banc mesure surtout la couverture des phrases. Un second jeu de 12 documents, écrits après le réglage et mesurés une fois sans retoucher les phrases (`worker/tests/fixtures/doccat/`), en classe **11 sur 12** : la notice d'une cafetière tombe dans Factures.
+
+### Quand
+
+- **À l'indexation.** `textemb.make` classe le document avec les vecteurs qu'il vient de calculer et écrit sa catégorie dans la transaction de ses vecteurs : un document n'a jamais de vecteurs sans catégorie. Un texte sans fenêtre perd la sienne.
+- **Quand le classement change.** `doccat.version()` est `textemb.version()` suivi de `-c` et des 8 premiers caractères hexadécimaux du SHA-256 des phrases et du seuil (`95c2741-fp16-w512-o64-n64-c501271e4`). `vectors.declare` la déclare dans `embedding_models` sous le nom `doccat`, à côté des modèles ([embeddings.md](embeddings.md)). Au tour de 30 s, `doccat.Sync` lit `embed.Due` ; pour une version nouvelle, `Backfill` met en file, à priorité de rattrapage, une tâche `doccat` (clé `doccat:<sha256>`) pour chaque contenu vivant qui a des vecteurs de la version déclarée d'Arctic et pas de catégorie de la version déclarée du classement, puis `embed.MarkRequeued`.
+- **La tâche `doccat`** relit les vecteurs stockés (`halfvec`) et classe de nouveau, sans réencoder le document ni lire de fichier. Elle ne fait rien quand la catégorie est à jour, ou quand les vecteurs ne sont pas encore à la version d'Arctic : `textemb.make` la classera en les écrivant.
+- **Un autre modèle** change `textemb.version()`, donc la version du classement : les documents sont reclassés à mesure qu'ils sont réencodés.
+- **`core doccat backfill`** fait le rattrapage à la main.
+
+### Stockage
+
+| Table | Clé | Colonnes |
+|---|---|---|
+| `document_categories` | `sha256`, clé étrangère vers `document_text`, en cascade | `category`, `score`, `margin`, `version`, `classified_at` |
+| `file_categories` | `file_id`, clé étrangère vers `files`, en cascade | `category`, `set_at` |
+
+- **La catégorie automatique est par contenu**, comme le texte et les vecteurs : partagée par deux fichiers identiques, partie avec le texte quand plus aucun fichier n'a le contenu (`doctext.Prune`).
+- **La correction est par fichier.** Elle appartient au compte du fichier, donc ne passe jamais à un autre compte qui a le même contenu. Elle suit le fichier, qui garde son id quand il est déplacé, renommé, mis à la corbeille, restauré ou remplacé (une nouvelle version d'une facture reste une facture), et part avec la purge. Un recalcul ne réécrit que `document_categories` : elle reste.
+- **La catégorie montrée** est `COALESCE(fc.category, dc.category)`.
+- **Les deux tables refusent une catégorie inconnue** (`CHECK`). Les mêmes identifiants sont dans `doccat.CATEGORIES`, `doccat.Categories` et `web/src/documents/documents.ts` ; un test du worker les compare à la migration.
+- **La migration inverse** efface les corrections (des métadonnées, aucun fichier) ; les catégories automatiques se recalculent.
+
 ## API
 
-Le texte n'a pas de route à lui : il sert la recherche dans le contenu, `GET /api/search/content` (#69). La migration 0018 lui ajoute la colonne générée `tsv` et son index GIN ; tout est dans [search.md](search.md).
+- **Texte :** il n'a pas de route à lui : il sert la recherche dans le contenu, `GET /api/search/content` (#69). La migration 0018 lui ajoute la colonne générée `tsv` et son index GIN ; tout est dans [search.md](search.md).
+- **Catégories** (session exigée, fichiers vivants du compte de la session seulement, jamais d'un paramètre ; `core/internal/httpapi/documents.go`) :
+  - `GET /api/documents/categories` → `{categories: [{id, count}], pending}` : chaque catégorie dans l'ordre, 0 comprise, et `pending`, les documents avec du texte pas encore classés ;
+  - `GET /api/documents?category=&limit=&before_at=&before_path=` → `{items, next}` : les documents de la catégorie, du plus récemment modifié au plus ancien (`modified_at`, puis le chemin), 60 par page, 200 au plus. `next` (`{at, path}`) se renvoie en `before_at` et `before_path`. 400 pour une catégorie inconnue ou absente ;
+  - `PUT /api/documents/category` en JSON `{path, category}` : `category` vaut l'une des huit, ou `null` pour revenir au classement automatique ; la réponse est l'entrée. 400 pour une catégorie inconnue, 404 pour un chemin qui n'est pas un document vivant du compte (photo, archive, dossier, corbeille, autre compte).
+  - Chaque entrée (`DocumentEntry`, `shared/api-types.ts`) est l'`Entry` du fichier avec `category` (celle montrée), `auto` (l'automatique, `null` avant le classement) et `corrected`.
+
+## Tests du classement
+
+- **Worker** (`worker/tests/test_doccat.py`) : les identifiants comparés à la migration ; la version (phrases, seuil, vecteurs) ; la déclaration ; la règle avec des vecteurs posés à la main (phrase la plus proche, moyenne des fenêtres, seuil, Autre décrite) ; la catégorie écrite avec les vecteurs ; la tâche qui reclasse sans réencoder et ne fait rien à jour ou sans vecteurs à la version ; la cascade. Avec les modèles, les 30 documents du banc (`fixtures/bench/categories.toml`, au moins 28 exigés, 30 mesurés) et les 12 du second jeu (au moins 9 exigés, 11 mesurés) passent par `textemb.make` ; le test affiche le tableau des catégories trouvées.
+- **Cœur** (`core/internal/doccat`, `httpapi/documents_test.go`, `migrate`) : les listes et les nombres par catégorie, les documents en attente, ni photo ni archive ; les pages ; la correction gardée quand les workers reclassent, et défaite ; le même contenu dans deux comptes ; la correction qui suit le renommage, sort avec la corbeille, revient avec la restauration et part avec la purge ; les refus ; `Backfill`, `Sync` une fois par version ; les routes ; la migration montée, défaite et remontée avec des données.
+- **Web** (`web/src/documents/documents.test.tsx`).

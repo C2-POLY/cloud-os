@@ -1,7 +1,7 @@
 # Interface web
 
 Le front React (Vite, TypeScript) que le cœur sert en fichiers statiques : `web/src/`.
-Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (versions), #13 (partage par lien), #31 (animations et défilement), #46 (le bureau), #48 (la palette Demander), #49 (les widgets du bureau), #47 (la Chronologie de Fichiers), #35 (l'app Photos).
+Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (versions), #13 (partage par lien), #31 (animations et défilement), #46 (le bureau), #48 (la palette Demander), #49 (les widgets du bureau), #47 (la Chronologie de Fichiers), #35 (l'app Photos), #73 (l'app Documents).
 
 ## Écrans et adresses
 
@@ -15,6 +15,7 @@ Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (
 | `/photos` | Photos | Tout compte |
 | `/photos/albums`, `/photos/albums/{id}` | Photos › Albums, un album ([albums.md](albums.md)) | Tout compte |
 | `/photos/carte` | Photos › Carte ([map.md](map.md)) | Tout compte |
+| `/documents`, `/documents/<catégorie>` | Documents, sur cette catégorie ; sans catégorie, la première qui a des documents ([documents.md](documents.md)) | Tout compte |
 | `/partages` | Partages : ses liens, avec Révoquer | Tout compte |
 | `/corbeille` | Corbeille | Tout compte |
 | `/s/<jeton>` | Hors du bureau : la page de l'invité d'un lien de partage | Sans compte |
@@ -30,7 +31,7 @@ Le compte connecté arrive sur un bureau : fond d'écran vivant, barre de menus,
 
 | Fichier | Rôle |
 |---|---|
-| `apps.ts` | Les apps (Fichiers, Photos, Partages, Corbeille, Comptes) : titre, icône, couleur du dock, adresse d'ouverture ; `appOf(adresse)` |
+| `apps.ts` | Les apps (Fichiers, Photos, Documents, Partages, Corbeille, Comptes) : titre, icône, couleur du dock, adresse d'ouverture ; `appOf(adresse)` |
 | `windows.ts` | `useWindows` : les fenêtres ouvertes, de l'arrière vers l'avant, et `useGeometries` : leurs places, gardées dans `localStorage` (`cloudos.windows.v1`) |
 | `Window.tsx` | Une fenêtre : barre de titre (Fermer, Agrandir), déplacement au pointeur, double-clic pour agrandir |
 | `Desktop.tsx` | Le bureau : fond, barre de menus, horloge, fenêtres, dock, raccourci ⌘K |
@@ -78,6 +79,15 @@ flowchart TD
     F --> C[Fermer : leave, puis la fenêtre suivante ou /]
     F --> M[Barre de titre : déplacer, agrandir ; place gardée]
 ```
+
+## Documents (#73)
+
+L'app Documents (`web/src/documents/`, icône du dock entre Photos et Partages) montre les documents du compte par catégorie, classés par la box d'après leur contenu ([documents.md](documents.md), « Classement »).
+
+- **Catégories :** à gauche, les huit, dans l'ordre de `categories` (`documents.ts`), avec leur icône et leur nombre de documents (`GET /api/documents/categories`). Sur téléphone (moins de 640 px), elles deviennent une rangée de pastilles qui défile au-dessus de la liste. Une ligne sous le titre dit combien de documents sont en cours de classement.
+- **Liste :** les documents de la catégorie, du plus récemment modifié au plus ancien, 60 à la fois, puis Afficher plus (`GET /api/documents`, curseur `next`). Chaque ligne donne le nom, le dossier (« Dans Factures/2024 ») et la date. Un clic sur le nom ouvre la visionneuse quand elle sait montrer le fichier (#52), sinon son dossier dans Fichiers ; l'icône dossier mène aussi à Fichiers.
+- **Corriger :** le sélecteur Catégorie de chaque ligne propose « Factures (automatique) » (la catégorie de la box, nommée en premier pour rester lisible quand un téléphone coupe le menu) puis les huit (`PUT /api/documents/category`). Un document qui change de catégorie quitte la liste, les nombres se mettent à jour, et un message propose Annuler, qui remet le choix d'avant (la catégorie corrigée, ou l'automatique).
+- **Tests :** `documents.test.tsx` : adresses, nombres et première catégorie remplie, liste vide, correction et Annuler, retour à l'automatique, page suivante, dossier d'un document sans aperçu.
 
 ## Drive
 
