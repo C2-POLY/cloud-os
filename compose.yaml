@@ -31,8 +31,16 @@ services:
       MAPS_DIR: /maps
       # The worker's query endpoint (POST /embed), on the Compose network only.
       WORKER_URL: http://worker:8090
+      # SMB trial (docs/architecture/smb.md): off unless CLOUDOS_SMB_TRIAL names
+      # a library. Development only: the login is the account's name with the
+      # trial's own password, and the drive is served read-only.
+      CLOUDOS_SMB_TRIAL: ${CLOUDOS_SMB_TRIAL:-}
+      CLOUDOS_SMB_TRIAL_USER: ${CLOUDOS_SMB_TRIAL_USER:-}
+      CLOUDOS_SMB_TRIAL_PASSWORD: ${CLOUDOS_SMB_TRIAL_PASSWORD:-}
     ports:
       - "127.0.0.1:${CLOUDOS_CORE_PORT:-8480}:8080"
+      # SMB: macOS's own file sharing holds port 445 on the Mac, hence 1445.
+      - "127.0.0.1:${CLOUDOS_SMB_PORT:-1445}:445"
     volumes:
       # User files, in clear: <data dir>/<owner>/<path>, readable from the host.
       - ${CLOUDOS_DATA_DIR:-./.data/files}:/data

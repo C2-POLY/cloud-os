@@ -42,6 +42,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/ocr"
 	"github.com/C2-POLY/cloud-os/core/internal/photovec"
 	"github.com/C2-POLY/cloud-os/core/internal/share"
+	"github.com/C2-POLY/cloud-os/core/internal/smbfs"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 	"github.com/C2-POLY/cloud-os/core/internal/tasks"
 	"github.com/C2-POLY/cloud-os/core/internal/textemb"
@@ -243,6 +244,10 @@ func serve(ctx context.Context, c core) error {
 		slog.Warn("settled moves left by a crash", "finished", finished, "dropped", dropped)
 	}
 
+	if err := startSMBTrial(ctx, c); err != nil {
+		return fmt.Errorf("SMB trial: %w", err)
+	}
+
 	addr := envOr("CORE_ADDR", ":8080")
 	// The workers' query endpoint, for the searches by meaning.
 	workers := &embed.Client{URL: os.Getenv("WORKER_URL")}
@@ -279,6 +284,41 @@ func serve(ctx context.Context, c core) error {
 		defer cancel()
 		return srv.Shutdown(shutdown)
 	}
+}
+
+// startSMBTrial serves one account's drive over SMB, read-only, when
+// CLOUDOS_SMB_TRIAL=smbsrv (docs/architecture/smb.md). Without it, nothing
+// listens. The login is the account's name with the trial's own
+// password, CLOUDOS_SMB_TRIAL_PASSWORD: for development only.
+func startSMBTrial(ctx context.Context, c core) error {
+	lib := os.Getenv("CLOUDOS_SMB_TRIAL")
+	if lib == "" {
+		return nil
+	}
+	if lib != "smbsrv" {
+		return fmt.Errorf("CLOUDOS_SMB_TRIAL=%q: the one SMB library is smbsrv", lib)
+	}
+	user := os.Getenv("CLOUDOS_SMB_TRIAL_USER")
+	a, err := auth.NewService(c.pool).Get(ctx, user)
+	if err != nil {
+		return fmt.Errorf("account %q of CLOUDOS_SMB_TRIAL_USER: %w", user, err)
+	}
+	if a.DisabledAt != nil {
+		return fmt.Errorf("account %q of CLOUDOS_SMB_TRIAL_USER is disabled", user)
+	}
+	addr := envOr("CLOUDOS_SMB_ADDR", ":445")
+	_, err = smbfs.Start(ctx, smbfs.Config{
+		Addr:     addr,
+		User:     a.Name,
+		Password: os.Getenv("CLOUDOS_SMB_TRIAL_PASSWORD"),
+		Owner:    a.Name,
+		Store:    c.files,
+	})
+	if err != nil {
+		return err
+	}
+	slog.Warn("SMB trial serving a drive read-only", "addr", addr, "account", a.Name, "share", smbfs.ShareName)
+	return nil
 }
 
 func importDir(ctx context.Context, c core, owner, dir string, out io.Writer) error {
