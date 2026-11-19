@@ -76,12 +76,15 @@ export function useGeometries() {
   }
 }
 
-/** A new window: large, below the menu bar, each one a little lower and to the right. */
+/**
+ * A new window: large, below the menu bar, each one a little lower and to the
+ * right, and shorter by as much, so that its bottom stays above the dock.
+ */
 export function defaultGeometry(index: number): Geometry {
   const vw = window.innerWidth || 1280
   const vh = window.innerHeight || 800
   const w = Math.min(1040, vw - 160)
-  const h = Math.min(700, vh - 190)
+  const h = Math.min(700, vh - 190 - index * 28)
   return { x: Math.max(16, (vw - w) / 2 - 120 + index * 36), y: 64 + index * 28, w, h, max: false }
 }
 

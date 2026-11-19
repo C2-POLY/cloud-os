@@ -8,6 +8,7 @@ import { TrashPage } from '../drive/TrashPage.tsx'
 import { Health } from '../Health.tsx'
 import { driveURL, folderFromURL, navigate, usePath } from '../router.ts'
 import { SharesPage } from '../share/SharesPage.tsx'
+import { Settings } from '../settings/Settings.tsx'
 import { DocumentsPage } from '../documents/Documents.tsx'
 import { categoryFromURL } from '../documents/documents.ts'
 import { appInfo, apps, timelinePath, type AppId } from './apps.ts'
@@ -118,6 +119,8 @@ function AppContent({ win, me }: { win: Win; me: Account }) {
       return <SharesPage />
     case 'trash':
       return <TrashPage />
+    case 'settings':
+      return <Settings me={me} />
     case 'accounts':
       return (
         <>

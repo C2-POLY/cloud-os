@@ -52,6 +52,10 @@ type Service struct {
 	Limiter *Limiter
 	// SessionTTL is how long a session lives without being used.
 	SessionTTL time.Duration
+	// OnSMBRevoke, when set by the SMB server, closes the SMB sessions of an
+	// account. It runs after its SMB password is revoked or replaced, and
+	// after the account is disabled.
+	OnSMBRevoke func(name string)
 }
 
 // NewService returns a service with the default session lifetime and login limits.
@@ -226,7 +230,13 @@ func (s *Service) Update(ctx context.Context, name string, role *string, disable
 	if err != nil {
 		return Account{}, err
 	}
-	return out, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return Account{}, err
+	}
+	if disabled != nil && *disabled {
+		s.smbRevoked(name) // its SMB sessions end with its web sessions
+	}
+	return out, nil
 }
 
 // ResetPassword sets a new password and ends every session of the account.

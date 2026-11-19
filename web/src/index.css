@@ -199,6 +199,87 @@ button.link {
   border-top: 1px solid var(--line);
 }
 
+/* Réglages */
+
+.settings {
+  max-width: 40rem;
+}
+
+.settings-section h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.settings-section > p {
+  margin: 0 0 1rem;
+  line-height: 1.45;
+}
+
+.smb-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.4rem 1rem;
+  margin: 0 0 1rem;
+}
+
+.smb-facts dt {
+  color: var(--muted);
+}
+
+.smb-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.smb-secret {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0 0 1.25rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--good);
+  border-radius: 0.75rem;
+}
+
+.smb-secret label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.smb-secret-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.smb-secret input {
+  flex: 1 1 14rem;
+  min-width: 0;
+  font: 1rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.04em;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--field);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.7rem;
+}
+
+.smb-secret .hint {
+  margin: 0;
+}
+
+.smb-secret .link {
+  justify-self: start;
+}
+
 .actions {
   display: flex;
   gap: 1rem;
@@ -229,7 +310,9 @@ button {
 }
 
 .toolbar button,
-.dialog-buttons button {
+.dialog-buttons button,
+.settings-actions button,
+.smb-secret-row button {
   color: var(--bg);
   background: var(--fg);
   border: 1px solid var(--fg);
@@ -238,7 +321,8 @@ button {
 }
 
 .toolbar button.secondary,
-.dialog-buttons button.secondary {
+.dialog-buttons button.secondary,
+.settings-actions button.secondary {
   color: var(--fg);
   background: transparent;
   border-color: var(--field);
@@ -2444,9 +2528,19 @@ button.palette-visual:focus-visible {
     box-sizing: border-box;
   }
 
+  /* Every app stays in the dock: past the screen's width, the buttons shrink. */
   .dock-button {
+    flex: 0 1 44px;
+    min-width: 0;
     width: 44px;
-    height: 44px;
+    height: auto;
+    aspect-ratio: 1;
+  }
+
+  .dock-button svg {
+    width: 60%;
+    max-width: 24px;
+    height: auto;
   }
 }
 

@@ -93,6 +93,7 @@ type route struct {
 // through RequireSession; the access test walks this list.
 func routes(c Config) []route {
 	a := &accountsAPI{auth: c.Auth}
+	smb := &smbPasswordAPI{auth: c.Auth}
 	f := &filesAPI{store: c.Files}
 	u := &uploadsAPI{store: c.Files, maxSize: c.MaxUpload}
 	t := &trashAPI{store: c.Files}
@@ -112,6 +113,9 @@ func routes(c Config) []route {
 		{"POST /api/login", public, a.login},
 		{"POST /api/logout", public, a.logout},
 		{"GET /api/me", member, a.me},
+		{"GET /api/me/smb-password", member, smb.status},
+		{"POST /api/me/smb-password", member, smb.create},
+		{"DELETE /api/me/smb-password", member, smb.revoke},
 		{"GET /api/accounts", admin, a.list},
 		{"POST /api/accounts", admin, a.create},
 		{"PATCH /api/accounts/{name}", admin, a.update},

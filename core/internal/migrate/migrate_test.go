@@ -72,6 +72,8 @@ var tables = []struct {
 	// Migration 24 only adds an index on the tasks of a content.
 	{24, []string{"tasks_kind_sha"}, `INSERT INTO tasks (kind, payload) VALUES ('ocr', '{"sha256": "00"}');
 		SELECT 1 FROM tasks WHERE kind = 'ocr' AND payload ->> 'sha256' = '00'`},
+	{25, []string{"smb_passwords"}, `INSERT INTO smb_passwords (account, nt_hash, last_used_at)
+		VALUES ('enzo', decode('a4f49c406510bdcab6824ee7c30fd852', 'hex'), now())`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {

@@ -184,3 +184,15 @@ export interface AnalysisSummary {
   analysing: number
   failed: number
 }
+
+/** GET /api/me/smb-password (#91): whether the account has an SMB password, never the password itself. */
+export interface SMBPasswordStatus {
+  exists: boolean
+  created_at: string | null
+  last_used_at: string | null // the last time an SMB client signed in with it
+}
+
+/** POST /api/me/smb-password: a new SMB password, the only time it is shown. */
+export interface SMBPasswordCreated extends SMBPasswordStatus {
+  password: string
+}
