@@ -40,6 +40,14 @@ const (
 	MaxLimit     = 100
 	maxQuery     = 200 // characters; SigLIP 2 reads 64 tokens
 	efSearch     = 100 // candidates the HNSW index keeps per search
+	// baselineSample is how many of the account's photos the mean score of a
+	// query is taken over (Hit.Lift): those first by hash, a random sample.
+	baselineSample = 1000
+	// baselinePrior is how many photos at MinScore the mean starts from: an
+	// account with a handful of photos, whose mean the right photo itself
+	// would pull up, is taken as an average library; from a few dozen photos
+	// on, its own mean wins.
+	baselinePrior = 10
 )
 
 // MinScore is the cosine similarity under which a photo is not returned,
@@ -131,6 +139,14 @@ func Prune(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
 type Hit struct {
 	storage.File
 	Score float64
+	// Lift is Score minus the mean score of the account's photos for the same
+	// query, started from baselinePrior photos at MinScore: how far this photo
+	// stands out. SigLIP 2 gives every photo a cosine near 0.08 for a word it
+	// does not know (« périm », « Etchev »), so the cosine alone cannot tell a
+	// match from noise; the lift can (0.036 or more for a right photo of the
+	// benchmark, 0.024 at most for the words typed in part or with a typo;
+	// docs/architecture/search.md).
+	Lift float64
 }
 
 // Searcher finds photos by the meaning of a sentence.
@@ -140,10 +156,11 @@ type Searcher struct {
 }
 
 // Search returns the owner's live photos and videos closest to q, best
-// first, at most limit, none under MinScore. The workers encode q (an
-// embed.ErrUnavailable error when they cannot); only vectors of the same
-// model version are compared. filter narrows the files, while the index is
-// walked. An empty q finds nothing.
+// first, at most limit, none under MinScore, each with its Lift over the
+// mean of the owner's photos (all of them, whatever the filter). The workers
+// encode q (an embed.ErrUnavailable error when they cannot); only vectors of
+// the same model version are compared. filter narrows the files, while the
+// index is walked. An empty q finds nothing.
 func (s *Searcher) Search(ctx context.Context, owner, q string, limit int, filter storage.Filter) ([]Hit, error) {
 	owner, err := storage.CleanOwner(owner)
 	if err != nil {
@@ -196,8 +213,30 @@ func (s *Searcher) Search(ctx context.Context, owner, q string, limit int, filte
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Hit, error) {
+	hits, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Hit, error) {
 		var h Hit
 		return h, row.Scan(&h.ID, &h.Owner, &h.Path, &h.Kind, &h.Size, &h.MIME, &h.SHA256, &h.CreatedAt, &h.ModifiedAt, &h.Score)
 	})
+	if err != nil || len(hits) == 0 {
+		return hits, err
+	}
+	// The mean score of the owner's photos for this query, over a sample
+	// taken by hash (the walk of the primary key stops at baselineSample),
+	// started from baselinePrior photos at MinScore.
+	var sum float64
+	var n int
+	if err := tx.QueryRow(ctx,
+		`SELECT coalesce(sum(1 - (s.embedding <=> $1::vector)), 0), count(*) FROM (
+		     SELECT v.embedding FROM `+table+` v
+		     WHERE v.version = $2 AND EXISTS (SELECT 1 FROM files f WHERE f.sha256 = v.sha256
+		           AND f.owner = $3 AND f.kind = 'file' AND f.trash_id IS NULL)
+		     ORDER BY v.sha256
+		     LIMIT $4) s`, vec.Literal(), vec.Version, owner, baselineSample).Scan(&sum, &n); err != nil {
+		return nil, err
+	}
+	mean := (sum + baselinePrior*MinScore) / float64(n+baselinePrior)
+	for i := range hits {
+		hits[i].Lift = hits[i].Score - mean
+	}
+	return hits, nil
 }

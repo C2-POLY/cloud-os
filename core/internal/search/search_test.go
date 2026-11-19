@@ -156,7 +156,8 @@ func TestTheFourSearchesMakeOneList(t *testing.T) {
 		t.Fatal(r, err)
 	}
 	// The lease by its words and its meaning (score 1), the folder by its
-	// name (0.9), the photo by what it shows (0.64); the far photo and the
+	// name (0.9), the photo by what it shows (0.41: 0.037 over the mean of
+	// the two photos started from 10 at MinScore); the far photo and the
 	// unrelated invoice are not listed.
 	want := []string{"Documents/bail.txt", "Contrats", "Photos/chien.jpg"}
 	if got := names(r); !slices.Equal(got, want) {
