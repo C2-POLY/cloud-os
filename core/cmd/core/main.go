@@ -30,6 +30,7 @@ import (
 
 	"github.com/C2-POLY/cloud-os/core/internal/activity"
 	"github.com/C2-POLY/cloud-os/core/internal/albums"
+	"github.com/C2-POLY/cloud-os/core/internal/analysis"
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
 	"github.com/C2-POLY/cloud-os/core/internal/doccat"
@@ -258,6 +259,7 @@ func serve(ctx context.Context, c core) error {
 			Photos:     &photovec.Searcher{Pool: c.pool, Embed: workers},
 			Documents:  &textemb.Searcher{Pool: c.pool, Embed: workers},
 			Categories: &doccat.Store{Pool: c.pool},
+			Analysis:   &analysis.Reader{Pool: c.pool},
 			Activity:   &activity.Log{Pool: c.pool},
 			MaxUpload:  maxUpload(),
 			StaticDir:  os.Getenv("STATIC_DIR"),

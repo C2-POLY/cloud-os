@@ -1,5 +1,6 @@
 import { Cloud, LogOut, Monitor, Search } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
+import { failedLabel, summaryLabel, useAnalysisSummary } from '../analysis/analysis.ts'
 import { Accounts } from '../Accounts.tsx'
 import { api, type Account, type Health as HealthReport } from '../api.ts'
 import { Drive } from '../drive/Drive.tsx'
@@ -238,18 +239,14 @@ function Clock() {
   )
 }
 
-/** "Sauvegarde à jour" or how many tasks the box is working on, from /api/health. */
-function useTaskStatus(): string | null {
+/** "Sauvegarde à jour" while the core answers its health check. */
+function useBackupStatus(): string | null {
   const [status, setStatus] = useState<string | null>(null)
   useEffect(() => {
     let current = true
     const read = () =>
       api<HealthReport>('GET', '/api/health')
-        .then((h) => {
-          if (!current || !h.tasks) return
-          const busy = h.tasks.queued + h.tasks.running
-          setStatus(busy === 0 ? 'Sauvegarde à jour' : `${busy} tâche${busy > 1 ? 's' : ''} en cours`)
-        })
+        .then((h) => current && setStatus(h.db === 'ok' ? 'Sauvegarde à jour' : null))
         .catch(() => current && setStatus(null))
     void read()
     const t = window.setInterval(read, 20_000)
@@ -261,9 +258,26 @@ function useTaskStatus(): string | null {
   return status
 }
 
+/** Where the analysis of the account's files stands, from /api/analysis; it updates by itself. */
+function AnalysisStatus() {
+  const summary = useAnalysisSummary()
+  if (!summary) return null
+  const failed = failedLabel(summary)
+  return (
+    <span className="menubar-analysis" role="status">
+      <span className={summary.analysing > 0 ? 'menubar-busy' : undefined}>{summaryLabel(summary)}</span>
+      {failed && (
+        <span className="menubar-failed" title="Ouvrez le fichier pour voir pourquoi.">
+          {failed}
+        </span>
+      )}
+    </span>
+  )
+}
+
 function MenuBar({ title, me, onSignedOut, onAsk }: { title: string; me: Account; onSignedOut: () => void; onAsk: () => void }) {
   const now = useNow(15_000)
-  const status = useTaskStatus()
+  const status = useBackupStatus()
   return (
     <header className="menubar">
       <Cloud size={16} aria-label="Cloud OS" />
@@ -274,6 +288,7 @@ function MenuBar({ title, me, onSignedOut, onAsk }: { title: string; me: Account
       </button>
       <span className="menubar-fill" />
       {status && <span className="menubar-status">{status}</span>}
+      <AnalysisStatus />
       <span className="menubar-clock">
         {shortDay.format(now)} {time.format(now)}
       </span>

@@ -157,3 +157,30 @@ export interface Album {
   count: number // live files in it
   cover: Entry | null // its newest file, for the thumbnail
 }
+
+/** The tasks of the analysis, as the core's `analysis.Kinds` names them (docs/architecture/tasks.md). */
+export type AnalysisKind = 'thumb' | 'meta' | 'text' | 'ocr' | 'photovec' | 'textemb' | 'doccat'
+
+/** Where a step stands: waiting (queued, or for the step before it), running, done, failed for good, skipped (nothing to do) or idle (not queued). */
+export type AnalysisState = 'waiting' | 'running' | 'done' | 'failed' | 'skipped' | 'idle'
+
+/** One step of the analysis of a file, as the core's `analysis.Step` writes it. */
+export interface AnalysisStep {
+  kind: AnalysisKind
+  state: AnalysisState
+  error?: string // the last error: why it failed, or why it is tried again
+  attempts?: number
+  max_attempts?: number
+}
+
+/** GET /api/analysis/file?path=…, as the core's `analysis.FileStatus` writes it (#82). `none`: no step applies to this type of file. */
+export interface FileAnalysis {
+  state: 'none' | 'pending' | 'ready' | 'failed'
+  steps: AnalysisStep[]
+}
+
+/** GET /api/analysis: the account's files being analysed, and those whose analysis failed (#82). */
+export interface AnalysisSummary {
+  analysing: number
+  failed: number
+}

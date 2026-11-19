@@ -1,7 +1,7 @@
 # File de tâches
 
 Le travail de fond (miniatures, OCR, embeddings…) passe par une file de tâches dans Postgres, partagée par le cœur (Go) et les workers (Python), sans Redis.
-Issues : #8, #75.
+Issues : #8, #75, #82.
 
 ## Contrat
 
@@ -76,3 +76,25 @@ sequenceDiagram
 
 - **Santé :** `/api/health` renvoie `tasks: {queued, running, failed}`, et la page Comptes l'affiche, en rouge s'il y a des échecs.
 - **Preuve de bout en bout :** `core selftest [N]` met en file N tâches `selftest` et attend que les workers les terminent. Elle prouve que les deux côtés parlent le même contrat.
+
+## Où en est l'analyse d'un fichier (#82)
+
+Le cœur lit la file pour dire à un compte où en est l'analyse de **ses** fichiers (`core/internal/analysis`, routes `GET /api/analysis` et `GET /api/analysis/file`, [web.md](web.md)). Il ne fait que lire : il ne met rien en file et ne touche à aucun fichier.
+
+**Isolation.** La file est indexée par contenu (le hachage SHA-256), et un contenu est partagé par tous les comptes qui l'ont. Chaque réponse part donc des lignes `files` du compte qui demande (`owner`, vivantes : ni dossier, ni corbeille) et joint la file à partir d'elles : le résumé compte des fichiers du compte, le détail d'un chemin d'un autre compte répond 404, et aucun nom ni chemin d'un autre compte n'apparaît, même quand le contenu est le même. Un compte qui dépose les mêmes octets voit ses propres étapes, avec le même état puisque le travail est partagé.
+
+**Résumé** `GET /api/analysis` → `{"analysing": 3, "failed": 1}` :
+- `analysing` : fichiers du compte dont un contenu a une tâche d'analyse `queued` ou `running` ;
+- `failed` : fichiers dont la **dernière** tâche d'un type est `failed` (une tâche plus récente qui réussit, ou qui est en file, efface l'échec) ;
+- la requête part des tâches non terminées, peu nombreuses une fois les workers à jour, puis joint les fichiers du compte. Elle s'appuie sur l'index `tasks_kind_sha (kind, payload->>'sha256')` (migration 0024, avec sa migration inverse), car la clé de dédoublonnage ne couvre que les tâches en attente ou en cours, pas les `failed`.
+
+**Étapes d'un fichier** `GET /api/analysis/file?path=…` → `{"state": "pending", "steps": [{"kind": "text", "state": "running"}, …]}`. Les étapes suivent ce qui tourne vraiment pour le type du fichier (le MIME donné par le stockage) :
+
+| Type | Étapes, dans l'ordre |
+|---|---|
+| Document (PDF, Office, OpenDocument, texte) | `text`, puis `ocr` pour un PDF sans couche de texte (un scan), puis `textemb` et `doccat` |
+| Photo | `thumb`, `meta`, `ocr`, `photovec`, puis `textemb` et `doccat` seulement si l'OCR a trouvé du texte |
+| Vidéo | `thumb`, `meta`, `photovec` |
+| Autre | aucune (`state: "none"`) |
+
+Chaque étape a un état : `running`, `waiting` (en file, ou en attente de l'étape qui la précède), `done`, `failed` (les workers ont renoncé : `error` donne la dernière erreur, `attempts` et `max_attempts` les essais), `skipped` (un document sans texte n'a rien à indexer) ou `idle` (ni en file ni faite : rien ne la lancera toute seule). Une étape en `waiting` qui a déjà échoué est reprise : `error` dit pourquoi, `attempts`/`max_attempts` où en sont les essais. L'état vient de la dernière tâche du type pour ce contenu, sinon de son résultat (miniature, métadonnées, texte, vecteurs, catégorie), sinon de l'étape d'avant. L'état d'ensemble est `pending` si une étape attend ou tourne, sinon `failed` si une a échoué, sinon `ready`. La raison d'un échec est le `last_error` de la tâche, coupé à 300 caractères : le texte de l'exception du worker, jamais un chemin de fichier.

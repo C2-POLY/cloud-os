@@ -31,6 +31,9 @@ const Model = "siglip2-base-patch16-224"
 // table holds the vectors of Model. A new model is a new table, by migration.
 const table = "photo_vectors_siglip2_b16_224"
 
+// Table is the table of the vectors of Model, for the packages that only check a content has one.
+const Table = table
+
 // Search limits.
 const (
 	DefaultLimit = 30

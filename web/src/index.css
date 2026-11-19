@@ -898,7 +898,9 @@ html:has(.desktop) body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .wallpaper {
+  .wallpaper,
+  .menubar-busy::before,
+  .analysis-step.running svg {
     animation: none;
   }
 }
@@ -929,6 +931,35 @@ html:has(.desktop) body {
 
 .menubar > * {
   white-space: nowrap;
+}
+
+.menubar-analysis {
+  display: inline-flex;
+  gap: 0.6rem;
+  min-width: 0;
+  opacity: 0.9;
+}
+
+.menubar-busy::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 0.45rem;
+  border-radius: 50%;
+  background: #8ec5ff;
+  animation: analysis-pulse 1.4s ease-in-out infinite;
+}
+
+.menubar-failed {
+  color: #ffb4ab;
+  font-weight: 600;
+}
+
+@keyframes analysis-pulse {
+  50% {
+    opacity: 0.25;
+  }
 }
 
 .menubar-button {
@@ -2298,6 +2329,27 @@ button.palette-visual:focus-visible {
     display: none;
   }
 
+  .menubar {
+    gap: 0.6rem;
+  }
+
+  /* The analysis is worth more than the time on a phone: it gets the room. */
+  .menubar-clock,
+  .menubar-fill {
+    display: none;
+  }
+
+  .menubar-analysis {
+    flex: 1;
+    justify-content: flex-end;
+    flex-direction: column;
+    gap: 0;
+    overflow: hidden;
+    font-size: 0.72rem;
+    line-height: 1.15;
+    text-align: right;
+  }
+
   .palette-backdrop {
     padding: 44px 0.5rem 0.5rem;
   }
@@ -2495,3 +2547,94 @@ button.name-link:hover {
   text-decoration: underline;
 }
 
+
+/* Where the analysis of a file stands: in the document viewer, and in the photo viewer (dark). */
+.analysis {
+  --analysis-good: var(--good);
+  --analysis-bad: var(--bad);
+  --analysis-muted: var(--muted);
+  padding: 0.6rem 1rem;
+  font-size: 0.85rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+}
+
+.analysis.dark {
+  --analysis-good: #7fdc9f;
+  --analysis-bad: #ffb4ab;
+  --analysis-muted: rgb(255 255 255 / 60%);
+  padding: 0;
+  margin: 0 0 1.25rem;
+  border: 0;
+}
+
+.analysis-title {
+  margin: 0 0 0.35rem;
+  font-weight: 600;
+}
+
+.analysis-title.failed {
+  color: var(--analysis-bad);
+}
+
+.analysis-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0.25rem 1.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.analysis.dark .analysis-steps {
+  grid-template-columns: 1fr;
+}
+
+.analysis-step.failed,
+.analysis-step:has(.analysis-step-error) {
+  grid-column: 1 / -1;
+}
+
+.analysis-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--analysis-muted);
+}
+
+.analysis-step.done svg {
+  color: var(--analysis-good);
+}
+
+.analysis-step.failed {
+  color: var(--analysis-bad);
+}
+
+.analysis-step.running svg {
+  animation: analysis-spin 1.2s linear infinite;
+}
+
+.analysis-step-name {
+  color: var(--fg);
+}
+
+.analysis.dark .analysis-step-name {
+  color: #fff;
+}
+
+.analysis-step.failed .analysis-step-name {
+  color: inherit;
+}
+
+.analysis-step-error {
+  flex-basis: 100%;
+  padding-left: 1.3rem;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+@keyframes analysis-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

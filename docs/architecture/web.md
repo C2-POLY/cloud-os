@@ -1,7 +1,7 @@
 # Interface web
 
 Le front React (Vite, TypeScript) que le cœur sert en fichiers statiques : `web/src/`.
-Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (versions), #13 (partage par lien), #31 (animations et défilement), #46 (le bureau), #48 (la palette Demander), #49 (les widgets du bureau), #47 (la Chronologie de Fichiers), #35 (l'app Photos), #73 (l'app Documents).
+Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (versions), #13 (partage par lien), #31 (animations et défilement), #46 (le bureau), #48 (la palette Demander), #49 (les widgets du bureau), #47 (la Chronologie de Fichiers), #35 (l'app Photos), #73 (l'app Documents), #82 (l'état de l'analyse).
 
 ## Écrans et adresses
 
@@ -63,7 +63,7 @@ Le compte connecté arrive sur un bureau : fond d'écran vivant, barre de menus,
   - **Ce qu'il ne retient pas :** les téléchargements, qui compteraient chaque morceau d'une vidéo lue.
   - **Garanties :** des lignes, jamais des fichiers. Une écriture ratée dans le journal est notée dans les logs et ne fait jamais échouer l'opération. Le cœur purge les lignes de plus de 90 jours toutes les 30 s, avec `Reap`.
   - **Regroupement :** fait en SQL, pour qu'un import de 50 000 photos donne une ligne, pas 50 000.
-- **Barre de menus :** l'app au premier plan, l'état des tâches lu dans `/api/health` toutes les 20 s (« Sauvegarde à jour » ou « N tâches en cours »), l'heure, le compte et la déconnexion.
+- **Barre de menus :** l'app au premier plan, « Sauvegarde à jour » (`/api/health`, toutes les 20 s, tant que la base répond), l'état de l'analyse des fichiers du compte (voir [Où en est l'analyse](#où-en-est-lanalyse-82)), l'heure, le compte et la déconnexion.
 - **Dock :** Bureau, puis les apps de ce compte, avec un point sous celles qui sont ouvertes, puis Demander. Demander ouvre la palette de recherche, comme ⌘K ou Ctrl+K et la pilule de la barre de menus (voir [search.md](search.md)).
 - **Téléphone (moins de 768 px) :** une seule fenêtre, celle du premier plan, en plein écran entre la barre de menus et le dock. Ni déplacement ni agrandissement.
 - **Verre :** fond `--surface` à 86 % et `backdrop-filter`, dans les thèmes clair et sombre. Le fond d'écran a sa version sombre. N'écrire que `backdrop-filter` : le minifieur (lightningcss) ajoute lui-même le préfixe `-webkit-`, et supprime les deux quand on écrit les deux.
@@ -131,6 +131,14 @@ flowchart LR
 - **PDF** : `pdfjs-dist` (Apache-2.0), chargé au premier PDF ouvert, avec son worker comme un fichier que Vite construit. Il lit le fichier par plages HTTP, dessine une page à la fois dans un `<canvas>` (`PdfPage.tsx`) ; ← et → tournent les pages. pdf.js n'exécute jamais le JavaScript d'un PDF (sa couche d'affichage n'en a pas) et les formulaires XFA restent désactivés.
 - **Texte** : `textHead` lit les 64 premiers Kio (2 Kio dans Demander) par une plage `Range` et les affiche dans un `<pre>`, jamais interprétés en HTML ; un caractère coupé devient un signe de remplacement. Au-delà, la visionneuse invite à télécharger.
 - **Fermer** : Échap, la croix ou un clic sur le fond. Ouverte depuis Demander, la visionneuse capte Échap avant Demander, qui reste ouvert.
+
+## Où en est l'analyse (#82)
+
+Un fichier déposé est analysé en arrière-plan (texte, OCR, miniature, métadonnées, vecteurs, catégorie : [tasks.md](tasks.md)). Le front dit où cela en est, sans recharger la page.
+
+- **Barre de menus** (`AnalysisStatus` dans `Desktop.tsx`) : à côté de « Sauvegarde à jour », « Analyse de 3 fichiers… » (avec un point qui pulse) tant qu'un fichier du compte a une étape en file ou en cours, « Analyse à jour » sinon, et en rouge « 2 fichiers non analysés » quand des étapes ont échoué pour de bon. Elle lit `GET /api/analysis` : toutes les 2,5 s quand quelque chose est en cours, toutes les 15 s sinon, et pas du tout quand l'onglet est caché. Sur téléphone, l'indicateur reste, en deux lignes ; « Sauvegarde à jour » disparaît comme avant.
+- **Aperçus** (`web/src/analysis/AnalysisSteps.tsx`, dans `DocViewer` sous l'en-tête et dans le panneau sombre de la visionneuse de photos `Viewer`) : la liste des étapes du fichier, chacune « en attente », « en cours », « fait », « sans objet » ou « échec » avec la raison (« Raison : … »), et « nouvel essai à venir (2/5) » avec la dernière erreur quand une étape est reprise. Une ligne au-dessus donne l'ensemble : « Analyse en cours… », « Analyse terminée », ou « L'analyse a échoué : ce fichier ne sera pas retrouvé par son contenu ». `GET /api/analysis/file?path=…` est relu toutes les 2,5 s tant que le fichier est en cours, toutes les 15 s ensuite, et jamais pour un type de fichier que personne n'analyse (rien n'est affiché).
+- **Pourquoi du sondage :** un `fetch` à intervalle suffit pour un compte de foyer, passe tel quel derrière le proxy de Vite et n'exige rien du cœur (pas de connexion longue à garder, pas de reprise à gérer) ; le rythme lent évite de solliciter la base quand tout est fini.
 
 ## Corbeille
 
