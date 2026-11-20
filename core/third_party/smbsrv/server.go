@@ -51,7 +51,11 @@ const (
 
 // Config describes one server.
 type Config struct {
-	Address    string //Listen address, for example ":445"
+	Address string //Listen address, for example ":445"
+	//Listener, when set, is served instead of listening on Address: a
+	//wrapper that reads a proxy's PROXY header, for example. RemoteAddr of
+	//its connections is the client's address everywhere. Close closes it
+	Listener   net.Listener
 	ServerName string //NetBIOS style name shown to clients
 	Workgroup  string
 	DNSName    string
@@ -214,12 +218,15 @@ func checkIPv4Free(address string) error {
 
 // Start binds the listener and begins accepting connections.
 func (s *Server) Start() error {
-	if err := checkIPv4Free(s.cfg.Address); err != nil {
-		return err
-	}
-	l, err := net.Listen("tcp", s.cfg.Address)
-	if err != nil {
-		return err
+	l := s.cfg.Listener
+	if l == nil {
+		if err := checkIPv4Free(s.cfg.Address); err != nil {
+			return err
+		}
+		var err error
+		if l, err = net.Listen("tcp", s.cfg.Address); err != nil {
+			return err
+		}
 	}
 	s.listener = l
 	s.log("Listening on "+l.Addr().String(), nil)

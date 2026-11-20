@@ -12,6 +12,7 @@ on:
       - "worker/Dockerfile"
       - "compose*.yaml"
       - "scripts/box"
+      - "box/**"
       - "worker/ffmpeg/**"
       - "worker/models/**"
       - "core/go.*"
@@ -69,6 +70,33 @@ jobs:
           # Vite only exists under the dev profile, which scripts/box never turns on.
           if scripts/box config --services | grep -qx web; then echo "web is in the production stack"; exit 1; fi
           scripts/box --profile dev config --services | grep -qx web
+
+          # Tailscale (docs/architecture/box.md, « Accès »): no service unless
+          # CLOUDOS_TAILSCALE=1, then no port, no privilege, userspace networking.
+          if scripts/box config --services | grep -qx tailscale; then echo "tailscale runs without CLOUDOS_TAILSCALE"; exit 1; fi
+          # Without it, the core trusts no proxy and looks no name up.
+          scripts/box config --format json | jq -e '.services.core.environment.CLOUDOS_TRUSTED_PROXIES == ""'
+          CLOUDOS_TAILSCALE=1 scripts/box config --format json > "$RUNNER_TEMP/ts.json"
+          jq -e '
+            .services.tailscale as $t
+            | ($t.ports // []) == [] and ($t.privileged // false) == false
+            and ($t.cap_add // []) == [] and ($t.devices // []) == []
+            and $t.environment.TS_USERSPACE == "true"
+            and $t.environment.TS_SERVE_CONFIG == "/config/serve.json"
+            and $t.logging.driver == "local"
+            and .services.core.environment.CLOUDOS_TRUSTED_PROXIES == "tailscale"
+          ' "$RUNNER_TEMP/ts.json"
+          CLOUDOS_TAILSCALE=1 CLOUDOS_FUNNEL=1 scripts/box config --format json |
+            jq -e '.services.tailscale.environment.TS_SERVE_CONFIG == "/config/serve-funnel.json"'
+          # Funnel: :8443 only, and only the share links' paths.
+          jq -e '.AllowFunnel == null' box/tailscale/serve.json
+          jq -e '
+            (.AllowFunnel | keys) == ["${TS_CERT_DOMAIN}:8443"]
+            and (.Web["${TS_CERT_DOMAIN}:8443"].Handlers | keys) == ["/api/s/", "/assets/", "/s/"]
+          ' box/tailscale/serve-funnel.json
+          # up refuses Funnel without Tailscale, and Tailscale without its key.
+          if CLOUDOS_FUNNEL=1 scripts/box up; then echo "up accepted Funnel without Tailscale"; exit 1; fi
+          if CLOUDOS_TAILSCALE=1 scripts/box up; then echo "up accepted Tailscale without TS_AUTHKEY"; exit 1; fi
 
           # up refuses a development password and a missing data folder.
           good="$RUNNER_TEMP/box.env.good"

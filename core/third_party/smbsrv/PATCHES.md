@@ -93,3 +93,10 @@ Each test below fails on the upstream code. The failure seen at `7a70fc2e0cbb` i
 - **Tests** (`patch_backend_test.go`):
   - `TestPatchLookupHashGetsTheAddress`.
   - `TestPatchShortHashLogsNobodyIn`: upstream let a client in with a 3-byte or a 17-byte hash.
+
+## 7. The server can serve a listener it is given
+
+- **Files:** `server.go` (`Config.Listener`, `Start`).
+- **Why:** behind the box's tailscale service, every SMB connection comes from the proxy. The proxy names the real client in a PROXY protocol header, which a wrapping listener reads (`core/internal/edge`, `ProxyListener`). Upstream always listened on `Address` itself, so its limits per address and `LookupHash` only ever saw the proxy.
+- **Change:** `Config.Listener`, when set, is served instead of listening on `Address`. The `RemoteAddr` of its connections is the client's address for `Allow`, the per-address limit, `LookupHash` and `AuthLog`. `Close` closes it.
+- **Test:** `TestPatchServesTheGivenListener` (`patch_listener_test.go`). Upstream has no `Listener`, so the test does not build.

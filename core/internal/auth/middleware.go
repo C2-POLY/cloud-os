@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/C2-POLY/cloud-os/core/internal/edge"
 )
 
 // CookieName is the session cookie.
@@ -33,8 +35,9 @@ func TokenFrom(r *http.Request) string {
 	return ""
 }
 
-// SetCookie sends the session cookie. It is Secure whenever the request came
-// over HTTPS, directly or through a proxy.
+// SetCookie sends the session cookie. It is Secure whenever the box is
+// reached over HTTPS: its public address is https, or the trusted proxy says
+// so (edge.Secure). A header from any other client never decides it.
 func SetCookie(w http.ResponseWriter, r *http.Request, token string, ttl time.Duration) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
@@ -42,7 +45,7 @@ func SetCookie(w http.ResponseWriter, r *http.Request, token string, ttl time.Du
 		Path:     "/",
 		MaxAge:   int(ttl.Seconds()),
 		HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		Secure:   edge.Secure(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 }

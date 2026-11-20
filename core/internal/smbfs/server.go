@@ -10,6 +10,7 @@ import (
 	"github.com/tobychui/smbsrv"
 
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
+	"github.com/C2-POLY/cloud-os/core/internal/edge"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 )
 
@@ -24,6 +25,11 @@ type Config struct {
 	Auth   *auth.Service
 	Store  *storage.Store
 	Logger *slog.Logger
+	// Proxies are the proxies that name their client in a PROXY protocol
+	// header: the tailscale service, which relays the tailnet's SMB here
+	// (docs/architecture/box.md, « Accès »). Their connections must start
+	// with one; anyone else's are taken as they are. Nil reads no header.
+	Proxies *edge.Proxies
 
 	// loginDelay holds back the answer to a failed login; zero is smbsrv's
 	// two seconds. Tests shorten it.
@@ -51,8 +57,17 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 	}
 	logger := cfg.Logger.With("smb", "smbsrv")
 	b := newBackend(ctx, cfg.Auth, cfg.Store, logger)
+	var listener net.Listener
+	if cfg.Proxies != nil {
+		l, err := net.Listen("tcp", cfg.Addr)
+		if err != nil {
+			return nil, err
+		}
+		listener = edge.NewProxyListener(l, cfg.Proxies, logger)
+	}
 	srv, err := smbsrv.New(smbsrv.Config{
 		Address:    cfg.Addr,
+		Listener:   listener,
 		ServerName: "CLOUDOS",
 		Backend:    b,
 		Logger:     logger,
@@ -62,9 +77,15 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		NotifyPoll: -1,
 	})
 	if err != nil {
+		if listener != nil {
+			listener.Close()
+		}
 		return nil, err
 	}
 	if err := srv.Start(); err != nil {
+		if listener != nil {
+			listener.Close()
+		}
 		return nil, err
 	}
 	s := &Server{srv: srv, backend: b, logger: logger}
@@ -92,8 +113,15 @@ func (s *Server) DropUser(account string) int {
 	return n
 }
 
+// tailnet is the range Tailscale gives its devices (100.64.0.0/10, shared
+// address space); its IPv6 range, fd7a:115c:a1e0::/48, is already private.
+var tailnet = &net.IPNet{IP: net.IPv4(100, 64, 0, 0).To4(), Mask: net.CIDRMask(10, 32)}
+
 // allowed is who may connect: SMB must never face the internet, so only
-// private, loopback and link-local addresses (the Docker bridge is private).
+// private, loopback and link-local addresses (the Docker bridge is private),
+// and the tailnet's devices, which the tailscale service names in its PROXY
+// header. A public address in that header is refused all the same: Funnel
+// never opens SMB.
 func allowed(ip net.IP) bool {
-	return ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast())
+	return ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || tailnet.Contains(ip))
 }

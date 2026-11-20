@@ -19,6 +19,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/davfs"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
 	"github.com/C2-POLY/cloud-os/core/internal/doccat"
+	"github.com/C2-POLY/cloud-os/core/internal/edge"
 	"github.com/C2-POLY/cloud-os/core/internal/photovec"
 	"github.com/C2-POLY/cloud-os/core/internal/search"
 	"github.com/C2-POLY/cloud-os/core/internal/share"
@@ -72,6 +73,13 @@ type Config struct {
 	Activity  *activity.Log // nil: no journal (tests that do not need it)
 	MaxUpload int64         // bytes; 0 means only the free space limits an upload
 	StaticDir string        // the built web front, served at / when not empty
+	// Edge says which proxy the core believes and whether the box is reached
+	// over HTTPS (docs/architecture/box.md, « Accès »). The zero value
+	// believes no proxy.
+	Edge edge.Config
+	// ShareOrigin is where guests open share links, "https://<box>:8443"
+	// when Tailscale Funnel is on; "" leaves the web front's own origin.
+	ShareOrigin string
 }
 
 // access says who may call a route.
@@ -113,6 +121,7 @@ func routes(c Config) []route {
 		{"POST /api/login", public, a.login},
 		{"POST /api/logout", public, a.logout},
 		{"GET /api/me", member, a.me},
+		{"GET /api/config", member, configHandler(c.ShareOrigin)},
 		{"GET /api/me/smb-password", member, smb.status},
 		{"POST /api/me/smb-password", member, smb.create},
 		{"DELETE /api/me/smb-password", member, smb.revoke},
@@ -203,7 +212,15 @@ func NewHandler(c Config) http.Handler {
 	if c.StaticDir != "" {
 		mux.Handle("/", spa(c.StaticDir))
 	}
-	return auth.RequireJSON(mux)
+	return c.Edge.Handler(auth.RequireJSON(mux))
+}
+
+// configHandler answers GET /api/config: what the web front needs to know of
+// the box's setup.
+func configHandler(shareOrigin string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"share_origin": shareOrigin})
+	}
 }
 
 func healthHandler(version string, store HealthStore) http.HandlerFunc {

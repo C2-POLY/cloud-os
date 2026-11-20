@@ -4,7 +4,7 @@ import type { Entry } from '../drive/files.ts'
 import { mockApi } from '../test-api.ts'
 import { ShareDialog } from './ShareDialog.tsx'
 import { SharePage } from './SharePage.tsx'
-import { expiryOf, tokenFromURL, type GuestItem, type ShareEntry } from './shares.ts'
+import { expiryOf, shareOrigin, shareURL, tokenFromURL, type GuestItem, type ShareEntry } from './shares.ts'
 import { SharesPage } from './SharesPage.tsx'
 
 const token = 'A'.repeat(43)
@@ -56,7 +56,37 @@ describe('share helpers', () => {
   })
 })
 
+describe('shareURL and shareOrigin', () => {
+  it('builds the guest address on the given origin, or this page\'s', () => {
+    expect(shareURL(token)).toBe(`${window.location.origin}/s/${token}`)
+    expect(shareURL(token, 'https://cloudos.tailnet.ts.net:8443')).toBe(`https://cloudos.tailnet.ts.net:8443/s/${token}`)
+  })
+
+  it('takes the box\'s share origin when Funnel is on', async () => {
+    mockApi({ 'GET /api/config': { status: 200, body: { share_origin: 'https://cloudos.tailnet.ts.net:8443' } } })
+    expect(await shareOrigin('https://cloudos.tailnet.ts.net')).toBe('https://cloudos.tailnet.ts.net:8443')
+  })
+
+  it('keeps this page\'s origin without Funnel, or when the core does not say', async () => {
+    mockApi({ 'GET /api/config': { status: 200, body: { share_origin: '' } } })
+    expect(await shareOrigin('https://cloudos.tailnet.ts.net')).toBe('https://cloudos.tailnet.ts.net')
+    mockApi({ 'GET /api/config': { status: 500 } })
+    expect(await shareOrigin('http://localhost:8480')).toBe('http://localhost:8480')
+  })
+})
+
 describe('ShareDialog', () => {
+  it('shows the link on the public share address when Funnel is on', async () => {
+    mockApi({
+      'POST /api/shares': { status: 201, body: { share: link(3, 'plage.jpg'), token } },
+      'GET /api/config': { status: 200, body: { share_origin: 'https://cloudos.tailnet.ts.net:8443' } },
+    })
+    render(<ShareDialog entry={entry('plage.jpg')} onClose={() => {}} />)
+    fireEvent.click(screen.getByText('Créer le lien'))
+    const field = await screen.findByLabelText('Lien de partage')
+    expect((field as HTMLInputElement).value).toBe(`https://cloudos.tailnet.ts.net:8443/s/${token}`)
+  })
+
   it('creates a 7-day link by default and shows it once, ready to copy', async () => {
     const calls = mockApi({ 'POST /api/shares': { status: 201, body: { share: link(1, 'Photos/Vacances'), token } } })
     const writeText = vi.fn(async () => {})

@@ -12,6 +12,12 @@ export interface Account {
   created_at: string
 }
 
+/** What GET /api/config says of the box's setup (core/internal/httpapi, configHandler). */
+export interface BoxConfig {
+  /** Where guests open share links, "https://<box>.<tailnet>.ts.net:8443" when Tailscale Funnel is on; "" otherwise. */
+  share_origin: string
+}
+
 /** One file or folder, as the core's `httpapi.Entry` writes it. */
 export interface Entry {
   path: string

@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -38,6 +39,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/db"
 	"github.com/C2-POLY/cloud-os/core/internal/doccat"
 	"github.com/C2-POLY/cloud-os/core/internal/doctext"
+	"github.com/C2-POLY/cloud-os/core/internal/edge"
 	"github.com/C2-POLY/cloud-os/core/internal/embed"
 	"github.com/C2-POLY/cloud-os/core/internal/httpapi"
 	"github.com/C2-POLY/cloud-os/core/internal/meta"
@@ -264,26 +266,33 @@ func serve(ctx context.Context, c core) error {
 	accounts := auth.NewService(c.pool)
 	accounts.OnSMBRevoke = smbfs.NotifyRevoke(c.pool, slog.Default())
 
+	front, shareOrigin, err := frontDoor(ctx)
+	if err != nil {
+		return err
+	}
+
 	addr := envOr("CORE_ADDR", ":8080")
 	// The workers' query endpoint, for the searches by meaning.
 	workers := &embed.Client{URL: os.Getenv("WORKER_URL")}
 	srv := &http.Server{
 		Addr: addr,
 		Handler: httpapi.NewHandler(httpapi.Config{
-			Version:    version,
-			Health:     &db.Store{Pool: c.pool, Migrations: c.provider},
-			Auth:       accounts,
-			Files:      c.files,
-			Shares:     shares,
-			MapsDir:    os.Getenv("MAPS_DIR"),
-			Albums:     &albums.Service{Pool: c.pool, Files: c.files},
-			Photos:     &photovec.Searcher{Pool: c.pool, Embed: workers},
-			Documents:  &textemb.Searcher{Pool: c.pool, Embed: workers},
-			Categories: &doccat.Store{Pool: c.pool},
-			Analysis:   &analysis.Reader{Pool: c.pool},
-			Activity:   &activity.Log{Pool: c.pool},
-			MaxUpload:  maxUpload(),
-			StaticDir:  os.Getenv("STATIC_DIR"),
+			Version:     version,
+			Health:      &db.Store{Pool: c.pool, Migrations: c.provider},
+			Auth:        accounts,
+			Files:       c.files,
+			Shares:      shares,
+			MapsDir:     os.Getenv("MAPS_DIR"),
+			Albums:      &albums.Service{Pool: c.pool, Files: c.files},
+			Photos:      &photovec.Searcher{Pool: c.pool, Embed: workers},
+			Documents:   &textemb.Searcher{Pool: c.pool, Embed: workers},
+			Categories:  &doccat.Store{Pool: c.pool},
+			Analysis:    &analysis.Reader{Pool: c.pool},
+			Activity:    &activity.Log{Pool: c.pool},
+			MaxUpload:   maxUpload(),
+			StaticDir:   os.Getenv("STATIC_DIR"),
+			Edge:        front,
+			ShareOrigin: shareOrigin,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -337,7 +346,16 @@ func serveSMB(ctx context.Context) error {
 
 	files := &storage.Store{Root: envOr("CLOUDOS_DATA_DIR", "/data"), Pool: pool}
 	addr := envOr("CLOUDOS_SMB_ADDR", ":445")
-	srv, err := smbfs.Start(ctx, smbfs.Config{Addr: addr, Auth: auth.NewService(pool), Store: files})
+	// The tailscale service relays the tailnet's SMB with a PROXY header
+	// naming each device, so the attempt limits count per device.
+	var proxies *edge.Proxies
+	if list := os.Getenv("CLOUDOS_TRUSTED_PROXIES"); list != "" {
+		if proxies, err = edge.ParseProxies(list); err != nil {
+			return fmt.Errorf("CLOUDOS_TRUSTED_PROXIES: %w", err)
+		}
+		proxies.Watch(ctx, edge.RefreshEvery)
+	}
+	srv, err := smbfs.Start(ctx, smbfs.Config{Addr: addr, Auth: auth.NewService(pool), Store: files, Proxies: proxies})
 	if err != nil {
 		return err
 	}
@@ -346,6 +364,50 @@ func serveSMB(ctx context.Context) error {
 	slog.Info("SMB serving the drives read-only", "addr", srv.Addr().String(), "share", smbfs.ShareName, "version", version)
 	<-ctx.Done()
 	return nil
+}
+
+// frontDoor reads how the box is reached (docs/architecture/box.md, « Accès »):
+//   - CLOUDOS_TRUSTED_PROXIES, the proxies whose X-Forwarded-* the core
+//     believes ("tailscale" in Compose), resolved again every RefreshEvery;
+//   - CLOUDOS_PUBLIC_URL, the box's address, "https://cloudos.<tailnet>.ts.net":
+//     https makes every cookie Secure;
+//   - CLOUDOS_SHARE_ORIGIN, where guests open share links when Funnel is on.
+func frontDoor(ctx context.Context) (edge.Config, string, error) {
+	proxies, err := edge.ParseProxies(os.Getenv("CLOUDOS_TRUSTED_PROXIES"))
+	if err != nil {
+		return edge.Config{}, "", fmt.Errorf("CLOUDOS_TRUSTED_PROXIES: %w", err)
+	}
+	proxies.Watch(ctx, edge.RefreshEvery)
+	public, err := originOf("CLOUDOS_PUBLIC_URL", os.Getenv("CLOUDOS_PUBLIC_URL"), false)
+	if err != nil {
+		return edge.Config{}, "", err
+	}
+	share, err := originOf("CLOUDOS_SHARE_ORIGIN", os.Getenv("CLOUDOS_SHARE_ORIGIN"), true)
+	if err != nil {
+		return edge.Config{}, "", err
+	}
+	if public != "" || share != "" {
+		slog.Info("front door", "public_url", public, "share_origin", share, "trusted_proxies", os.Getenv("CLOUDOS_TRUSTED_PROXIES"))
+	}
+	return edge.Config{Proxies: proxies, PublicHTTPS: strings.HasPrefix(public, "https://")}, share, nil
+}
+
+// originOf checks an address variable: "" or an http(s) origin, with no path,
+// query nor credentials. httpsOnly refuses http.
+func originOf(name, v string, httpsOnly bool) (string, error) {
+	if v == "" {
+		return "", nil
+	}
+	u, err := url.Parse(strings.TrimSuffix(v, "/"))
+	if err != nil || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" ||
+		(u.Scheme != "https" && (httpsOnly || u.Scheme != "http")) {
+		want := "http(s)://host[:port]"
+		if httpsOnly {
+			want = "https://host[:port]"
+		}
+		return "", fmt.Errorf("%s=%q: want %s, nothing after", name, v, want)
+	}
+	return u.Scheme + "://" + u.Host, nil
 }
 
 // checkHealth asks the core listening on addr for /api/health: the

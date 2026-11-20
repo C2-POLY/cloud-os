@@ -16,11 +16,17 @@ export interface Connection {
   token: string
 }
 
-/** "192.168.1.20:8480" → "http://192.168.1.20:8480"; keeps https; drops a trailing slash. */
+/**
+ * "192.168.1.20:8480" → "http://192.168.1.20:8480"; keeps a scheme; drops a
+ * trailing slash. A Tailscale name ("cloudos.tailnet.ts.net") takes https:
+ * the box answers there only over HTTPS, with its ts.net certificate.
+ */
 export function normalizeBox(input: string): string {
   const trimmed = input.trim().replace(/\/+$/, '')
   if (!trimmed) return ''
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  const host = trimmed.split(/[/:]/)[0].toLowerCase()
+  return `${host.endsWith('.ts.net') ? 'https' : 'http'}://${trimmed}`
 }
 
 /** Headers every request to the box carries: the session and the client marker the core asks for. */
