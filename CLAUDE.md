@@ -100,6 +100,10 @@ cd mobile && npx expo run:ios
 
 # The drive as a network disk: Finder › Se connecter au serveur › http://localhost:8480/dav/
 
+# The read-only SMB trial (dev only, off by default; docs/architecture/smb.md), then
+# Finder › Se connecter au serveur › smb://<account>@localhost:1445/drive
+CLOUDOS_SMB_TRIAL=smbsrv CLOUDOS_SMB_TRIAL_USER=<account> CLOUDOS_SMB_TRIAL_PASSWORD=<test password> make up
+
 # Set a new password for an account that lost it (read from stdin) and end its sessions
 printf '%s\n' '<new password>' | docker compose run --rm -T core reset-password <account>
 ```
@@ -112,7 +116,7 @@ Layout: `core/` (Go module, `cmd/core`, `internal/`, SQL migrations in `core/mig
 COMPOSE_PROJECT_NAME=cloud-os-<name> CLOUDOS_DB_PORT=54321 CLOUDOS_CORE_PORT=8481 CLOUDOS_WEB_PORT=5181 make up
 ```
 
-Defaults: database `54320`, core `8480`, Vite `5180`, all bound to `127.0.0.1`. User files are stored in `CLOUDOS_DATA_DIR` (default `./.data/files`, git-ignored), mounted at `/data` in the core. `CLOUDOS_MAX_UPLOAD` (bytes) caps a resumable upload; unset, only the free space does. `CLOUDOS_MAPS_DIR` (default `./.data/maps`) holds the `.pmtiles` file of the Photos map, mounted read-only at `/maps` in the core; without one the map says how to install it (`docs/architecture/map.md`). `CLOUDOS_MODELS_DIR` names the worker's model folder (`/opt/models` in its image, `.tools/models` for `make test`). `WORKER_URL` (core, `http://worker:8090` in Compose) and `CLOUDOS_EMBED_ADDR` (worker, default `0.0.0.0:8090`) join the core to the worker's query endpoint; `CLOUDOS_WORKER_NICE` (default 10) lowers the worker's CPU priority. The Compose credentials (`cloudos`/`cloudos`) are for the local throwaway database only.
+Defaults: database `54320`, core `8480`, Vite `5180`, all bound to `127.0.0.1`. User files are stored in `CLOUDOS_DATA_DIR` (default `./.data/files`, git-ignored), mounted at `/data` in the core. `CLOUDOS_MAX_UPLOAD` (bytes) caps a resumable upload; unset, only the free space does. `CLOUDOS_MAPS_DIR` (default `./.data/maps`) holds the `.pmtiles` file of the Photos map, mounted read-only at `/maps` in the core; without one the map says how to install it (`docs/architecture/map.md`). `CLOUDOS_MODELS_DIR` names the worker's model folder (`/opt/models` in its image, `.tools/models` for `make test`). `CLOUDOS_SMB_TRIAL=smbsrv` starts the read-only SMB trial for the account `CLOUDOS_SMB_TRIAL_USER` with the test password `CLOUDOS_SMB_TRIAL_PASSWORD`, published on `127.0.0.1:${CLOUDOS_SMB_PORT:-1445}`; unset, nothing listens (`docs/decisions/006-smb.md`). `WORKER_URL` (core, `http://worker:8090` in Compose) and `CLOUDOS_EMBED_ADDR` (worker, default `0.0.0.0:8090`) join the core to the worker's query endpoint; `CLOUDOS_WORKER_NICE` (default 10) lowers the worker's CPU priority. The Compose credentials (`cloudos`/`cloudos`) are for the local throwaway database only.
 
 ## Non-negotiable rules
 
