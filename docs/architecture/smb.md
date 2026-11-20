@@ -102,6 +102,8 @@ sequenceDiagram
 - **Renommer par-dessus un fichier.** smbsrv vérifie que le client demande d'écraser, que la cible n'est pas ouverte et n'est pas un dossier, puis appelle `Rename` : c'est `Store.MoveReplace`, une seule entrée du journal. La cible garde son identité et son contenu d'avant devient une version ([storage.md](storage.md)).
 - **Supprimer.** smbsrv supprime à la fermeture de la dernière poignée (disposition ou `DELETE_ON_CLOSE`), et refuse un dossier qui n'est pas vide : le Mac supprime donc un dossier en commençant par son contenu, et chaque élément part à la corbeille.
 - **L'enregistrement atomique des apps du Mac.** TextEdit et Pages renomment l'original, écrivent le nouveau, puis suppriment l'ancien : l'ancien contenu va donc à la corbeille, pas en version. Rien n'est perdu.
+- **Le client SMB du Mac ne demande pas d'écraser.** Un `mv -f` sur le volume supprime d'abord la cible, puis renomme : la cible part à la corbeille avec ses versions, où elle se restaure. `MoveReplace` sert les clients qui demandent au serveur d'écraser (Windows, `smbclient`). Constaté à l'essai sur le Mac (#92).
+- **Un changement fait ailleurs ne se voit pas tout de suite dans le Finder.** Le partage n'est pas un `PollableShare` : smbsrv ne signale au Finder que les changements faits par SMB. Un fichier ajouté ou restauré depuis le web n'apparaît qu'au remontage du volume. Le serveur, lui, liste juste dès la requête suivante.
 
 ## Révocation
 
