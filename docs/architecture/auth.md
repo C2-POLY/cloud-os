@@ -88,9 +88,9 @@ Issue : #91, sous-issue de #15 (monter le drive en SMB). Le code est dans `core/
 - **Seule l'empreinte NT est gardée.** `NewSMBPassword` tire 24 caractères parmi 56 (sans I, O, l, o, 0 ni 1), environ 139 bits, avec `crypto/rand`, et ne stocke que `NTHash` (`golang.org/x/crypto/md4`). La réponse de `POST /api/me/smb-password` est la seule fois où le mot de passe sort du cœur, en `Cache-Control: no-store`. Avec 139 bits, chercher le mot de passe depuis son empreinte non salée est hors de portée.
 - **Deux secrets séparés.** Le mot de passe SMB n'est lu ni par `Login`, ni par `CheckCredentials`, ni par `BasicAuth` (WebDAV), qui ne regardent que `accounts.password_hash`. `SMBHash` ne lit que `smb_passwords` : le mot de passe du compte n'ouvre pas SMB.
 - **Régénérer remplace.** Un nouveau tirage écrase l'empreinte (`ON CONFLICT … DO UPDATE`), remet `created_at` et efface `last_used_at`.
-- **Révoquer coupe les sessions.** `RevokeSMBPassword`, un nouveau tirage et la désactivation du compte appellent le crochet `Service.OnSMBRevoke(compte)`, que le serveur SMB branche (#92) pour fermer les sessions ouvertes du compte.
+- **Révoquer coupe les sessions.** `RevokeSMBPassword`, un nouveau tirage et la désactivation du compte appellent le crochet `Service.OnSMBRevoke(compte)`. Le cœur y branche `smbfs.NotifyRevoke`, qui prévient le service `smb` par Postgres, et ce dernier ferme les sessions ouvertes du compte (#95, [smb.md](smb.md)).
 - **Compte désactivé refusé.** `SMBHash` et `NewSMBPassword` ignorent un compte désactivé ; le réactiver rend l'accès avec le même mot de passe.
-- **Essais limités** comme pour la connexion web : 5 échecs par minute, sous la clé `smb:<compte>|<ip>`, à part de celle du web. Un essai compte comme un échec dès que `SMBHash` rend l'empreinte, et `SMBCredential.Succeeded` l'efface quand le serveur a vérifié la réponse NTLMv2 : un client qui coupe la connexion en route consomme quand même un essai. Un nom inconnu ou un compte sans mot de passe SMB consomme aussi un essai et reçoit le même `ErrBadCredentials`.
+- **Essais limités** comme pour la connexion web : 5 échecs par minute, sous la clé `smb:<compte>|<ip>`, à part de celle du web. Ce `Limiter` vit dans le processus du service `smb`, qui a son propre `auth.Service`. Un essai compte comme un échec dès que `SMBHash` rend l'empreinte, et `SMBCredential.Succeeded` l'efface quand le serveur a vérifié la réponse NTLMv2 : un client qui coupe la connexion en route consomme quand même un essai. Un nom inconnu ou un compte sans mot de passe SMB consomme aussi un essai et reçoit le même `ErrBadCredentials`.
 - **Chaque compte ne voit que le sien.** Les routes ne prennent pas de nom : le compte est celui de la session.
 
 ```mermaid
@@ -98,11 +98,11 @@ sequenceDiagram
   participant W as Réglages (web)
   participant C as Cœur (/api/me/smb-password)
   participant DB as smb_passwords
-  participant S as Serveur SMB (#92)
+  participant S as Service smb (#95)
   participant F as Finder
   W->>C: POST (session, JSON)
   C->>DB: UPSERT nt_hash = MD4(UTF-16LE(mdp)), created_at, last_used_at = NULL
-  C->>S: OnSMBRevoke(compte) : ferme les sessions de l'ancien
+  C->>S: OnSMBRevoke(compte) : NOTIFY smb_revoke, ferme les sessions de l'ancien
   C-->>W: 201 {password, created_at}, une seule fois
   F->>S: SESSION_SETUP NTLMv2 (compte, réponse au défi)
   S->>C: auth.SMBHash(compte, ip)
@@ -122,7 +122,7 @@ sequenceDiagram
   end
   W->>C: DELETE
   C->>DB: DELETE
-  C->>S: OnSMBRevoke(compte) : ferme ses sessions
+  C->>S: OnSMBRevoke(compte) : NOTIFY smb_revoke, ferme ses sessions
 ```
 
 **Routes** (membre, session, JSON pour les changements) :

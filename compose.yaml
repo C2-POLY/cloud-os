@@ -22,7 +22,7 @@ services:
       retries: 30
 
   core:
-    build:
+    build: &core-build
       context: .
       dockerfile: core/Dockerfile
     environment:
@@ -31,23 +31,49 @@ services:
       MAPS_DIR: /maps
       # The worker's query endpoint (POST /embed), on the Compose network only.
       WORKER_URL: http://worker:8090
-      # SMB trial (docs/architecture/smb.md): off unless CLOUDOS_SMB_TRIAL names
-      # a library. Development only: the login is the account's name with the
-      # trial's own password, and the drive is served read-only.
-      CLOUDOS_SMB_TRIAL: ${CLOUDOS_SMB_TRIAL:-}
-      CLOUDOS_SMB_TRIAL_USER: ${CLOUDOS_SMB_TRIAL_USER:-}
-      CLOUDOS_SMB_TRIAL_PASSWORD: ${CLOUDOS_SMB_TRIAL_PASSWORD:-}
     ports:
       - "127.0.0.1:${CLOUDOS_CORE_PORT:-8480}:8080"
-      # SMB: macOS's own file sharing holds port 445 on the Mac, hence 1445.
-      - "127.0.0.1:${CLOUDOS_SMB_PORT:-1445}:445"
     volumes:
       # User files, in clear: <data dir>/<owner>/<path>, readable from the host.
       - ${CLOUDOS_DATA_DIR:-./.data/files}:/data
       # The Photos map's tiles: a .pmtiles file, read only (docs/architecture/map.md).
       - ${CLOUDOS_MAPS_DIR:-./.data/maps}:/maps:ro
+    # The image has no shell: the core asks itself (`core health`).
+    healthcheck:
+      test: ["CMD", "/core", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
     depends_on:
       db:
+        condition: service_healthy
+
+  # The drives over SMB (docs/architecture/smb.md), read-only, each account
+  # with its SMB password. Off by default: `CLOUDOS_SMB=1 make up` turns the
+  # profile on. A process of its own, the core's image with `core smb`, with
+  # its own memory limit: if SMB falls, the core and the web stay up.
+  smb:
+    build: *core-build
+    command: ["smb"]
+    profiles: [smb]
+    environment:
+      DATABASE_URL: *database-url
+      CLOUDOS_DATA_DIR: /data
+      CLOUDOS_SMB: ${CLOUDOS_SMB:-}
+      # The Go runtime collects well before the container's limit.
+      GOMEMLIMIT: 384MiB
+    ports:
+      # macOS's own file sharing holds port 445 on the Mac, hence 1445.
+      - "127.0.0.1:${CLOUDOS_SMB_PORT:-1445}:445"
+    volumes:
+      # Read-only until SMB writes through storage (#92).
+      - ${CLOUDOS_DATA_DIR:-./.data/files}:/data:ro
+    mem_limit: 512m
+    cpus: 1
+    pids_limit: 256
+    restart: unless-stopped
+    depends_on:
+      core:
         condition: service_healthy
 
   worker:

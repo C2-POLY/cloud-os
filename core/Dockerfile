@@ -12,6 +12,8 @@ RUN npm run build
 FROM golang:1.26-alpine AS core
 WORKDIR /src
 COPY core/go.mod core/go.sum ./
+# The SMB library is ours to patch, kept in the tree (go.mod's replace)
+COPY core/third_party/smbsrv/go.mod core/third_party/smbsrv/go.sum ./third_party/smbsrv/
 RUN go mod download
 COPY core/ ./
 COPY VERSION /VERSION

@@ -7,16 +7,24 @@ DB_PORT ?= $(or $(CLOUDOS_DB_PORT),54320)
 TEST_DATABASE_URL ?= postgres://cloudos:cloudos@127.0.0.1:$(DB_PORT)/cloudos?sslmode=disable
 EXTERNAL_DB ?=
 
+# CLOUDOS_SMB=1 adds the smb service (its Compose profile) to up and logs.
+ifeq ($(CLOUDOS_SMB),1)
+export COMPOSE_PROFILES := smb
+endif
+
 .PHONY: up down logs deps ffmpeg models test test-db test-core test-worker test-web test-mobile lint fmt
 
 ## up: build and start the stack, wait until it is healthy
 up:
 	docker compose up --build --detach --wait
 	@echo "Cloud OS: http://localhost:$${CLOUDOS_CORE_PORT:-8480}  (Vite dev: http://localhost:$${CLOUDOS_WEB_PORT:-5180})"
+ifeq ($(CLOUDOS_SMB),1)
+	@echo "SMB, read-only: smb://<account>@localhost:$${CLOUDOS_SMB_PORT:-1445}/drive, with the account's SMB password (Settings)"
+endif
 
-## down: stop the stack (keeps the database volume)
+## down: stop the stack, smb included (keeps the database volume)
 down:
-	docker compose down
+	docker compose --profile smb down
 
 ## logs: follow the logs of every service
 logs:
@@ -25,6 +33,7 @@ logs:
 ## deps: install Go, Python, web and mobile dependencies
 deps:
 	cd core && go mod download
+	cd core/third_party/smbsrv && go mod download
 	cd worker && uv sync --frozen
 	cd web && npm ci
 	cd mobile && npm ci
@@ -58,6 +67,8 @@ endif
 
 test-core: test-db
 	cd core && CLOUDOS_TEST_DATABASE_URL='$(TEST_DATABASE_URL)' go test -count=1 ./...
+	# The SMB library we keep patched (core/third_party/smbsrv/PATCHES.md), a module of its own
+	cd core/third_party/smbsrv && go test -race -count=1 ./...
 
 test-worker: test-db
 	cd worker && CLOUDOS_TEST_DATABASE_URL='$(TEST_DATABASE_URL)' CLOUDOS_FFMPEG_DIR='$(CURDIR)/.tools/ffmpeg/bin' CLOUDOS_MODELS_DIR='$(CURDIR)/.tools/models' uv run --frozen pytest
@@ -72,6 +83,7 @@ test-mobile:
 lint:
 	@unformatted="$$(gofmt -l core)"; if [ -n "$$unformatted" ]; then echo "gofmt needed:"; echo "$$unformatted"; exit 1; fi
 	cd core && go vet ./...
+	cd core/third_party/smbsrv && go vet ./...
 	cd worker && uv run --frozen ruff check . && uv run --frozen ruff format --check .
 	cd web && npm run typecheck && npm run lint
 	cd mobile && npm run typecheck && npm run lint

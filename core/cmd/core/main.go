@@ -8,6 +8,8 @@
 //	core photovec backfill   queue the vector of every stored photo and video that has none
 //	core textemb backfill    queue the vectors of every stored document with text that has none
 //	core doccat backfill     queue the category of every stored document whose vectors have none of the workers' version
+//	core smb                 serve the drives over SMB, read-only, with each account's SMB password (CLOUDOS_SMB=1)
+//	core health              exit 0 if the core on CORE_ADDR answers its health check (the container's healthcheck)
 package main
 
 import (
@@ -17,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -160,8 +163,12 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 			return errors.New("usage: core reset-password NAME (the new password is read from stdin)")
 		}
 		return withCore(ctx, func(c core) error { return resetPassword(ctx, c, args[0], os.Stdin, out) })
+	case "smb":
+		return serveSMB(ctx)
+	case "health":
+		return checkHealth(ctx, envOr("CORE_ADDR", ":8080"))
 	default:
-		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, text, ocr, photovec, textemb, doccat, reset-password)", cmd)
+		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, text, ocr, photovec, textemb, doccat, reset-password, smb, health)", cmd)
 	}
 }
 
@@ -244,9 +251,10 @@ func serve(ctx context.Context, c core) error {
 		slog.Warn("settled moves left by a crash", "finished", finished, "dropped", dropped)
 	}
 
-	if err := startSMBTrial(ctx, c); err != nil {
-		return fmt.Errorf("SMB trial: %w", err)
-	}
+	// An SMB password revoked or replaced, an account disabled: the smb
+	// service closes the sessions, told through Postgres (docs/architecture/smb.md).
+	accounts := auth.NewService(c.pool)
+	accounts.OnSMBRevoke = smbfs.NotifyRevoke(c.pool, slog.Default())
 
 	addr := envOr("CORE_ADDR", ":8080")
 	// The workers' query endpoint, for the searches by meaning.
@@ -256,7 +264,7 @@ func serve(ctx context.Context, c core) error {
 		Handler: httpapi.NewHandler(httpapi.Config{
 			Version:    version,
 			Health:     &db.Store{Pool: c.pool, Migrations: c.provider},
-			Auth:       auth.NewService(c.pool),
+			Auth:       accounts,
 			Files:      c.files,
 			Shares:     shares,
 			MapsDir:    os.Getenv("MAPS_DIR"),
@@ -286,38 +294,68 @@ func serve(ctx context.Context, c core) error {
 	}
 }
 
-// startSMBTrial serves one account's drive over SMB, read-only, when
-// CLOUDOS_SMB_TRIAL=smbsrv (docs/architecture/smb.md). Without it, nothing
-// listens. The login is the account's name with the trial's own
-// password, CLOUDOS_SMB_TRIAL_PASSWORD: for development only.
-func startSMBTrial(ctx context.Context, c core) error {
-	lib := os.Getenv("CLOUDOS_SMB_TRIAL")
-	if lib == "" {
-		return nil
+// serveSMB is the smb service (`core smb`): every account's drive over SMB,
+// read-only, signed in with the account's SMB password, until ctx ends. It
+// runs in a process of its own, so a fault in SMB cannot take the core down.
+// It applies no migration and does none of the core's start-up cleaning
+// (temporary files, moves): that is the core's, which may be writing meanwhile.
+func serveSMB(ctx context.Context) error {
+	if os.Getenv("CLOUDOS_SMB") != "1" {
+		return errors.New("SMB is off: set CLOUDOS_SMB=1 to serve it")
 	}
-	if lib != "smbsrv" {
-		return fmt.Errorf("CLOUDOS_SMB_TRIAL=%q: the one SMB library is smbsrv", lib)
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		return errors.New("DATABASE_URL is not set")
 	}
-	user := os.Getenv("CLOUDOS_SMB_TRIAL_USER")
-	a, err := auth.NewService(c.pool).Get(ctx, user)
-	if err != nil {
-		return fmt.Errorf("account %q of CLOUDOS_SMB_TRIAL_USER: %w", user, err)
-	}
-	if a.DisabledAt != nil {
-		return fmt.Errorf("account %q of CLOUDOS_SMB_TRIAL_USER is disabled", user)
-	}
-	addr := envOr("CLOUDOS_SMB_ADDR", ":445")
-	_, err = smbfs.Start(ctx, smbfs.Config{
-		Addr:     addr,
-		User:     a.Name,
-		Password: os.Getenv("CLOUDOS_SMB_TRIAL_PASSWORD"),
-		Owner:    a.Name,
-		Store:    c.files,
-	})
+	pool, err := db.Open(ctx, url)
 	if err != nil {
 		return err
 	}
-	slog.Warn("SMB trial serving a drive read-only", "addr", addr, "account", a.Name, "share", smbfs.ShareName)
+	defer pool.Close()
+	provider, err := migrate.NewProvider(db.SQL(pool))
+	if err != nil {
+		return err
+	}
+	if pending, err := provider.HasPending(ctx); err != nil {
+		return err
+	} else if pending {
+		return errors.New("the database is not migrated yet: the core applies the migrations, start it first")
+	}
+
+	files := &storage.Store{Root: envOr("CLOUDOS_DATA_DIR", "/data"), Pool: pool}
+	addr := envOr("CLOUDOS_SMB_ADDR", ":445")
+	srv, err := smbfs.Start(ctx, smbfs.Config{Addr: addr, Auth: auth.NewService(pool), Store: files})
+	if err != nil {
+		return err
+	}
+	defer srv.Close()
+	go srv.WatchRevocations(ctx, pool, smbfs.SweepEvery)
+	slog.Info("SMB serving the drives read-only", "addr", srv.Addr().String(), "share", smbfs.ShareName, "version", version)
+	<-ctx.Done()
+	return nil
+}
+
+// checkHealth asks the core listening on addr for /api/health: the
+// container's healthcheck, since its image has no shell nor curl.
+func checkHealth(ctx context.Context, addr string) error {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+port+"/api/health", nil)
+	if err != nil {
+		return err
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("health: %s", res.Status)
+	}
 	return nil
 }
 
