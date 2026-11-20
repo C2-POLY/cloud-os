@@ -44,6 +44,17 @@ make ffmpeg
 # again after the script changes). Without them `make test` skips the model tests.
 make models
 
+# The production stack (docs/architecture/box.md): `make prod` draws its secrets into
+# box.env (git-ignored, mode 0600, never rewritten) on the first run, creates
+# CLOUDOS_DATA_DIR and CLOUDOS_MAPS_DIR (/srv/cloudos/files and /srv/cloudos/maps), then
+# builds and starts db, core and worker, with no Vite and no port but the core's.
+# scripts/box is its one entry point, with the project cloud-os-box, box.env and
+# compose.yaml + compose.prod.yaml; any other argument goes to Compose.
+make prod
+scripts/box run --rm core verify
+make prod-logs
+make prod-down
+
 # Build and start db, core, worker and web; wait until healthy
 make up
 # The app (the core serving the built front): http://localhost:8480
@@ -109,7 +120,7 @@ CLOUDOS_SMB=1 make up
 printf '%s\n' '<new password>' | docker compose run --rm -T core reset-password <account>
 ```
 
-Layout: `core/` (Go module, `cmd/core`, `internal/`, SQL migrations in `core/migrations/`, applied by the core at startup with goose), `worker/` (Python, uv; the models' fetch script in `worker/models/`, their benchmark in `worker/bench/`), `web/` (React, Vite, npm), `mobile/` (Expo, React Native; `docs/architecture/mobile.md`), `shared/api-types.ts` (API types used by web and mobile), `compose.yaml`, `Makefile`, `.github/workflows/ci.yml` (`make lint` and `make test` on every PR and on `main`).
+Layout: `core/` (Go module, `cmd/core`, `internal/`, SQL migrations in `core/migrations/`, applied by the core at startup with goose), `worker/` (Python, uv; the models' fetch script in `worker/models/`, their benchmark in `worker/bench/`), `web/` (React, Vite, npm), `mobile/` (Expo, React Native; `docs/architecture/mobile.md`), `shared/api-types.ts` (API types used by web and mobile), `compose.yaml`, `compose.prod.yaml` and `scripts/box` (production), `Makefile`, `.github/workflows/ci.yml` (`make lint` and `make test` on every PR and on `main`) and `images.yml` (the images and the production stack, on amd64 and arm64).
 
 **One stack per worktree.** Give each worktree its own Compose project and, when another stack runs, its own host ports, so stacks never share a database:
 

@@ -1,0 +1,53 @@
+# Production overlay of compose.yaml (docs/architecture/box.md). Never run it
+# by hand: scripts/box adds it, with box.env and the project name cloud-os-box.
+#
+# Needs Docker Compose 2.24 or newer, for `!reset`.
+#
+# What changes from the development stack:
+# - the database password and the smb role's password come from box.env, with
+#   no default: Compose refuses to start without them;
+# - db, worker and smb publish no port, and Vite (web) never starts;
+# - the services restart after a reboot and their logs are capped.
+
+x-database-url: &database-url postgres://cloudos:${CLOUDOS_DB_PASSWORD:?run scripts/box init}@db:5432/cloudos?sslmode=disable
+x-smb-db-password: &smb-db-password ${CLOUDOS_SMB_DB_PASSWORD:?run scripts/box init}
+x-logging: &logging
+  driver: local
+  options:
+    max-size: 10m
+    max-file: "5"
+
+services:
+  db:
+    environment:
+      POSTGRES_PASSWORD: ${CLOUDOS_DB_PASSWORD:?run scripts/box init}
+    # Only the core reaches the database, over the Compose network.
+    ports: !reset []
+    restart: unless-stopped
+    logging: *logging
+
+  core:
+    environment:
+      DATABASE_URL: *database-url
+      CLOUDOS_SMB_DB_PASSWORD: *smb-db-password
+    # The one published port stays: 127.0.0.1:${CLOUDOS_CORE_PORT:-8480}.
+    restart: unless-stopped
+    logging: *logging
+
+  worker:
+    environment:
+      DATABASE_URL: *database-url
+    restart: unless-stopped
+    logging: *logging
+
+  # Off unless CLOUDOS_SMB=1. Not reachable from outside until #100.
+  smb:
+    environment:
+      PGPASSWORD: *smb-db-password
+    ports: !reset []
+    logging: *logging
+
+  # Vite is a development server: never started in production.
+  web:
+    profiles: [dev]
+    logging: *logging
