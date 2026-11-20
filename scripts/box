@@ -1,0 +1,147 @@
+#!/bin/sh
+# The one entry point of the production stack (docs/architecture/box.md).
+#
+#   scripts/box init       draw the secrets into box.env (once) and create the data folders
+#   scripts/box up         check box.env, then build and start the stack
+#   scripts/box <anything> pass it to `docker compose`, for example
+#                          scripts/box logs --follow
+#                          scripts/box run --rm core verify
+#                          scripts/box down
+#
+# It always uses the project cloud-os-box, box.env and both Compose files, so
+# the production stack never mixes with the development stack of a worktree.
+# CLOUDOS_BOX_ENV names another env file (the CI uses a temporary one).
+
+set -eu
+
+PROJECT=cloud-os-box
+CORE_UID=65532
+DEV_PASSWORDS="cloudos cloudos-smb"
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+env_file=${CLOUDOS_BOX_ENV:-$root/box.env}
+
+die() { printf 'scripts/box: %s\n' "$*" >&2; exit 1; }
+note() { printf 'scripts/box: %s\n' "$*"; }
+
+# The value of KEY in the env file (the last one wins), empty when absent.
+env_value() {
+	sed -n "s/^$1=//p" "$env_file" | tail -n 1
+}
+
+random_password() {
+	LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32
+}
+
+# sudo only when needed: without a terminal it must not wait for a password.
+as_root() {
+	if [ -t 0 ]; then sudo "$@"; else sudo -n "$@"; fi
+}
+
+# Create a data folder owned by the core's user (uid 65532 in its image).
+make_dir() {
+	[ -d "$1" ] || mkdir -p "$1" 2>/dev/null || as_root mkdir -p "$1" ||
+		die "cannot create $1 (create it, owned by uid $CORE_UID, then run init again)"
+	owner=$(ls -ldn "$1" | awk '{print $3}')
+	if [ "$owner" != "$CORE_UID" ]; then
+		chown "$CORE_UID:$CORE_UID" "$1" 2>/dev/null || as_root chown "$CORE_UID:$CORE_UID" "$1" 2>/dev/null ||
+			note "warning: $1 is not owned by uid $CORE_UID, the core may not write there: sudo chown $CORE_UID:$CORE_UID $1"
+	fi
+}
+
+cmd_init() {
+	if [ -e "$env_file" ]; then
+		note "$env_file already exists, left unchanged"
+		return 0
+	fi
+	data=${CLOUDOS_DATA_DIR:-/srv/cloudos/files}
+	maps=${CLOUDOS_MAPS_DIR:-/srv/cloudos/maps}
+	case $data in /*) ;; *) die "CLOUDOS_DATA_DIR must be an absolute path" ;; esac
+	case $maps in /*) ;; *) die "CLOUDOS_MAPS_DIR must be an absolute path" ;; esac
+	make_dir "$data"
+	make_dir "$maps"
+	# Mode 0600 from the first byte, and never over an existing file (noclobber).
+	(
+		umask 077
+		set -C
+		{
+			printf '# Secrets and folders of this box. Back it up; never commit it.\n'
+			printf '# Postgres reads the password once, when its volume is created: do not change it afterwards.\n'
+			printf 'CLOUDOS_DB_PASSWORD=%s\n' "$(random_password)"
+			printf 'CLOUDOS_SMB_DB_PASSWORD=%s\n' "$(random_password)"
+			printf 'CLOUDOS_DATA_DIR=%s\n' "$data"
+			printf 'CLOUDOS_MAPS_DIR=%s\n' "$maps"
+		} >"$env_file"
+	) || die "cannot write $env_file"
+	note "wrote $env_file (mode 0600); files in $data"
+}
+
+check_compose() {
+	command -v docker >/dev/null 2>&1 || die "docker is not installed"
+	v=$(docker compose version --short 2>/dev/null) || die "docker compose is not installed"
+	v=${v#v}
+	major=${v%%.*}
+	rest=${v#*.}
+	minor=${rest%%.*}
+	case $major$minor in *[!0-9]*|'') die "cannot read the Docker Compose version ($v)" ;; esac
+	if [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 24 ]; }; then
+		die "Docker Compose $v is too old, 2.24 or newer is needed"
+	fi
+}
+
+check_env() {
+	[ -f "$env_file" ] || die "$env_file is missing, run: scripts/box init"
+	for key in CLOUDOS_DB_PASSWORD CLOUDOS_SMB_DB_PASSWORD; do
+		value=$(env_value "$key")
+		[ -n "$value" ] || die "$key is empty in $env_file"
+		for dev in $DEV_PASSWORDS; do
+			[ "$value" != "$dev" ] || die "$key is a development password in $env_file"
+		done
+	done
+	data=$(env_value CLOUDOS_DATA_DIR)
+	[ -n "$data" ] || die "CLOUDOS_DATA_DIR is not set in $env_file"
+	[ -d "$data" ] || die "CLOUDOS_DATA_DIR $data does not exist (is the disk mounted?); not creating it"
+}
+
+compose() {
+	# The env file is the only source of the box's secrets and folders: a
+	# development variable of the shell must not win over it.
+	unset CLOUDOS_DB_PASSWORD CLOUDOS_SMB_DB_PASSWORD CLOUDOS_DATA_DIR CLOUDOS_MAPS_DIR COMPOSE_FILE COMPOSE_PROJECT_NAME
+	[ -f "$env_file" ] || die "$env_file is missing, run: scripts/box init"
+	cd "$root"
+	exec docker compose -p "$PROJECT" --env-file "$env_file" -f compose.yaml -f compose.prod.yaml "$@"
+}
+
+if [ $# -eq 0 ]; then
+	sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+	exit 0
+fi
+
+case $1 in
+init)
+	cmd_init
+	;;
+up)
+	shift
+	check_compose
+	check_env
+	# The smb service only starts with CLOUDOS_SMB=1 (docs/architecture/smb.md).
+	[ "${CLOUDOS_SMB:-}" != 1 ] || export COMPOSE_PROFILES=smb
+	port=${CLOUDOS_CORE_PORT:-$(env_value CLOUDOS_CORE_PORT)}
+	if [ "$#" -eq 0 ]; then
+		note "starting $PROJECT; the box will be on http://localhost:${port:-8480}"
+	fi
+	compose up --build --detach --wait "$@"
+	;;
+down)
+	shift
+	check_compose
+	# Stop the smb service too, whether or not CLOUDOS_SMB is set now.
+	export COMPOSE_PROFILES=smb
+	compose down "$@"
+	;;
+*)
+	check_compose
+	compose "$@"
+	;;
+esac

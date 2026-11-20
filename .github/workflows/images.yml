@@ -1,0 +1,116 @@
+name: Images
+
+# The images build and the production stack starts, on both architectures the
+# box runs on (docs/architecture/box.md). Native runners, no emulation.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "core/Dockerfile"
+      - "worker/Dockerfile"
+      - "compose*.yaml"
+      - "scripts/box"
+      - "worker/ffmpeg/**"
+      - "worker/models/**"
+      - "core/go.*"
+      - "web/package*.json"
+      - ".github/workflows/images.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  box:
+    name: box (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      CLOUDOS_BOX_ENV: ${{ github.workspace }}/../box-test/box.env
+      CLOUDOS_DATA_DIR: ${{ github.workspace }}/../box-test/files
+      CLOUDOS_MAPS_DIR: ${{ github.workspace }}/../box-test/maps
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker compose version
+
+      # The refusals and the Compose file, before the long build.
+      - name: Secrets, folders and Compose file
+        run: |
+          set -eu
+          mkdir -p "$(dirname "$CLOUDOS_BOX_ENV")"
+          scripts/box init
+          [ "$(stat -c %a "$CLOUDOS_BOX_ENV")" = 600 ]
+          [ "$(stat -c %u "$CLOUDOS_DATA_DIR")" = 65532 ]
+
+          # A second init leaves box.env as it is.
+          cp "$CLOUDOS_BOX_ENV" "$RUNNER_TEMP/box.env.first"
+          scripts/box init
+          cmp "$CLOUDOS_BOX_ENV" "$RUNNER_TEMP/box.env.first"
+
+          # No port for db, worker and smb, no Vite, restart and capped logs.
+          scripts/box --profile smb config --format json > "$RUNNER_TEMP/config.json"
+          jq -e '
+            (.services.db.ports // []) == []
+            and (.services.worker.ports // []) == []
+            and (.services.smb.ports // []) == []
+            and (.services.core.ports | length == 1 and .[0].host_ip == "127.0.0.1")
+            and ([.services.db, .services.core, .services.worker] | all(.restart == "unless-stopped"))
+            and ([.services[]] | all(.logging.driver == "local" and .logging.options["max-size"] == "10m" and .logging.options["max-file"] == "5"))
+          ' "$RUNNER_TEMP/config.json"
+          # Vite only exists under the dev profile, which scripts/box never turns on.
+          if scripts/box config --services | grep -qx web; then echo "web is in the production stack"; exit 1; fi
+          scripts/box --profile dev config --services | grep -qx web
+
+          # up refuses a development password and a missing data folder.
+          good="$RUNNER_TEMP/box.env.good"
+          cp "$CLOUDOS_BOX_ENV" "$good"
+          sed -i 's/^CLOUDOS_DB_PASSWORD=.*/CLOUDOS_DB_PASSWORD=cloudos/' "$CLOUDOS_BOX_ENV"
+          if scripts/box up; then echo "up accepted the password cloudos"; exit 1; fi
+          cp "$good" "$CLOUDOS_BOX_ENV"
+          sed -i 's/^CLOUDOS_SMB_DB_PASSWORD=.*/CLOUDOS_SMB_DB_PASSWORD=cloudos-smb/' "$CLOUDOS_BOX_ENV"
+          if scripts/box up; then echo "up accepted the password cloudos-smb"; exit 1; fi
+          cp "$good" "$CLOUDOS_BOX_ENV"
+          sudo mv "$CLOUDOS_DATA_DIR" "$CLOUDOS_DATA_DIR.away"
+          if scripts/box up; then echo "up accepted a missing data folder"; exit 1; fi
+          [ ! -e "$CLOUDOS_DATA_DIR" ]
+          sudo mv "$CLOUDOS_DATA_DIR.away" "$CLOUDOS_DATA_DIR"
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Builds the images through a layer cache: the worker image compiles
+      # ffmpeg and fetches about 1 GB of models. `up --build` below reuses them.
+      - uses: docker/bake-action@v6
+        with:
+          files: compose.yaml
+          targets: core,worker
+          load: true
+          set: |
+            core.cache-from=type=gha,scope=${{ matrix.arch }}-core
+            core.cache-to=type=gha,mode=max,scope=${{ matrix.arch }}-core
+            worker.cache-from=type=gha,scope=${{ matrix.arch }}-worker
+            worker.cache-to=type=gha,mode=max,scope=${{ matrix.arch }}-worker
+
+      - name: Production stack
+        run: |
+          set -eu
+          scripts/box up
+          curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-connrefused http://127.0.0.1:8480/api/health
+          echo
+          scripts/box run --rm core verify
+
+      - name: Logs
+        if: failure()
+        run: scripts/box logs --no-color --tail 200
+
+      - name: Stop and remove
+        if: always()
+        run: scripts/box down -v

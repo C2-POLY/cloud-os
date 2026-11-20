@@ -12,7 +12,7 @@ ifeq ($(CLOUDOS_SMB),1)
 export COMPOSE_PROFILES := smb
 endif
 
-.PHONY: up down logs deps ffmpeg models test test-db test-core test-worker test-web test-mobile lint fmt
+.PHONY: up down logs prod prod-down prod-logs deps ffmpeg models test test-db test-core test-worker test-web test-mobile lint fmt
 
 ## up: build and start the stack, wait until it is healthy
 up:
@@ -29,6 +29,21 @@ down:
 ## logs: follow the logs of every service
 logs:
 	docker compose logs --follow
+
+## prod: start the production stack (project cloud-os-box): draw its secrets into
+## box.env on the first run, then build and start db, core and worker
+## (docs/architecture/box.md)
+prod:
+	scripts/box init
+	scripts/box up
+
+## prod-down: stop the production stack (keeps its database volume)
+prod-down:
+	scripts/box down
+
+## prod-logs: follow the logs of the production stack
+prod-logs:
+	scripts/box logs --follow
 
 ## deps: install Go, Python, web and mobile dependencies
 deps:

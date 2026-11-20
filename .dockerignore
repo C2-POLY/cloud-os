@@ -6,3 +6,4 @@ web/dist
 worker/.venv
 **/__pycache__
 mobile
+box.env
