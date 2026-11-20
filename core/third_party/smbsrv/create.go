@@ -446,7 +446,11 @@ func (c *conn) materialize(o *open, share Share, q *wire.CreateRequest, res reso
 // releaseOpen undoes a CREATE that failed after the file was opened.
 func (c *conn) releaseOpen(o *open) {
 	if o.file != nil {
-		o.file.Close()
+		if a, ok := o.file.(Aborter); ok {
+			a.Abort()
+		} else {
+			o.file.Close()
+		}
 	}
 	o.handle.Close()
 }
@@ -602,7 +606,7 @@ func (c *conn) handleClose(r *request) *response {
 	r.sess.mu.Lock()
 	delete(r.sess.opens, o.id)
 	r.sess.mu.Unlock()
-	if err := c.closeOpen(o); err != nil {
+	if err := c.closeOpen(o, true); err != nil {
 		//On a staged drive this is the upload of what was written. The client
 		//must hear of it: the data is not where it thinks it is.
 		return errorResponse(statusOf(err))
@@ -636,11 +640,12 @@ func (c *conn) handleClose(r *request) *response {
 }
 
 // closeOpen ends an open. It waits for I/O still running on the handle, so a
-// file is never closed under a request that is reading it.
-func (c *conn) closeOpen(o *open) error { return c.srv.closeOpen(o) }
+// file is never closed under a request that is reading it. clientClose is
+// true only for the client's own CLOSE: any other end aborts an Aborter.
+func (c *conn) closeOpen(o *open, clientClose bool) error { return c.srv.closeOpen(o, clientClose) }
 
 // closeOpen also ends durable handles nobody is connected to.
-func (s *Server) closeOpen(o *open) error {
+func (s *Server) closeOpen(o *open, clientClose bool) error {
 	o.io.Lock()
 	defer o.io.Unlock()
 	if o.closed {
@@ -662,7 +667,13 @@ func (s *Server) closeOpen(o *open) error {
 	}
 	var closeErr error
 	if o.file != nil {
-		if closeErr = o.file.Close(); closeErr != nil {
+		//A staged file is stored only when its client closed it, and not
+		//when it is about to be deleted
+		if a, ok := o.file.(Aborter); ok && (!clientClose || o.handle.DeletePending()) {
+			if err := a.Abort(); err != nil {
+				s.log("Abort failed for "+o.getPath(), err)
+			}
+		} else if closeErr = o.file.Close(); closeErr != nil {
 			s.log("Close failed for "+o.getPath(), closeErr)
 		}
 	}

@@ -45,3 +45,17 @@ func TestHealthCheck(t *testing.T) {
 		t.Error("a core that does not answer passed")
 	}
 }
+
+// The smb service's pool stays under its role's connection limit, unless the
+// URL sets its own size.
+func TestSMBPoolURL(t *testing.T) {
+	for in, want := range map[string]string{
+		"postgres://cloudos_smb@db:5432/cloudos?sslmode=disable": "postgres://cloudos_smb@db:5432/cloudos?sslmode=disable&pool_max_conns=6",
+		"postgres://cloudos_smb@db:5432/cloudos":                 "postgres://cloudos_smb@db:5432/cloudos?pool_max_conns=6",
+		"postgres://db/cloudos?pool_max_conns=3":                 "postgres://db/cloudos?pool_max_conns=3",
+	} {
+		if got := smbPoolURL(in); got != want {
+			t.Errorf("smbPoolURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -3,9 +3,11 @@ package migrate_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/C2-POLY/cloud-os/core/internal/db"
@@ -76,6 +78,8 @@ var tables = []struct {
 		VALUES ('enzo', decode('a4f49c406510bdcab6824ee7c30fd852', 'hex'), now())`},
 	// Migration 26 creates the smb service's role and grants it rights, no table (TestSMBRoleMigration).
 	{26, []string{}, `SELECT 1`},
+	// Migration 27 grants that role storage's SMB writes and journals op 'replace', no table (TestSMBWriteMigration).
+	{27, []string{}, `SELECT 1`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {
@@ -262,6 +266,132 @@ func TestSMBRoleMigration(t *testing.T) {
 		t.Fatalf("up 26 again: %v", err)
 	}
 	expect("up again", want)
+}
+
+// smbWrites lists every write cloudos_smb may make: "INSERT table.column",
+// "UPDATE table.column", "DELETE table", "TRUNCATE table".
+func smbWrites(t *testing.T, pool *pgxpool.Pool) []string {
+	t.Helper()
+	rows, err := pool.Query(context.Background(),
+		`SELECT p.priv || ' ' || c.relname || '.' || a.attname
+		   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+		   JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+		   CROSS JOIN (VALUES ('INSERT'), ('UPDATE')) p(priv)
+		  WHERE c.relkind = 'r' AND has_column_privilege('cloudos_smb', c.oid, a.attnum, p.priv)
+		 UNION ALL
+		 SELECT p.priv || ' ' || c.relname
+		   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+		   CROSS JOIN (VALUES ('DELETE'), ('TRUNCATE')) p(priv)
+		  WHERE c.relkind = 'r' AND has_table_privilege('cloudos_smb', c.oid, p.priv)
+		 ORDER BY 1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// TestSMBWriteMigration checks that migration 27 grants the smb service's
+// role exactly storage's SMB writes, and the reads of the tasks it queues;
+// that undoing it is refused while a replace is journaled, then takes the
+// rights back without touching a row; and that it applies again.
+func TestSMBWriteMigration(t *testing.T) {
+	ctx := context.Background()
+	pool, err := db.Open(ctx, testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	p, err := migrate.NewProvider(db.SQL(pool))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.UpTo(ctx, 26); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO accounts (name, display_name, password_hash, role) VALUES ('enzo', 'Enzo', 'x', 'admin');
+		INSERT INTO smb_passwords (account, nt_hash) VALUES ('enzo', decode('a4f49c406510bdcab6824ee7c30fd852', 'hex'));
+		INSERT INTO files (owner, path, size, mime, sha256, modified_at) VALUES ('enzo', 'a.txt', 1, 'text/plain', sha256('a'), now())`); err != nil {
+		t.Fatal(err)
+	}
+	before := smbWrites(t, pool)
+	if fmt.Sprint(before) != "[UPDATE smb_passwords.last_used_at]" {
+		t.Fatalf("before 27, cloudos_smb writes %v", before)
+	}
+
+	want := []string{
+		"DELETE file_versions", "DELETE files", "DELETE moves", "DELETE trash",
+		"INSERT activity.kind", "INSERT activity.owner", "INSERT activity.path",
+		"INSERT file_versions.file_id", "INSERT file_versions.mime", "INSERT file_versions.modified_at",
+		"INSERT file_versions.owner", "INSERT file_versions.sha256", "INSERT file_versions.size",
+		"INSERT files.kind", "INSERT files.mime", "INSERT files.modified_at", "INSERT files.owner",
+		"INSERT files.path", "INSERT files.sha256", "INSERT files.size",
+		"INSERT moves.from_path", "INSERT moves.op", "INSERT moves.owner", "INSERT moves.to_path",
+		"INSERT moves.trash_id", "INSERT moves.version_id",
+		"INSERT tasks.dedupe_key", "INSERT tasks.kind", "INSERT tasks.max_attempts", "INSERT tasks.payload", "INSERT tasks.priority",
+		"INSERT trash.expires_at", "INSERT trash.kind", "INSERT trash.owner", "INSERT trash.path", "INSERT trash.size",
+		"UPDATE files.indexed_at", "UPDATE files.mime", "UPDATE files.modified_at", "UPDATE files.path",
+		"UPDATE files.sha256", "UPDATE files.size", "UPDATE files.trash_id",
+		"UPDATE smb_passwords.last_used_at",
+	}
+	reads := map[string]bool{
+		"thumbnails.sha256": true, "thumbnails.bytes": false, "media_meta.sha256": true, "media_meta.latitude": false,
+		"document_text.sha256": true, "document_text.text": false, "embedding_models.version": true,
+		"photo_vectors_siglip2_b16_224.sha256": true, "photo_vectors_siglip2_b16_224.embedding": false,
+		"tasks.id": true, "tasks.state": true, "tasks.dedupe_key": true, "tasks.payload": false, "tasks.last_error": false, "accounts.password_hash": false, "sessions.token_hash": false,
+		"activity.path": false,
+	}
+	check := func(step string, writes []string, granted bool) {
+		t.Helper()
+		if got := smbWrites(t, pool); fmt.Sprint(got) != fmt.Sprint(writes) {
+			t.Errorf("%s: cloudos_smb writes\n%v\nwant\n%v", step, got, writes)
+		}
+		for col, w := range reads {
+			table, column, _ := strings.Cut(col, ".")
+			var ok bool
+			if err := pool.QueryRow(ctx, `SELECT has_column_privilege('cloudos_smb', $1, $2, 'SELECT')`, table, column).Scan(&ok); err != nil {
+				t.Fatal(err)
+			}
+			if ok != (w && granted) {
+				t.Errorf("%s: SELECT %s = %v", step, col, ok)
+			}
+		}
+	}
+
+	if _, err := p.UpTo(ctx, 27); err != nil {
+		t.Fatalf("up 27: %v", err)
+	}
+	check("up", want, true)
+
+	// A replace in the journal holds the migration up: the core settles it first
+	if _, err := pool.Exec(ctx, `INSERT INTO moves (owner, from_path, to_path, op) VALUES ('enzo', 'b.txt', 'a.txt', 'replace')`); err != nil {
+		t.Fatalf("journal a replace: %v", err)
+	}
+	if _, err := p.Down(ctx); err == nil {
+		t.Fatal("down 27 with a replace in the journal was not refused")
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM moves WHERE op = 'replace'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Down(ctx); err != nil {
+		t.Fatalf("down 27: %v", err)
+	}
+	check("down", before, false)
+	var files, passwords int
+	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM files), (SELECT count(*) FROM smb_passwords)`).Scan(&files, &passwords); err != nil || files != 1 || passwords != 1 {
+		t.Fatalf("after down: %d files, %d SMB passwords (%v)", files, passwords, err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO moves (owner, from_path, to_path, op) VALUES ('enzo', 'b.txt', 'a.txt', 'replace')`); err == nil {
+		t.Error("after down, the journal still takes op 'replace'")
+	}
+
+	if _, err := p.UpTo(ctx, 27); err != nil {
+		t.Fatalf("up 27 again: %v", err)
+	}
+	check("up again", want, true)
 }
 
 // TestFolderBackfill checks that migration 4 gives every existing file's

@@ -636,7 +636,7 @@ func TestExpiryThatLosesToAReconnect(t *testing.T) {
 	if r := leaseCreate(t, late, "doc.txt", openAllShare, leaseV2(1, rwh, 0), durableReconnect(got.id, 7)); r.status != wire.StatusObjectNameNotFound {
 		t.Errorf("reconnect to an expired handle: %x", r.status)
 	}
-	h.srv.closeOpen(o)
+	h.srv.closeOpen(o, false)
 }
 
 func TestLogoffClosesDurableHandles(t *testing.T) {

@@ -497,7 +497,7 @@ func (c *conn) dropUnseenOpen(r *request, res *response) {
 	delete(r.sess.opens, r.chain.fileID)
 	r.sess.mu.Unlock()
 	if o != nil {
-		c.closeOpen(o)
+		c.closeOpen(o, false)
 	}
 }
 

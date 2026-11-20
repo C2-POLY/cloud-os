@@ -306,7 +306,8 @@ func (s *Store) Open(ctx context.Context, owner, p string) (*os.File, File, erro
 }
 
 // CleanTmp removes the temporary files left by interrupted writes. Call it only
-// at startup, before anything can write.
+// at startup, before anything can write. It leaves .cloudos/tmp/smb alone: the
+// smb service, a process of its own, may be writing there (CleanStaged).
 func (s *Store) CleanTmp() (int, error) {
 	entries, err := os.ReadDir(s.tmpDir())
 	if errors.Is(err, fs.ErrNotExist) {
@@ -315,12 +316,17 @@ func (s *Store) CleanTmp() (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	n := 0
 	for _, e := range entries {
-		if err := os.RemoveAll(filepath.Join(s.tmpDir(), e.Name())); err != nil {
-			return 0, err
+		if e.Name() == filepath.Base(s.stageDir()) {
+			continue
 		}
+		if err := os.RemoveAll(filepath.Join(s.tmpDir(), e.Name())); err != nil {
+			return n, err
+		}
+		n++
 	}
-	return len(entries), nil
+	return n, nil
 }
 
 // The extensions of iPhone photos, of phone videos, and of the documents

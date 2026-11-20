@@ -46,6 +46,12 @@ func (a *AppleDouble) Mkdir(owner, p string) error {
 }
 
 func (a *AppleDouble) OpenFile(owner, p string, flag int) (webdav.File, error) {
+	return a.Open(owner, p, flag)
+}
+
+// Open opens one of the Finder's files with random access (SMB writes at any
+// offset).
+func (a *AppleDouble) Open(owner, p string, flag int) (*os.File, error) {
 	full, err := a.local(owner, p)
 	if err != nil {
 		return nil, err
@@ -88,7 +94,7 @@ func (a *AppleDouble) Remove(owner, p string) error {
 	if err != nil {
 		return err
 	}
-	if !IsAppleFile(p) {
+	if !IsApplePath(p) {
 		return fmt.Errorf("refusing to erase %s: not a Finder file", p)
 	}
 	return removeAppleFile(full)
