@@ -3,6 +3,10 @@
 name: cloud-os
 
 x-database-url: &database-url postgres://cloudos:cloudos@db:5432/cloudos?sslmode=disable
+# The password of the smb service's own database role, cloudos_smb (migration
+# 0026, docs/architecture/smb.md): the core sets it, the smb service logs in
+# with it. The default is for the local throwaway database only, like cloudos/cloudos.
+x-smb-db-password: &smb-db-password ${CLOUDOS_SMB_DB_PASSWORD:-cloudos-smb}
 
 services:
   db:
@@ -31,6 +35,7 @@ services:
       MAPS_DIR: /maps
       # The worker's query endpoint (POST /embed), on the Compose network only.
       WORKER_URL: http://worker:8090
+      CLOUDOS_SMB_DB_PASSWORD: *smb-db-password
     ports:
       - "127.0.0.1:${CLOUDOS_CORE_PORT:-8480}:8080"
     volumes:
@@ -57,7 +62,11 @@ services:
     command: ["smb"]
     profiles: [smb]
     environment:
-      DATABASE_URL: *database-url
+      # Its own role, never the core's: it reads accounts, SMB passwords and
+      # the index, and notes an SMB password's last use, nothing else. The
+      # password goes apart, so no character of it needs escaping in the URL.
+      DATABASE_URL: postgres://cloudos_smb@db:5432/cloudos?sslmode=disable
+      PGPASSWORD: *smb-db-password
       CLOUDOS_DATA_DIR: /data
       CLOUDOS_SMB: ${CLOUDOS_SMB:-}
       # The Go runtime collects well before the container's limit.

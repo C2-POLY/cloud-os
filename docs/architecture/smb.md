@@ -1,7 +1,7 @@
 # SMB : le drive en partage réseau, en lecture seule
 
 Le drive de chaque compte, servi en SMB pour le Finder et l'Explorateur. Le code est dans `core/internal/smbfs`, et le service démarre par `core smb` (`core/cmd/core/main.go`). Le protocole est celui de smbsrv, dont nous gardons une copie corrigée dans `core/third_party/smbsrv` (`docs/decisions/006-smb.md`).
-Issues : #90 (essai), #91 (mot de passe SMB), #95 (serveur durci et isolé), #92 (écriture), #15 (accès SMB).
+Issues : #90 (essai), #91 (mot de passe SMB), #95 (serveur durci et isolé), #97 (rôle en base), #92 (écriture), #15 (accès SMB).
 
 ## Ce qui est garanti
 
@@ -11,6 +11,7 @@ Issues : #90 (essai), #91 (mot de passe SMB), #95 (serveur durci et isolé), #92
   - le tuer ou le saturer laisse le cœur, l'API et le web répondre ;
   - il n'applique aucune migration, et refuse de démarrer tant qu'une migration manque ;
   - il ne fait ni `CleanTmp`, ni `RecoverMoves`, ni aucun autre nettoyage du cœur, qui peut écrire pendant ce temps.
+- **Un rôle en base à lui.** Le service se connecte en `cloudos_smb`, qui ne peut que lire ce dont SMB a besoin et noter `last_used_at`. Il ne lit pas les empreintes des mots de passe des comptes, et n'écrit ni l'index, ni les comptes, ni les sessions, ni la file de tâches. Lancé avec un rôle plus large, `core smb` refuse de démarrer (voir « Rôle en base » plus bas).
 - **Le mot de passe SMB, jamais celui du compte.** Chaque compte se connecte avec le mot de passe SMB tiré dans Réglages (#91, [auth.md](auth.md)). Le mot de passe du compte n'a pas d'empreinte NT et n'ouvre pas SMB. Ni l'anonyme ni un invité n'entrent.
 - **Un compte, un drive.** Le nom SMB est le nom du compte, dans n'importe quelle casse. Il voit un seul partage, `drive`, qui est son espace. Sa clé, `cloudos:<compte>`, sépare les verrous, les modes de partage et les notifications de deux comptes.
 - **Essais limités.** 5 échecs par minute pour un compte depuis une adresse (`auth.SMBHash`, clé `smb:<compte>|<ip>`), après quoi même le bon mot de passe est refusé. Une connexion réussie efface le compte de ses échecs. smbsrv retient la réponse d'un échec 2 s.
@@ -89,6 +90,59 @@ sequenceDiagram
   Ce dernier cas couvre aussi un mot de passe changé pendant qu'une connexion était en cours d'ouverture.
 - **Un NOTIFY qui échoue** est écrit dans le journal du cœur. La révocation reste enregistrée en base, et le balayage suivant coupe les sessions.
 
+## Rôle en base
+
+Le service `smb` ne se connecte pas avec le rôle du cœur (`cloudos`), mais avec le sien, `cloudos_smb`. La migration `0026_smb_role.sql` le crée et lui donne ses droits :
+
+| Droit | Pour |
+|---|---|
+| `SELECT (name, disabled_at)` sur `accounts` | `auth.SMBHash` et `Sweep` : le compte existe-t-il, est-il actif |
+| `SELECT (account, nt_hash)` sur `smb_passwords` | `auth.SMBHash` et `Sweep` : l'empreinte NT |
+| `UPDATE (last_used_at)` sur `smb_passwords` | `SMBCredential.Succeeded` |
+| `SELECT` sur `files` | `smbfs.View`, par `storage.Lookup` et `storage.List` |
+| `SELECT` sur `goose_db_version` | `migrate.HasPending` |
+| aucun | `LISTEN smb_revoke` |
+
+```mermaid
+flowchart LR
+  subgraph core["cœur (serve), rôle cloudos"]
+    M["migration 0026<br>CREATE ROLE cloudos_smb, GRANT"]
+    P["db.SetLoginPassword<br>CLOUDOS_SMB_DB_PASSWORD → SCRAM"]
+  end
+  subgraph smb["service smb (core smb), rôle cloudos_smb"]
+    K["smbfs.CheckRole<br>refuse un rôle trop large"]
+    H["HasPending"]
+    A["auth.SMBHash, Sweep"]
+    S["Succeeded"]
+    V["smbfs.View → storage.Lookup, List"]
+    L["LISTEN smb_revoke"]
+  end
+  M --> DB[("Postgres")]
+  P -->|"ALTER ROLE … LOGIN PASSWORD"| DB
+  K -->|"pg_roles, has_table_privilege"| DB
+  H -->|"SELECT goose_db_version"| DB
+  A -->|"SELECT accounts(name, disabled_at),<br>smb_passwords(account, nt_hash)"| DB
+  S -->|"UPDATE smb_passwords(last_used_at)"| DB
+  V -->|"SELECT files"| DB
+  L --- DB
+  X["INSERT, UPDATE, DELETE ailleurs,<br>SELECT accounts.password_hash"] -. "42501 refusé" .-> DB
+```
+
+- **Le rôle.** Il est `NOLOGIN` à sa création, `NOINHERIT`, sans aucun attribut, et limité à 8 connexions. Un rôle vaut pour tout le serveur Postgres : la migration ne le crée que s'il n'existe pas. Sa migration inverse retire les droits de cette base, et ne supprime le rôle que si aucune autre base du serveur ne lui en donne (les bases jetables des tests).
+- **Son mot de passe.** Une migration ne lit pas l'environnement. C'est donc `serve` qui le pose, à chaque démarrage et avant d'écouter, depuis `CLOUDOS_SMB_DB_PASSWORD` (`db.SetLoginPassword`).
+  - Le cœur calcule lui-même le vérificateur SCRAM-SHA-256 et n'envoie que lui (`ALTER ROLE … LOGIN PASSWORD 'SCRAM-SHA-256$…'`) : le mot de passe n'atteint ni Postgres ni son journal.
+  - Seuls les caractères ASCII imprimables sont acceptés, pour que SASLprep ne fasse pas diverger le client et le serveur. `openssl rand -hex 32` en donne un.
+  - Vide, le rôle repasse en `NOLOGIN`. Un échec est écrit dans le journal du cœur, qui continue sans SMB.
+- **Le câblage Compose.** Le service `smb` reçoit `DATABASE_URL: postgres://cloudos_smb@db:5432/cloudos` et le mot de passe à part, dans `PGPASSWORD`, qui n'a ainsi rien à échapper. Le cœur reçoit `CLOUDOS_SMB_DB_PASSWORD`. Les deux viennent de `x-smb-db-password`, qui vaut `cloudos-smb` par défaut, pour la base locale seulement, comme `cloudos`/`cloudos`.
+- **Le contrôle au démarrage.** `core smb` appelle `smbfs.CheckRole` avant tout. Il refuse de servir si son rôle :
+  - est superutilisateur, ou a `CREATEROLE`, `CREATEDB` ou `BYPASSRLS` ;
+  - peut écrire (`INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`) une table entière, ou modifier une séquence ;
+  - peut lire `accounts.password_hash`.
+
+  Un câblage qui redonnerait au service le rôle du cœur l'empêche donc de démarrer. Un droit par colonne, comme `last_used_at`, n'est pas une écriture de table.
+- **Les tables à venir** n'ont aucun droit par défaut. Une migration qui donne plus au service le dit, et élargit `CheckRole` s'il le faut. #92 y ajoutera les droits d'écriture de `storage`.
+- **La limite.** Ce rôle borne une faille qui passe par la connexion du service. En développement, le mot de passe du rôle `cloudos` est connu (`compose.yaml`), et le service `smb` est sur le même réseau que `db` : un processus SMB compromis pourrait s'y connecter. Sur la box, les deux mots de passe devront venir d'un secret.
+
 ## Le serveur durci
 
 La copie de smbsrv dans `core/third_party/smbsrv` corrige les cinq défauts de l'ADR 006. Chaque correction a un test qui échoue sur la version d'origine. Le détail, avec le pourquoi, est dans `core/third_party/smbsrv/PATCHES.md`.
@@ -142,4 +196,7 @@ Si le service `smb` tombe ou redémarre, macOS rouvre la session tout seul dès 
   - `TestLoginAttemptsAreLimited` : après 5 échecs, même le bon mot de passe est refusé, et un autre compte n'est pas retenu.
   - `TestRevokeByNotify` : après `RevokeSMBPassword` ou un nouveau tirage, une requête sur la session ouverte échoue et l'ancien mot de passe est refusé.
   - `TestRevokeBySweep` : sans notification, le balayage ferme les sessions d'un mot de passe révoqué ou changé, et celles d'un compte désactivé dès que le `LISTEN` reprend.
+  - `TestServerUnderItsRole` : le serveur tourne sur un pool en `SET ROLE cloudos_smb`. La connexion, la lecture, `last_used_at`, `HasPending`, la révocation et le balayage marchent. 18 écritures ou lectures hors de ses droits sont refusées en `42501`, et l'index comme le disque restent inchangés. `CheckRole` accepte `cloudos_smb` et refuse le rôle du cœur.
+- **`core/internal/migrate`** : `TestSMBRoleMigration` vérifie chaque droit de `cloudos_smb`, ses attributs, puis la migration inverse (droits retirés, lignes gardées) et la réapplication.
+- **`core/internal/db`** : `TestSCRAMVerifierMatchesPostgres` compare le vérificateur à celui que calcule Postgres pour le même sel. `TestSetLoginPassword`, sur un rôle jetable, se connecte en TCP avec le mot de passe, est refusé avec un mauvais ou l'ancien, et ne se connecte plus une fois le mot de passe vidé. `TestSetLoginPasswordRefusesNonASCII` vérifie que le mot de passe n'apparaît jamais dans l'erreur.
 - **`core/cmd/core/main_test.go`** : `core smb` refuse de démarrer sans `CLOUDOS_SMB=1`.
