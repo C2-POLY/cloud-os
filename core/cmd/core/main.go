@@ -251,6 +251,14 @@ func serve(ctx context.Context, c core) error {
 		slog.Warn("settled moves left by a crash", "finished", finished, "dropped", dropped)
 	}
 
+	// The smb service connects as its own database role (migration 0026),
+	// with this password; unset, the role cannot log in. Before listening:
+	// the smb service waits for the core to be healthy.
+	if err := db.SetLoginPassword(ctx, c.pool, smbfs.DBRole, os.Getenv("CLOUDOS_SMB_DB_PASSWORD")); err != nil {
+		slog.Error("smb: set the password of the smb service's database role; SMB cannot connect until it is set",
+			"role", smbfs.DBRole, "err", err)
+	}
+
 	// An SMB password revoked or replaced, an account disabled: the smb
 	// service closes the sessions, told through Postgres (docs/architecture/smb.md).
 	accounts := auth.NewService(c.pool)
@@ -299,6 +307,7 @@ func serve(ctx context.Context, c core) error {
 // runs in a process of its own, so a fault in SMB cannot take the core down.
 // It applies no migration and does none of the core's start-up cleaning
 // (temporary files, moves): that is the core's, which may be writing meanwhile.
+// It connects as the database role smbfs.DBRole, and refuses a wider one.
 func serveSMB(ctx context.Context) error {
 	if os.Getenv("CLOUDOS_SMB") != "1" {
 		return errors.New("SMB is off: set CLOUDOS_SMB=1 to serve it")
@@ -312,6 +321,10 @@ func serveSMB(ctx context.Context) error {
 		return err
 	}
 	defer pool.Close()
+	// Its own role, cloudos_smb, never the core's (docs/architecture/smb.md)
+	if err := smbfs.CheckRole(ctx, pool); err != nil {
+		return err
+	}
 	provider, err := migrate.NewProvider(db.SQL(pool))
 	if err != nil {
 		return err

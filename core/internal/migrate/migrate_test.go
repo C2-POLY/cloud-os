@@ -74,6 +74,8 @@ var tables = []struct {
 		SELECT 1 FROM tasks WHERE kind = 'ocr' AND payload ->> 'sha256' = '00'`},
 	{25, []string{"smb_passwords"}, `INSERT INTO smb_passwords (account, nt_hash, last_used_at)
 		VALUES ('enzo', decode('a4f49c406510bdcab6824ee7c30fd852', 'hex'), now())`},
+	// Migration 26 creates the smb service's role and grants it rights, no table (TestSMBRoleMigration).
+	{26, []string{}, `SELECT 1`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {
@@ -155,6 +157,111 @@ func TestMigrationsUpDownUp(t *testing.T) {
 		t.Fatalf("up again: %v", err)
 	}
 	check("up again", latest)
+}
+
+// smbRights says what the role cloudos_smb may do in this database: false
+// for everything when the role does not exist.
+func smbRights(t *testing.T, pool *pgxpool.Pool) map[string]bool {
+	t.Helper()
+	checks := map[string]string{
+		"select files":                   `has_table_privilege('cloudos_smb', 'files', 'SELECT')`,
+		"select goose_db_version":        `has_table_privilege('cloudos_smb', 'goose_db_version', 'SELECT')`,
+		"select accounts.name":           `has_column_privilege('cloudos_smb', 'accounts', 'name', 'SELECT')`,
+		"select accounts.disabled_at":    `has_column_privilege('cloudos_smb', 'accounts', 'disabled_at', 'SELECT')`,
+		"select accounts.password_hash":  `has_column_privilege('cloudos_smb', 'accounts', 'password_hash', 'SELECT')`,
+		"select smb_passwords.nt_hash":   `has_column_privilege('cloudos_smb', 'smb_passwords', 'nt_hash', 'SELECT')`,
+		"update smb_passwords.last_used": `has_column_privilege('cloudos_smb', 'smb_passwords', 'last_used_at', 'UPDATE')`,
+		"update smb_passwords.nt_hash":   `has_column_privilege('cloudos_smb', 'smb_passwords', 'nt_hash', 'UPDATE')`,
+		"write files":                    `has_table_privilege('cloudos_smb', 'files', 'INSERT,UPDATE,DELETE,TRUNCATE')`,
+		"write accounts":                 `has_table_privilege('cloudos_smb', 'accounts', 'INSERT,UPDATE,DELETE,TRUNCATE')`,
+		"select sessions":                `has_table_privilege('cloudos_smb', 'sessions', 'SELECT')`,
+	}
+	out := map[string]bool{}
+	var exists bool
+	if err := pool.QueryRow(context.Background(), `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cloudos_smb')`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	for name, expr := range checks {
+		if !exists {
+			out[name] = false
+			continue
+		}
+		var ok bool
+		if err := pool.QueryRow(context.Background(), "SELECT "+expr).Scan(&ok); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		out[name] = ok
+	}
+	return out
+}
+
+// TestSMBRoleMigration checks that migration 26 gives the smb service's role
+// exactly what it reads and the one column it writes, and that undoing it
+// takes the rights back without touching a row.
+func TestSMBRoleMigration(t *testing.T) {
+	ctx := context.Background()
+	pool, err := db.Open(ctx, testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	p, err := migrate.NewProvider(db.SQL(pool))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.UpTo(ctx, 25); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO accounts (name, display_name, password_hash, role) VALUES ('enzo', 'Enzo', 'x', 'admin');
+		INSERT INTO smb_passwords (account, nt_hash) VALUES ('enzo', decode('a4f49c406510bdcab6824ee7c30fd852', 'hex'))`); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		"select files": true, "select goose_db_version": true,
+		"select accounts.name": true, "select accounts.disabled_at": true, "select accounts.password_hash": false,
+		"select smb_passwords.nt_hash": true, "update smb_passwords.last_used": true, "update smb_passwords.nt_hash": false,
+		"write files": false, "write accounts": false, "select sessions": false,
+	}
+	none := map[string]bool{}
+	for k := range want {
+		none[k] = false
+	}
+	expect := func(step string, want map[string]bool) {
+		t.Helper()
+		got := smbRights(t, pool)
+		for k, w := range want {
+			if got[k] != w {
+				t.Errorf("%s: %s = %v, want %v", step, k, got[k], w)
+			}
+		}
+	}
+
+	if _, err := p.UpTo(ctx, 26); err != nil {
+		t.Fatalf("up 26: %v", err)
+	}
+	expect("up", want)
+	var attrs string
+	if err := pool.QueryRow(ctx, `SELECT format('%s %s %s %s %s %s', rolsuper, rolcreaterole, rolcreatedb, rolbypassrls, rolinherit, rolconnlimit)
+		FROM pg_roles WHERE rolname = 'cloudos_smb'`).Scan(&attrs); err != nil {
+		t.Fatal(err)
+	}
+	if attrs != "f f f f f 8" {
+		t.Errorf("role attributes (super, createrole, createdb, bypassrls, inherit, connection limit) = %s", attrs)
+	}
+
+	if _, err := p.Down(ctx); err != nil {
+		t.Fatalf("down 26: %v", err)
+	}
+	expect("down", none)
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM smb_passwords`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("smb_passwords after down: %d rows, %v", n, err)
+	}
+
+	if _, err := p.UpTo(ctx, 26); err != nil {
+		t.Fatalf("up 26 again: %v", err)
+	}
+	expect("up again", want)
 }
 
 // TestFolderBackfill checks that migration 4 gives every existing file's
