@@ -242,7 +242,6 @@ func TestServer(t *testing.T) {
 	t.Run("own drive", func(t *testing.T) { testOwnDrive(t, addr, fx) })
 	t.Run("read", func(t *testing.T) { testRead(t, addr, fx) })
 	t.Run("paths", func(t *testing.T) { testPaths(t, addr, fx) })
-	t.Run("writes", func(t *testing.T) { testWrites(t, addr, fx) })
 	t.Run("disabled", func(t *testing.T) { testDisabled(t, addr, fx) })
 }
 
@@ -369,74 +368,6 @@ func testPaths(t *testing.T, addr string, fx *fixture) {
 	}
 	if list, err := share.ReadDir(`..`); err == nil {
 		t.Errorf("listing .. succeeded: %d entries", len(list))
-	}
-}
-
-func testWrites(t *testing.T, addr string, fx *fixture) {
-	share := fx.mount(t, addr)
-	before := fx.snapshot(t)
-	refused := func(what string, fn func() error) {
-		t.Helper()
-		if err := fn(); err == nil {
-			t.Errorf("%s was not refused", what)
-		}
-	}
-	refused("create", func() error {
-		f, err := share.Create(`new.txt`)
-		if err != nil {
-			return err
-		}
-		_, werr := f.Write([]byte("x"))
-		return errors.Join(werr, f.Close())
-	})
-	refused("create in a folder", func() error { return share.WriteFile(`docs\new.txt`, []byte("x"), 0o644) })
-	refused("overwrite", func() error { return share.WriteFile(`docs\a.txt`, []byte("changed"), 0o644) })
-	refused("write in place", func() error {
-		f, err := share.OpenFile(`docs\a.txt`, os.O_RDWR, 0)
-		if err != nil {
-			return err
-		}
-		_, werr := f.WriteAt([]byte("HELLO"), 0)
-		return errors.Join(werr, f.Close())
-	})
-	refused("append", func() error {
-		f, err := share.OpenFile(`docs\a.txt`, os.O_WRONLY|os.O_APPEND, 0)
-		if err != nil {
-			return err
-		}
-		_, werr := f.Write([]byte("more"))
-		return errors.Join(werr, f.Close())
-	})
-	refused("truncate by name", func() error { return share.Truncate(`docs\a.txt`, 0) })
-	refused("truncate an open file", func() error {
-		f, err := share.Open(`photos\big.bin`)
-		if err != nil {
-			return err
-		}
-		return errors.Join(f.Truncate(1), f.Close())
-	})
-	refused("rename", func() error { return share.Rename(`docs\a.txt`, `docs\renamed.txt`) })
-	refused("move a folder", func() error { return share.Rename(`docs\sub`, `moved`) })
-	refused("delete a file", func() error { return share.Remove(`docs\a.txt`) })
-	refused("delete an empty-able folder", func() error { return share.RemoveAll(`docs`) })
-	refused("make a folder", func() error { return share.Mkdir(`newdir`, 0o755) })
-	refused("change times", func() error {
-		return share.Chtimes(`docs\a.txt`, time.Unix(1, 0), time.Unix(1, 0))
-	})
-	refused("change attributes", func() error { return share.Chmod(`docs\a.txt`, 0o444) })
-	refused("write a named stream", func() error {
-		return share.WriteFile(`docs\a.txt:com.apple.metadata:_kMDItemUserTags`, []byte("tag"), 0o644)
-	})
-	refused("write a Finder file", func() error { return share.WriteFile(`._a.txt`, []byte("x"), 0o644) })
-	refused("write a .DS_Store", func() error { return share.WriteFile(`.DS_Store`, []byte("x"), 0o644) })
-
-	if after := fx.snapshot(t); after != before {
-		t.Errorf("the disk or the index changed:\nbefore:\n%s\nafter:\n%s", before, after)
-	}
-	// The drive still reads as it did.
-	b, err := share.ReadFile(`docs\a.txt`)
-	if err != nil || !bytes.Equal(b, fx.files["docs/a.txt"]) {
-		t.Errorf("docs/a.txt reads %q, %v after the writes", b, err)
 	}
 }
 

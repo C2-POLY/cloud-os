@@ -336,9 +336,9 @@ func (s *Store) removeVersionsDir(owner string, fileID int64) error {
 // recoverVersion settles a replace left by a crash: without the version file,
 // nothing moved; with the version file and no file, the old content goes back;
 // with both, the new content is indexed.
-func (s *Store) recoverVersion(ctx context.Context, moveID int64, owner, p string, versionID int64) (finished, dropped bool, err error) {
+func (s *Store) recoverVersion(ctx context.Context, conn *pgxpool.Conn, moveID int64, owner, p string, versionID int64) (finished, dropped bool, err error) {
 	var fileID int64
-	if err := s.Pool.QueryRow(ctx, `SELECT file_id FROM file_versions WHERE id = $1`, versionID).Scan(&fileID); err != nil {
+	if err := conn.QueryRow(ctx, `SELECT file_id FROM file_versions WHERE id = $1`, versionID).Scan(&fileID); err != nil {
 		return false, false, err
 	}
 	disk := s.diskPath(owner, p)
@@ -346,10 +346,10 @@ func (s *Store) recoverVersion(ctx context.Context, moveID int64, owner, p strin
 	_, keptErr := os.Lstat(kept)
 	_, diskErr := os.Lstat(disk)
 	forget := func() error {
-		if _, err := s.Pool.Exec(ctx, `DELETE FROM moves WHERE id = $1`, moveID); err != nil {
+		if _, err := conn.Exec(ctx, `DELETE FROM moves WHERE id = $1`, moveID); err != nil {
 			return err
 		}
-		_, err := s.Pool.Exec(ctx, `DELETE FROM file_versions WHERE id = $1`, versionID)
+		_, err := conn.Exec(ctx, `DELETE FROM file_versions WHERE id = $1`, versionID)
 		return err
 	}
 	switch {
@@ -369,7 +369,7 @@ func (s *Store) recoverVersion(ctx context.Context, moveID int64, owner, p strin
 		if err != nil {
 			return false, false, err
 		}
-		_, err = applyVersion(ctx, s.Pool, moveID, fileID, File{Size: info.Size(), MIME: detectMIME(p, sniff), SHA256: sum, ModifiedAt: info.ModTime()})
+		_, err = applyVersion(ctx, conn, moveID, fileID, File{Size: info.Size(), MIME: detectMIME(p, sniff), SHA256: sum, ModifiedAt: info.ModTime()})
 		return err == nil, false, err
 	}
 }

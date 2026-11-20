@@ -1,7 +1,7 @@
 # Stockage des fichiers
 
 Le domaine qui écrit, range et vérifie les fichiers des utilisateurs : `core/internal/storage`, et l'API qui l'expose, `core/internal/httpapi/files.go`.
-Issues : #7 (écriture et index), #9 (dossiers, déplacements, API), #18 (envoi reprenable), #10 (corbeille), #24 (versions).
+Issues : #7 (écriture et index), #9 (dossiers, déplacements, API), #18 (envoi reprenable), #10 (corbeille), #24 (versions), #92 (écriture par morceaux, renommage qui écrase, dates : SMB).
 
 ## Ce qui est garanti
 
@@ -15,6 +15,7 @@ Issues : #7 (écriture et index), #9 (dossiers, déplacements, API), #18 (envoi 
 ```text
 <CLOUDOS_DATA_DIR>/            /data dans le conteneur du cœur
 ├── .cloudos/tmp/              écritures en cours, vidées au démarrage du serveur
+├── .cloudos/tmp/smb/          fichiers de travail SMB (Stage), vidés au démarrage du service smb seulement
 ├── .cloudos/uploads/<id>      envois reprenables en cours (tus), supprimés à la fin ou après 24 h
 ├── .cloudos/trash/<compte>/<id>/<nom>   éléments mis à la corbeille, effacés après 30 jours
 ├── .cloudos/versions/<compte>/<fichier>/<version>   contenus remplacés
@@ -53,6 +54,28 @@ stateDiagram-v2
 3. **Mise en place :** `os.Link` vers la place finale. Contrairement à `rename`, il échoue si la cible existe, ce qui rend l'écrasement impossible. Tout se fait dans la transaction qui indexe le fichier et crée les lignes des dossiers parents manquants.
 4. **Après coup :** une fois le fichier indexé, `AfterStore` (s'il est défini) reçoit le fichier et ses premiers octets. Le cœur s'en sert pour mettre en file la miniature et les métadonnées d'une image ou d'une vidéo ([thumbnails.md](thumbnails.md), [metadata.md](metadata.md)) et le texte d'un document ([documents.md](documents.md)). Il ne peut pas faire échouer l'écriture.
 
+## Écrire par morceaux (`Stage`)
+
+SMB écrit un fichier par morceaux, à des positions quelconques, et le relit pendant ce temps. `Store.Stage(ctx, compte, chemin, base)` ouvre pour cela un fichier de travail à accès aléatoire (`Staged` : `ReadAt`, `WriteAt`, `Truncate`, `Size`), dans `.cloudos/tmp/smb/`, sur le même disque que le stockage pour lier sans recopier. Le service `smb` s'en sert ([smb.md](smb.md)).
+
+```mermaid
+stateDiagram-v2
+    [*] --> Lecture: Stage(base = la ligne du fichier stocké)
+    [*] --> Travail: Stage(base = nil) : fichier neuf, ou tronqué à l'ouverture
+    Lecture --> Travail: première écriture ou troncature : copie du contenu stocké dans tmp/smb
+    Lecture --> Rien: Commit sans changement, ou Abort
+    Travail --> Travail: WriteAt, Truncate (le fichier stocké n'est jamais touché)
+    Travail --> Stocke: Commit : fsync, fermeture, SHA-256, puis Put avec Replace (link, version de l'ancien)
+    Travail --> Rien: Abort : le fichier de travail est supprimé
+    Stocke --> [*]
+    Rien --> [*]
+```
+
+- **Copie paresseuse :** un fichier existant est lu sur place tant que rien n'y est écrit. Le Finder ouvre souvent en lecture-écriture sans rien écrire, et `Commit` n'enregistre alors rien, pas même une version. Une troncature ne copie que ce qu'elle garde.
+- **`Commit`** ferme le fichier de travail avant de le lier : plus rien ne peut écrire au travers une fois qu'il est stocké. Il passe par le même `finish` que `Put`, avec `Replace` : le fichier de départ, ou celui qu'un autre client (web, WebDAV) a stocké entre-temps, devient une version. Le dernier arrivé gagne, et l'autre contenu reste en version. Un contenu identique au contenu stocké n'enregistre rien.
+- **`Abort`** supprime le fichier de travail. Le fichier stocké reste tel quel.
+- **Ménage :** `CleanTmp`, au démarrage du cœur, saute `tmp/smb/`. Seul `core smb` le vide, à son propre démarrage (`CleanStaged`) : un redémarrage du cœur n'efface pas une écriture SMB en cours.
+
 ## Déplacer ou renommer (`Move`)
 
 Le verrou du compte est tenu sur une connexion dédiée pendant tout le déplacement. Aucune écriture du compte ne peut donc arriver dans le dossier déplacé entre deux étapes ; `TestConcurrentMovesAndPutsStayConsistent` échoue sans ce verrou.
@@ -74,6 +97,36 @@ stateDiagram-v2
 - **Refus :** cible prise (y compris dans une autre casse), cible dans la source, dossier parent qui est un fichier, ou cible présente sur le disque sans être indexée.
 - **Casse seule :** un renommage qui ne change que la casse est autorisé.
 - **Reprise au démarrage :** `RecoverMoves` tourne avant que le serveur accepte des requêtes. Une intention dont les deux extrémités existent reste dans le journal et est signalée : elle n'est jamais devinée.
+- **Deux processus :** le service `smb` écrit aussi, et peut être en plein déplacement quand le cœur démarre. `RecoverMoves` prend donc le verrou du compte pour chaque entrée, puis la relit : une opération en cours tient ce verrou jusqu'à avoir effacé sa propre entrée, qui n'est alors plus à reprendre (`TestRecoverMovesWaitsForTheOwnersLock`).
+
+### Renommer par-dessus un fichier (`MoveReplace`)
+
+Un renommage qui écrase un fichier (SMB, quand le client le demande) est une seule opération journalisée, `op = 'replace'` dans `moves`, sous le verrou du compte. La cible garde son identité (ses versions, albums et liens de partage) et prend le contenu de la source ; son contenu d'avant devient une version. On ne renomme jamais sur un chemin occupé.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Intention: verrou du compte, INSERT file_versions (contenu de to) + moves(op=replace, from, to), COMMIT
+    Intention --> AncienRange: rename(to, .cloudos/versions/compte/fichier/version)
+    AncienRange --> NouveauEnPlace: rename(from, to), fsync
+    AncienRange --> Annule: rename impossible, l'ancien contenu revient
+    NouveauEnPlace --> Fini: UPDATE files (to : taille, hash, type), DELETE files (from), DELETE moves, COMMIT
+    Intention --> Reprise: crash
+    AncienRange --> Reprise: crash
+    NouveauEnPlace --> Reprise: crash
+    Reprise --> Annule: from et to en place, pas de version : on oublie
+    Reprise --> Annule: from et la version présents, to absent : l'ancien contenu revient
+    Reprise --> Fini: to et la version présents, from absent : on hache to et on indexe
+    Annule --> [*]
+    Fini --> [*]
+```
+
+- **Sans cible**, c'est `Move`. Un dossier ne remplace rien et n'est jamais remplacé.
+- **Une source qui a ses propres versions** les perdrait avec sa ligne. La cible part alors d'abord à la corbeille (avec ses versions), puis la source est déplacée : rien n'est perdu, et l'ancien contenu se restaure depuis la corbeille.
+- **Migration :** 0027 ajoute `replace` aux opérations du journal ; sa partie « down » refuse de s'exécuter tant qu'un remplacement y reste.
+
+## Dates (`SetModTime`)
+
+`Store.SetModTime(ctx, compte, chemin, date)` change `files.modified_at` et la date du fichier ou du dossier sur le disque, sous le verrou du compte. C'est une métadonnée : le contenu n'est jamais touché. Le Finder garde ainsi les dates d'une copie.
 
 ## Déduplication à l'envoi
 

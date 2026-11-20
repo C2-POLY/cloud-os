@@ -14,7 +14,7 @@ flowchart LR
     subgraph Box["Box (Docker Compose)"]
         C["core (Go)<br/>API, comptes, stockage,<br/>front compilé"]
         K["worker (Python)<br/>tâches de fond, IA"]
-        S["smb (core smb)<br/>drive en SMB, lecture seule<br/>profil smb"]
+        S["smb (core smb)<br/>drive en SMB, écrit par storage<br/>profil smb"]
         DB[("Postgres + pgvector")]
         D[/"données : CLOUDOS_DATA_DIR<br/>monté en /data"/]
     end
@@ -24,9 +24,9 @@ flowchart LR
     C -- "migrations, index, sessions" --> DB
     K -- "battement, file de tâches" --> DB
     C -- "POST /embed : vecteur d'une recherche" --> K
-    C -- "seul à écrire" --> D
+    C -- "écrit par storage" --> D
     S -- "index, mots de passe SMB,<br/>LISTEN smb_revoke" --> DB
-    S -. "lit" .-> D
+    S -- "écrit par storage" --> D
 ```
 
 - **Les clients ne parlent qu'au cœur.** Le cœur sert aussi le front compilé (`STATIC_DIR`). En développement, Vite le sert avec rechargement à chaud et renvoie `/api` vers le cœur.
@@ -39,7 +39,7 @@ flowchart LR
 | `db` | `pgvector/pgvector:0.8.1-pg17` | 54320 |
 | `core` | `core/Dockerfile` (front compilé + binaire Go, distroless, non root) | 8480 |
 | `worker` | `worker/Dockerfile` (Python 3.13, uv) | aucun (8090 sur le réseau Compose seulement) ; `/data` en lecture seule |
-| `smb` (profil `smb`, `CLOUDOS_SMB=1`) | `core/Dockerfile`, commande `core smb` ; 512 Mo au plus ; `/data` en lecture seule | 1445 |
+| `smb` (profil `smb`, `CLOUDOS_SMB=1`) | `core/Dockerfile`, commande `core smb` ; 512 Mo au plus ; `/data` écrit seulement par `storage` | 1445 |
 | `web` | `node:24-alpine`, Vite en développement | 5180 |
 
 Tous les ports sont liés à `127.0.0.1` et réglables (`CLOUDOS_*_PORT`), pour qu'une pile par worktree tourne sans conflit.

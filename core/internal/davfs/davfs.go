@@ -35,6 +35,17 @@ func IsAppleFile(name string) bool {
 	return base == ".DS_Store" || strings.HasPrefix(base, "._") || base == ".localized" || base == ".TemporaryItems"
 }
 
+// IsApplePath reports whether p is one of the Finder's files or lies inside
+// one of its folders (.TemporaryItems/folders.501/…).
+func IsApplePath(p string) bool {
+	for _, part := range strings.Split(p, "/") {
+		if IsAppleFile(part) {
+			return true
+		}
+	}
+	return false
+}
+
 func owner(ctx context.Context) (string, error) {
 	a, ok := auth.AccountFrom(ctx)
 	if !ok {

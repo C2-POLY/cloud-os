@@ -1,9 +1,10 @@
 // Package smbfs serves an account's space over SMB, for the Finder and the
-// Explorer. This first version is read-only: it reads the index and the files
-// through storage and has no write path at all, so every create, write,
-// rename, delete or change of attributes a client sends is refused with access
-// denied. The SMB protocol itself is a library's (docs/decisions/006-smb.md);
-// an adapter turns that library's file system interface into calls to View.
+// Explorer. It reads through View, and writes only through storage, as WebDAV
+// does: a file is staged and stored when its client closes it, a replaced
+// content becomes a version, a delete goes to the trash, a rename is a
+// journaled move. The SMB protocol itself is a library's
+// (docs/decisions/006-smb.md); an adapter turns that library's file system
+// interface into these calls (backend.go, write.go).
 package smbfs
 
 import (
@@ -21,10 +22,6 @@ import (
 // ShareName is the one share a signed-in account sees: its drive.
 const ShareName = "drive"
 
-// ErrReadOnly is what every write gets. It wraps os.ErrPermission, which the
-// SMB libraries answer with STATUS_ACCESS_DENIED.
-var ErrReadOnly = fmt.Errorf("smbfs: the drive is read-only over SMB: %w", os.ErrPermission)
-
 // Info describes one file or folder of the view.
 type Info struct {
 	Name     string
@@ -35,7 +32,7 @@ type Info struct {
 	ID       uint64 // the index row's id; 0 for the root
 }
 
-// View is the read-only view of one account's space.
+// View reads one account's space.
 type View struct {
 	Store *storage.Store
 	Owner string
@@ -84,6 +81,8 @@ func toOS(err error) error {
 		return nil
 	case errors.Is(err, storage.ErrNotFound), errors.Is(err, storage.ErrInvalidPath):
 		return fmt.Errorf("%w: %w", os.ErrNotExist, err)
+	case errors.Is(err, storage.ErrExists):
+		return fmt.Errorf("%w: %w", os.ErrExist, err)
 	}
 	return err
 }

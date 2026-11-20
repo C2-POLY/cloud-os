@@ -53,8 +53,8 @@ services:
       db:
         condition: service_healthy
 
-  # The drives over SMB (docs/architecture/smb.md), read-only, each account
-  # with its SMB password. Off by default: `CLOUDOS_SMB=1 make up` turns the
+  # The drives over SMB (docs/architecture/smb.md), each account with its SMB
+  # password, written through storage like WebDAV. Off by default: `CLOUDOS_SMB=1 make up` turns the
   # profile on. A process of its own, the core's image with `core smb`, with
   # its own memory limit: if SMB falls, the core and the web stay up.
   smb:
@@ -62,9 +62,9 @@ services:
     command: ["smb"]
     profiles: [smb]
     environment:
-      # Its own role, never the core's: it reads accounts, SMB passwords and
-      # the index, and notes an SMB password's last use, nothing else. The
-      # password goes apart, so no character of it needs escaping in the URL.
+      # Its own role, never the core's: it reads accounts and SMB passwords,
+      # notes an SMB password's last use, and writes only what storage needs
+      # (migration 0027), never the accounts nor the sessions. The password goes apart, so no character of it needs escaping in the URL.
       DATABASE_URL: postgres://cloudos_smb@db:5432/cloudos?sslmode=disable
       PGPASSWORD: *smb-db-password
       CLOUDOS_DATA_DIR: /data
@@ -75,8 +75,8 @@ services:
       # macOS's own file sharing holds port 445 on the Mac, hence 1445.
       - "127.0.0.1:${CLOUDOS_SMB_PORT:-1445}:445"
     volumes:
-      # Read-only until SMB writes through storage (#92).
-      - ${CLOUDOS_DATA_DIR:-./.data/files}:/data:ro
+      # Written only through storage, as the core writes it (#92).
+      - ${CLOUDOS_DATA_DIR:-./.data/files}:/data
     mem_limit: 512m
     cpus: 1
     pids_limit: 256

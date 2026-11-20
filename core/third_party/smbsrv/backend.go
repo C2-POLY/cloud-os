@@ -44,6 +44,17 @@ type PendingFile interface {
 	PendingSize() (size int64, ok bool)
 }
 
+// Aborter is a File whose writes are stored only when the client closes it,
+// such as a staged copy. Close stores them, and is called only for a CLOSE
+// the client sent. Every other end of the open calls Abort instead, which
+// must store nothing: a connection cut, a logoff or tree disconnect with the
+// file still open, a durable handle that nobody reclaimed, the server
+// stopping, a CREATE that failed or that the client never heard of, and an
+// open closed while its file waits to be deleted.
+type Aborter interface {
+	Abort() error
+}
+
 // Share is one drive as one user sees it. CanRead and CanWrite are asked on
 // every operation rather than once at tree connect, so a change of a drive's
 // access list reaches sessions that are already open.
