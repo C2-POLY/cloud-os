@@ -10,6 +10,7 @@ on:
     paths:
       - "core/Dockerfile"
       - "worker/Dockerfile"
+      - "backup/**"
       - "compose*.yaml"
       - "scripts/box"
       - "worker/ffmpeg/**"
@@ -91,11 +92,13 @@ jobs:
       - uses: docker/bake-action@v6
         with:
           files: compose.yaml
-          targets: core,worker
+          targets: core,worker,backup
           load: true
           set: |
             core.cache-from=type=gha,scope=${{ matrix.arch }}-core
             core.cache-to=type=gha,mode=max,scope=${{ matrix.arch }}-core
+            backup.cache-from=type=gha,scope=${{ matrix.arch }}-backup
+            backup.cache-to=type=gha,mode=max,scope=${{ matrix.arch }}-backup
             worker.cache-from=type=gha,scope=${{ matrix.arch }}-worker
             worker.cache-to=type=gha,mode=max,scope=${{ matrix.arch }}-worker
 
@@ -106,6 +109,22 @@ jobs:
           curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-connrefused http://127.0.0.1:8480/api/health
           echo
           scripts/box run --rm core verify
+
+      # The nightly backup on this architecture: the repository on a folder
+      # standing for the USB disk, a run, its restore test, its row.
+      - name: Backup
+        run: |
+          set -eu
+          usb="$RUNNER_TEMP/usb"
+          mkdir -p "$usb"
+          # backup-init shows the key once: kept out of the job's log.
+          scripts/box backup-init "$usb" > "$RUNNER_TEMP/backup-init.log"
+          [ -f "$usb/restic/config" ]
+          scripts/box backup
+          scripts/box run --rm backup backup restore-test
+          scripts/box backup-status | tee "$RUNNER_TEMP/status.txt"
+          [ "$(grep -c ' ok ' "$RUNNER_TEMP/status.txt")" -ge 2 ]
+          if grep -q FAILED "$RUNNER_TEMP/status.txt"; then echo "a backup run failed"; exit 1; fi
 
       - name: Logs
         if: failure()

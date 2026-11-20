@@ -1,22 +1,30 @@
 #!/bin/sh
 # The one entry point of the production stack (docs/architecture/box.md).
 #
-#   scripts/box init       draw the secrets into box.env (once) and create the data folders
-#   scripts/box up         check box.env, then build and start the stack
-#   scripts/box <anything> pass it to `docker compose`, for example
-#                          scripts/box logs --follow
-#                          scripts/box run --rm core verify
-#                          scripts/box down
+#   scripts/box init                  draw the secrets into box.env (once) and create the data folders
+#   scripts/box up                    check box.env, then build and start the stack
+#   scripts/box backup-init DIR       create the encrypted backup on the disk at DIR, show its key once
+#   scripts/box backup                back the box up now
+#   scripts/box backup-status         the last backups, checks and restore tests
+#   scripts/box backup-remote-init    create the remote copy named by CLOUDOS_BACKUP_REMOTE in box.env
+#   scripts/box update                git pull, back up, then rebuild and restart; stops if the backup fails
+#   scripts/box restore DIR [RUN]     put a backup back onto a new box, then check every file
+#   scripts/box <anything>            pass it to `docker compose`, for example
+#                                     scripts/box logs --follow
+#                                     scripts/box run --rm core verify
+#                                     scripts/box down
 #
 # It always uses the project cloud-os-box, box.env and both Compose files, so
 # the production stack never mixes with the development stack of a worktree.
-# CLOUDOS_BOX_ENV names another env file (the CI uses a temporary one).
+# CLOUDOS_BOX_ENV names another env file (the CI uses a temporary one), and
+# CLOUDOS_BOX_PROJECT another project (a test box beside the real one).
+# The backup is docs/architecture/backup.md.
 
 set -eu
 
-PROJECT=cloud-os-box
+PROJECT=${CLOUDOS_BOX_PROJECT:-cloud-os-box}
 CORE_UID=65532
-DEV_PASSWORDS="cloudos cloudos-smb"
+DEV_PASSWORDS="cloudos cloudos-smb cloudos-backup cloudos-backup-dev"
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 env_file=${CLOUDOS_BOX_ENV:-$root/box.env}
@@ -27,6 +35,13 @@ note() { printf 'scripts/box: %s\n' "$*"; }
 # The value of KEY in the env file (the last one wins), empty when absent.
 env_value() {
 	sed -n "s/^$1=//p" "$env_file" | tail -n 1
+}
+
+# Add KEY=VALUE to the env file when KEY is not there yet. Nothing already in
+# the file is ever rewritten.
+env_add() {
+	[ -z "$(env_value "$1")" ] || return 0
+	(umask 077 && printf '%s=%s\n' "$1" "$2" >>"$env_file") || die "cannot write $env_file"
 }
 
 random_password() {
@@ -47,6 +62,11 @@ make_dir() {
 		chown "$CORE_UID:$CORE_UID" "$1" 2>/dev/null || as_root chown "$CORE_UID:$CORE_UID" "$1" 2>/dev/null ||
 			note "warning: $1 is not owned by uid $CORE_UID, the core may not write there: sudo chown $CORE_UID:$CORE_UID $1"
 	fi
+}
+
+# Whether the folder holds nothing but the lost+found of a formatted disk.
+is_empty() {
+	[ -z "$(ls -A "$1" | grep -vx 'lost+found' || true)" ]
 }
 
 cmd_init() {
@@ -89,59 +109,230 @@ check_compose() {
 	fi
 }
 
+# A secret of the env file: set, and not a development default.
+check_secret() {
+	value=$(env_value "$1")
+	[ -n "$value" ] || die "$1 is empty in $env_file"
+	for dev in $DEV_PASSWORDS; do
+		[ "$value" != "$dev" ] || die "$1 is a development password in $env_file"
+	done
+}
+
 check_env() {
 	[ -f "$env_file" ] || die "$env_file is missing, run: scripts/box init"
-	for key in CLOUDOS_DB_PASSWORD CLOUDOS_SMB_DB_PASSWORD; do
-		value=$(env_value "$key")
-		[ -n "$value" ] || die "$key is empty in $env_file"
-		for dev in $DEV_PASSWORDS; do
-			[ "$value" != "$dev" ] || die "$key is a development password in $env_file"
-		done
-	done
+	case $(ls -ln "$env_file" | cut -c5-10) in
+	------) ;;
+	*) note "warning: $env_file can be read by other users of this machine: chmod 600 $env_file" ;;
+	esac
+	check_secret CLOUDOS_DB_PASSWORD
+	check_secret CLOUDOS_SMB_DB_PASSWORD
 	data=$(env_value CLOUDOS_DATA_DIR)
 	[ -n "$data" ] || die "CLOUDOS_DATA_DIR is not set in $env_file"
 	[ -d "$data" ] || die "CLOUDOS_DATA_DIR $data does not exist (is the disk mounted?); not creating it"
+	# Once backup-init has run, the backup's key and role password are required.
+	# Its disk may be absent: the backup service then records failed runs.
+	if [ -n "$(env_value CLOUDOS_BACKUP_DIR)" ]; then
+		check_secret RESTIC_PASSWORD
+		check_secret CLOUDOS_BACKUP_DB_PASSWORD
+	fi
 }
 
-compose() {
-	# The env file is the only source of the box's secrets and folders: a
-	# development variable of the shell must not win over it.
-	unset CLOUDOS_DB_PASSWORD CLOUDOS_SMB_DB_PASSWORD CLOUDOS_DATA_DIR CLOUDOS_MAPS_DIR COMPOSE_FILE COMPOSE_PROJECT_NAME
+backup_on() {
+	[ -n "$(env_value CLOUDOS_BACKUP_DIR)" ]
+}
+
+# The Compose profiles to turn on: smb with CLOUDOS_SMB=1, backup once
+# backup-init has run.
+profiles() {
+	p=
+	[ "${CLOUDOS_SMB:-}" != 1 ] || p=smb
+	! backup_on || p=${p:+$p,}backup
+	printf '%s' "$p"
+}
+
+# docker compose on the box's project, in a subshell: the env file is the
+# only source of the box's secrets and folders, so a development variable of
+# the shell must not win over it.
+dc() (
+	unset CLOUDOS_DB_PASSWORD CLOUDOS_SMB_DB_PASSWORD CLOUDOS_DATA_DIR CLOUDOS_MAPS_DIR COMPOSE_FILE COMPOSE_PROJECT_NAME \
+		RESTIC_PASSWORD CLOUDOS_BACKUP_DB_PASSWORD CLOUDOS_BACKUP_DIR CLOUDOS_BACKUP_REMOTE \
+		AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION PGPASSWORD
+	# The one password passed on, from the env file: the restore's (cmd_restore).
+	if [ -n "${BOX_PGPASSWORD:-}" ]; then
+		PGPASSWORD=$BOX_PGPASSWORD
+		export PGPASSWORD
+	fi
 	[ -f "$env_file" ] || die "$env_file is missing, run: scripts/box init"
 	cd "$root"
-	exec docker compose -p "$PROJECT" --env-file "$env_file" -f compose.yaml -f compose.prod.yaml "$@"
-}
+	docker compose -p "$PROJECT" --env-file "$env_file" -f compose.yaml -f compose.prod.yaml "$@"
+)
 
-if [ $# -eq 0 ]; then
-	sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
-	exit 0
-fi
-
-case $1 in
-init)
-	cmd_init
-	;;
-up)
-	shift
+cmd_up() {
 	check_compose
 	check_env
-	# The smb service only starts with CLOUDOS_SMB=1 (docs/architecture/smb.md).
-	[ "${CLOUDOS_SMB:-}" != 1 ] || export COMPOSE_PROFILES=smb
+	COMPOSE_PROFILES=$(profiles)
+	export COMPOSE_PROFILES
 	port=${CLOUDOS_CORE_PORT:-$(env_value CLOUDOS_CORE_PORT)}
 	if [ "$#" -eq 0 ]; then
 		note "starting $PROJECT; the box will be on http://localhost:${port:-8480}"
 	fi
-	compose up --build --detach --wait "$@"
-	;;
-down)
-	shift
+	dc up --build --detach --wait "$@"
+}
+
+# The backup folder: the argument, else box.env's.
+backup_dir() {
+	dir=${1:-$(env_value CLOUDOS_BACKUP_DIR)}
+	[ -n "$dir" ] || die "name the folder on the backup disk: scripts/box $cmd <folder>"
+	case $dir in /*) ;; *) die "the backup folder must be an absolute path" ;; esac
+	known=$(env_value CLOUDOS_BACKUP_DIR)
+	[ -z "$known" ] || [ "$known" = "$dir" ] || die "$env_file already backs up to $known, not $dir"
+	[ -d "$dir" ] || die "$dir does not exist: plug in and mount the backup disk, then create the folder"
+	# Never the data folder, nor a folder inside it or holding it: the restore
+	# test erases its own folder on the backup disk.
+	data=$(env_value CLOUDOS_DATA_DIR)
+	if [ -n "$data" ] && [ -d "$data" ]; then
+		real_dir=$(cd "$dir" && pwd -P)
+		real_data=$(cd "$data" && pwd -P)
+		case $real_dir/ in "$real_data"/*) die "$dir is in the data folder $data: back up to another disk" ;; esac
+		case $real_data/ in "$real_dir"/*) die "$dir holds the data folder $data: back up to a folder of its own" ;; esac
+	fi
+	printf '%s' "$dir"
+}
+
+cmd_backup_init() {
 	check_compose
-	# Stop the smb service too, whether or not CLOUDOS_SMB is set now.
-	export COMPOSE_PROFILES=smb
-	compose down "$@"
+	check_env
+	dir=$(backup_dir "${1:-}")
+	if [ -f "$dir/restic/config" ]; then
+		if [ -n "$(env_value RESTIC_PASSWORD)" ] && [ "$(env_value CLOUDOS_BACKUP_DIR)" = "$dir" ]; then
+			note "$dir already holds this box's backup; nothing to do"
+			return 0
+		fi
+		die "$dir already holds a backup: to put it back onto this box, run scripts/box restore $dir"
+	fi
+	is_empty "$dir" || die "$dir is not empty and holds no backup: choose an empty folder on the backup disk"
+
+	# A key drawn by an init that failed before creating the repository was
+	# never shown: it is used, and shown, now.
+	env_add RESTIC_PASSWORD "$(random_password)"
+	env_add CLOUDOS_BACKUP_DB_PASSWORD "$(random_password)"
+	env_add CLOUDOS_BACKUP_DIR "$dir"
+	make_dir "$dir"
+	note "creating the encrypted repository in $dir/restic"
+	dc run --rm --build --no-deps backup backup init || die "the repository was not created"
+
+	cat <<EOF
+
+================================================================================
+  THE BACKUP KEY, shown this once:
+
+      $(env_value RESTIC_PASSWORD)
+
+  Without it, the backup disk cannot be read, by anyone, ever. Write it down
+  and keep it OFF this box (on paper, in a password manager): if the box dies,
+  this key restores everything. scripts/box will not show it again.
+================================================================================
+
+EOF
+	note "starting the backup service; the first backup runs at ${CLOUDOS_BACKUP_AT:-03:00}, or now with: scripts/box backup"
+	cmd_up
+}
+
+cmd_backup() {
+	check_compose
+	check_env
+	backup_on || die "no backup is set up: scripts/box backup-init <folder on the backup disk>"
+	dc run --rm backup backup now
+}
+
+cmd_backup_remote_init() {
+	check_compose
+	check_env
+	backup_on || die "no backup is set up: scripts/box backup-init <folder on the backup disk>"
+	[ -n "$(env_value CLOUDOS_BACKUP_REMOTE)" ] || die "add CLOUDOS_BACKUP_REMOTE (and its access keys) to $env_file first"
+	dc run --rm --no-deps backup backup remote-init
+}
+
+cmd_update() {
+	check_compose
+	check_env
+	backup_on || die "an update starts with a backup, and none is set up: scripts/box backup-init <folder on the backup disk>"
+	git -C "$root" pull --ff-only || die "git pull failed: nothing was updated"
+	note "backing up before the update"
+	cmd_backup || die "the backup failed, so the update stops here; the box runs as before (scripts/box backup-status says why)"
+	cmd_up
+}
+
+cmd_restore() {
+	check_compose
+	check_env
+	dir=$(backup_dir "${1:-}")
+	run=${2:-}
+	[ -f "$dir/restic/config" ] || die "$dir holds no backup (is the backup disk mounted?)"
+	data=$(env_value CLOUDOS_DATA_DIR)
+	is_empty "$data" || die "CLOUDOS_DATA_DIR $data is not empty: a restore only goes onto a new box"
+	if [ -z "$(env_value RESTIC_PASSWORD)" ]; then
+		[ -t 0 ] || die "RESTIC_PASSWORD is not in $env_file and there is no terminal to type the backup key"
+		printf 'The backup key: '
+		trap 'stty echo' EXIT INT TERM
+		stty -echo
+		read -r key || key=
+		stty echo
+		trap - EXIT INT TERM
+		printf '\n'
+		[ -n "$key" ] || die "no key typed"
+		case $key in *[!A-Za-z0-9]*) die "a backup key drawn by scripts/box has only letters and digits" ;; esac
+		env_add RESTIC_PASSWORD "$key"
+	fi
+	env_add CLOUDOS_BACKUP_DB_PASSWORD "$(random_password)"
+	env_add CLOUDOS_BACKUP_DIR "$dir"
+	check_env
+
+	note "starting the database alone"
+	dc up --detach --wait db
+	note "restoring the files and the database"
+	# As the database's owner: it creates the tables.
+	BOX_PGPASSWORD=$(env_value CLOUDOS_DB_PASSWORD)
+	export BOX_PGPASSWORD
+	dc run --rm --build --no-deps \
+		-e "DATABASE_URL=postgres://cloudos@db:5432/cloudos?sslmode=disable" -e PGPASSWORD \
+		backup backup restore ${run:+"$run"} || die "the restore failed: empty CLOUDOS_DATA_DIR and the database (scripts/box down -v) before trying again"
+	unset BOX_PGPASSWORD
+	cmd_up
+	note "checking every file against the restored index"
+	dc run --rm core verify
+}
+
+if [ $# -eq 0 ]; then
+	sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+	exit 0
+fi
+
+cmd=$1
+shift
+case $cmd in
+init) cmd_init ;;
+up) cmd_up "$@" ;;
+down)
+	check_compose
+	# Stop the smb and backup services too, whatever is set now.
+	COMPOSE_PROFILES=smb,backup
+	export COMPOSE_PROFILES
+	dc down "$@"
 	;;
+backup-init) cmd_backup_init "$@" ;;
+backup) cmd_backup ;;
+backup-status)
+	check_compose
+	dc run --rm --no-deps backup backup status
+	;;
+backup-remote-init) cmd_backup_remote_init ;;
+update) cmd_update ;;
+restore) cmd_restore "$@" ;;
 *)
 	check_compose
-	compose "$@"
+	COMPOSE_PROFILES=${COMPOSE_PROFILES:-$(profiles)}
+	export COMPOSE_PROFILES
+	dc "$cmd" "$@"
 	;;
 esac

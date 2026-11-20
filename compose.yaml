@@ -7,6 +7,9 @@ x-database-url: &database-url postgres://cloudos:cloudos@db:5432/cloudos?sslmode
 # 0026, docs/architecture/smb.md): the core sets it, the smb service logs in
 # with it. The default is for the local throwaway database only, like cloudos/cloudos.
 x-smb-db-password: &smb-db-password ${CLOUDOS_SMB_DB_PASSWORD:-cloudos-smb}
+# The password of the backup service's database role, cloudos_backup
+# (migration 0028, docs/architecture/backup.md), the same way.
+x-backup-db-password: &backup-db-password ${CLOUDOS_BACKUP_DB_PASSWORD:-cloudos-backup}
 
 services:
   db:
@@ -36,6 +39,7 @@ services:
       # The worker's query endpoint (POST /embed), on the Compose network only.
       WORKER_URL: http://worker:8090
       CLOUDOS_SMB_DB_PASSWORD: *smb-db-password
+      CLOUDOS_BACKUP_DB_PASSWORD: *backup-db-password
     ports:
       - "127.0.0.1:${CLOUDOS_CORE_PORT:-8480}:8080"
     volumes:
@@ -85,6 +89,50 @@ services:
       core:
         condition: service_healthy
 
+  # The nightly encrypted backup (docs/architecture/backup.md): restic into
+  # ${CLOUDOS_BACKUP_DIR}, a USB disk on the box. Off by default: the Compose
+  # profile `backup` (CLOUDOS_BACKUP=1 make up; scripts/box turns it on once
+  # backup-init has run). Its image holds pg_dump and Postgres of the
+  # database's version, restic and the core's binary.
+  backup:
+    build:
+      context: .
+      dockerfile: backup/Dockerfile
+      target: backup
+    command: ["backup", "daemon"]
+    profiles: [backup]
+    environment:
+      # Its own role: it reads the whole database (pg_dump) and writes
+      # backup_runs, nothing else. The password goes apart, as for smb.
+      DATABASE_URL: postgres://cloudos_backup@db:5432/cloudos?sslmode=disable
+      PGPASSWORD: *backup-db-password
+      CLOUDOS_DATA_DIR: /data
+      CLOUDOS_BACKUP_DIR: /backup
+      RESTIC_REPOSITORY: /backup/restic
+      # The repository's key. The default is for a development repository
+      # only: compose.prod.yaml requires the box's own (scripts/box backup-init).
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD:-cloudos-backup-dev}
+      CLOUDOS_BACKUP_AT: ${CLOUDOS_BACKUP_AT:-03:00}
+      TZ: ${CLOUDOS_TZ:-Europe/Paris}
+      # A second repository, copied to after each run: empty, nothing leaves the box.
+      CLOUDOS_BACKUP_REMOTE: ${CLOUDOS_BACKUP_REMOTE:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      GOMEMLIMIT: 256MiB
+    volumes:
+      # Read and written, for storage's hard links under .cloudos/snapshots
+      # only (Freeze, Release), and for a full restore onto a new box.
+      - ${CLOUDOS_DATA_DIR:-./.data/files}:/data
+      - ${CLOUDOS_BACKUP_DIR:-./.data/backup}:/backup
+      # restic's cache of the repository's index, rebuilt if lost.
+      - backup_cache:/cache
+    mem_limit: 1g
+    pids_limit: 256
+    depends_on:
+      core:
+        condition: service_healthy
+
   worker:
     build: worker
     environment:
@@ -120,3 +168,4 @@ services:
 volumes:
   pgdata:
   web_node_modules:
+  backup_cache:

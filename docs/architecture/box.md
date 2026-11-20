@@ -52,10 +52,11 @@ Un fichier à la racine du dépôt, en mode 0600, ignoré par Git et par Docker 
 | `CLOUDOS_SMB_DB_PASSWORD` | mot de passe du rôle `cloudos_smb`, posé par le cœur à chaque démarrage ([smb.md](smb.md), « Rôle en base ») |
 | `CLOUDOS_DATA_DIR` | les fichiers des utilisateurs, `/srv/cloudos/files` par défaut |
 | `CLOUDOS_MAPS_DIR` | le fichier `.pmtiles` de la carte, `/srv/cloudos/maps` par défaut |
+| `RESTIC_PASSWORD`, `CLOUDOS_BACKUP_DB_PASSWORD`, `CLOUDOS_BACKUP_DIR` | la sauvegarde, ajoutés par `scripts/box backup-init` ([backup.md](backup.md)) |
 
 On peut y ajouter `CLOUDOS_CORE_PORT`. `scripts/box` ignore les variables `CLOUDOS_DB_PASSWORD`, `CLOUDOS_SMB_DB_PASSWORD`, `CLOUDOS_DATA_DIR` et `CLOUDOS_MAPS_DIR` du shell, pour qu'un réglage de développement ne passe jamais devant le fichier.
 
-`init` ne réécrit jamais un `box.env` qui existe : Postgres ne lit `POSTGRES_PASSWORD` qu'à la création du volume, et un nouveau mot de passe fermerait la porte de la base. `CLOUDOS_DATA_DIR=… CLOUDOS_MAPS_DIR=… scripts/box init` choisit d'autres dossiers (le fichier lui-même se choisit avec `CLOUDOS_BOX_ENV`, comme le fait la CI).
+`init` ne réécrit jamais un `box.env` qui existe : Postgres ne lit `POSTGRES_PASSWORD` qu'à la création du volume, et un nouveau mot de passe fermerait la porte de la base. `CLOUDOS_DATA_DIR=… CLOUDOS_MAPS_DIR=… scripts/box init` choisit d'autres dossiers (le fichier lui-même se choisit avec `CLOUDOS_BOX_ENV`, comme le fait la CI, et le projet Compose avec `CLOUDOS_BOX_PROJECT`, pour une box de test à côté de la vraie).
 
 Les dossiers sont donnés à l'uid 65532, celui du cœur (distroless `nonroot`) ; le worker, `nobody`, y lit en lecture seule. `init` utilise `sudo` seulement si elle ne peut pas créer ou changer un dossier elle-même, et sans terminal elle ne l'attend pas : elle dit alors la commande à lancer. Docker Desktop masque ce sujet sur le Mac, pas Linux.
 
@@ -63,7 +64,8 @@ Les dossiers sont donnés à l'uid 65532, celui du cœur (distroless `nonroot`) 
 
 - **`box.env` perdu.** Aucune donnée n'est perdue, mais le cœur ne peut plus se connecter. Dans le conteneur `db`, la connexion locale ne demande pas de mot de passe : `scripts/box exec db psql -U cloudos -c "ALTER ROLE cloudos PASSWORD '<nouveau>'"`, puis `CLOUDOS_DB_PASSWORD=<nouveau>` dans un nouveau `box.env` (le mot de passe de `cloudos_smb` est reposé par le cœur au démarrage).
 - **Disque de données absent.** `up` refuse un `CLOUDOS_DATA_DIR` qui n'existe pas, sans jamais le créer, pour que le cœur n'écrive pas sur la carte SD à la place d'un disque non monté. Un point de montage vide existe pourtant toujours : ce cas revient avec l'installation (#103).
-- **Mettre à jour.** `git pull`, puis `make prod` : les images se reconstruisent sur la box, les migrations passent au démarrage du cœur.
+- **Mettre à jour.** `scripts/box update` : `git pull --ff-only`, une sauvegarde, puis les images se reconstruisent sur la box et les migrations passent au démarrage du cœur. Une mise à jour commence par une sauvegarde : si elle échoue, la mise à jour s'arrête ([backup.md](backup.md)).
+- **La box ou son disque meurt.** La restauration complète depuis le disque de sauvegarde : [backup.md](backup.md), « Restaurer sur une box neuve, pas à pas ».
 
 ## Ce qui sort de la box
 
@@ -76,6 +78,7 @@ Construire les images télécharge les images de base, les paquets et les modèl
 1. `scripts/box init` dans un dossier temporaire : `box.env` en 0600, dossiers à l'uid 65532, un second `init` qui le laisse intact.
 2. `docker compose config` : aucun port pour `db`, `worker` et `smb`, un seul pour le cœur sur `127.0.0.1`, pas de service `web`, `restart` et journaux plafonnés.
 3. `up` refuse `cloudos`, `cloudos-smb` et un dossier de données absent.
-4. Les images se construisent, `up` démarre la pile, `/api/health` répond 200, `scripts/box run --rm core verify` passe, puis `down -v`.
+4. Les images se construisent, `up` démarre la pile, `/api/health` répond 200, `scripts/box run --rm core verify` passe.
+5. La sauvegarde : `backup-init` sur un dossier temporaire, `backup`, la restauration test, puis `backup-status` sans échec ; enfin `down -v`.
 
 Publier les images dans un registre se décidera dans #103.
