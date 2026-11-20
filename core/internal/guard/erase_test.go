@@ -30,6 +30,16 @@ var allowedErasers = map[string]string{
 	"storage.commitPending":       "removes its own temporary file under .cloudos/tmp once linked (WebDAV writes)",
 	"storage.dropPending":         "removes its own temporary file under .cloudos/tmp when a WebDAV write is aborted",
 	"davfs.removeAppleFile":       "erases a Finder file (.DS_Store, ._*) under .cloudos/appledouble/<owner>, never a user document",
+	"smbsrv.setEndOfFile":         "SMB's SET_INFO end of file: calls the Backend's File.Truncate, which smbfs refuses with ErrReadOnly",
+	"smbsrv.timewarp":             "time.Time.Truncate: rounds the time of a snapshot, erases nothing",
+}
+
+// notLinked are folders of the core's tree that hold code the core never
+// links: smbsrv's own backend over local folders, which erases files of its
+// own. TestOnlyAllowedFunctionsEraseFiles skips them and fails if any other
+// file imports them.
+var notLinked = map[string]string{
+	"third_party/smbsrv/localfs": "github.com/tobychui/smbsrv/localfs",
 }
 
 // erasing reports whether call can erase or truncate a file.
@@ -51,14 +61,19 @@ func erasing(call *ast.CallExpr) (string, bool) {
 	return "", false
 }
 
-// TestOnlyAllowedFunctionsEraseFiles walks every non-test Go file of the core
-// and fails on any erasing call outside allowedErasers.
+// TestOnlyAllowedFunctionsEraseFiles walks every non-test Go file of the core,
+// the SMB library it keeps in third_party included, and fails on any erasing
+// call outside allowedErasers.
 func TestOnlyAllowedFunctionsEraseFiles(t *testing.T) {
 	root := filepath.Join("..", "..")
 	found := map[string]bool{}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		if _, skip := notLinked[filepath.ToSlash(rel)]; skip && d.IsDir() {
+			return filepath.SkipDir
 		}
 		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
@@ -67,6 +82,13 @@ func TestOnlyAllowedFunctionsEraseFiles(t *testing.T) {
 		file, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
 			return err
+		}
+		for _, imp := range file.Imports {
+			for dir, pkg := range notLinked {
+				if strings.Trim(imp.Path.Value, `"`) == pkg {
+					t.Errorf("%s imports %s, which the guard does not check (%s)", path, pkg, dir)
+				}
+			}
 		}
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)

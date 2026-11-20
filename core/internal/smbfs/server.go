@@ -5,41 +5,43 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"time"
 
+	"github.com/tobychui/smbsrv"
+
+	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 )
 
-// Config describes the SMB server of the trial: one login, mapped to one
-// account, sees that account's drive, read-only.
+// Config describes the SMB server: each account signs in with its own SMB
+// password (auth.SMBHash, never the account's password) and sees its drive,
+// read-only.
 type Config struct {
-	// Addr is the listen address, ":445" in the core's container.
+	// Addr is the listen address, ":445" in the smb service's container.
 	Addr string
-	// User and Password are the trial's own credentials, read from
-	// CLOUDOS_SMB_TRIAL_USER and CLOUDOS_SMB_TRIAL_PASSWORD. They are not the
-	// account's password, which is kept as argon2id only (NTLM needs the NT hash).
-	User     string
-	Password string
-	// Owner is the account whose drive the login sees.
-	Owner  string
+	// Auth gives the NT hash of an account's SMB password and counts the
+	// attempts, per account and address.
+	Auth   *auth.Service
 	Store  *storage.Store
 	Logger *slog.Logger
+
+	// loginDelay holds back the answer to a failed login; zero is smbsrv's
+	// two seconds. Tests shorten it.
+	loginDelay time.Duration
 }
 
 // Server is a running SMB server.
-type Server interface {
-	Addr() net.Addr
-	Close() error
+type Server struct {
+	srv     *smbsrv.Server
+	backend *backend
+	logger  *slog.Logger
 }
 
-// Start listens on cfg.Addr and serves cfg.Owner's drive, read-only, with
-// smbsrv. The server stops when ctx ends or on Close.
-func Start(ctx context.Context, cfg Config) (Server, error) {
-	if cfg.User == "" || cfg.Password == "" {
-		return nil, errors.New("smbfs: the trial needs CLOUDOS_SMB_TRIAL_USER and CLOUDOS_SMB_TRIAL_PASSWORD")
-	}
-	owner, err := storage.CleanOwner(cfg.Owner)
-	if err != nil {
-		return nil, err
+// Start listens on cfg.Addr and serves every account's drive, read-only, with
+// smbsrv (core/third_party/smbsrv). The server stops when ctx ends or on Close.
+func Start(ctx context.Context, cfg Config) (*Server, error) {
+	if cfg.Auth == nil {
+		return nil, errors.New("smbfs: an auth service is required")
 	}
 	if cfg.Store == nil {
 		return nil, errors.New("smbfs: a store is required")
@@ -47,8 +49,47 @@ func Start(ctx context.Context, cfg Config) (Server, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	cfg.Logger = cfg.Logger.With("smb", "smbsrv")
-	return startSmbsrv(ctx, cfg, &View{Store: cfg.Store, Owner: owner})
+	logger := cfg.Logger.With("smb", "smbsrv")
+	b := newBackend(ctx, cfg.Auth, cfg.Store, logger)
+	srv, err := smbsrv.New(smbsrv.Config{
+		Address:    cfg.Addr,
+		ServerName: "CLOUDOS",
+		Backend:    b,
+		Logger:     logger,
+		LoginDelay: cfg.loginDelay,
+		// Change notifications and lease checks list watched folders on a
+		// timer; a read-only drive has nothing to watch for.
+		NotifyPoll: -1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := srv.Start(); err != nil {
+		return nil, err
+	}
+	s := &Server{srv: srv, backend: b, logger: logger}
+	go func() {
+		<-ctx.Done()
+		_ = srv.Close()
+	}()
+	return s, nil
+}
+
+// Addr is the address the server listens on.
+func (s *Server) Addr() net.Addr { return s.srv.Addr() }
+
+// Close stops listening and drops every connection.
+func (s *Server) Close() error { return s.srv.Close() }
+
+// DropUser closes every connection the account is signed in on, and returns
+// how many went. Its client has to sign in again, with the password it has now.
+func (s *Server) DropUser(account string) int {
+	s.backend.forget(account)
+	n := s.srv.DropUser(account)
+	if n > 0 {
+		s.logger.Info("smb sessions closed", "account", account, "connections", n)
+	}
+	return n
 }
 
 // allowed is who may connect: SMB must never face the internet, so only

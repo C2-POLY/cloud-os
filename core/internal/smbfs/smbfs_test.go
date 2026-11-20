@@ -19,13 +19,14 @@ import (
 
 	"github.com/hirochachacha/go-smb2"
 
+	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 	"github.com/C2-POLY/cloud-os/core/internal/testdb"
 )
 
 const (
-	testUser     = "alice"
-	testPassword = "trial-password-1"
+	testUser        = "alice"
+	accountPassword = "alice-account-password"
 )
 
 func TestClean(t *testing.T) {
@@ -55,10 +56,15 @@ func TestClean(t *testing.T) {
 	}
 }
 
-// fixture is a store with alice's files, and bob's beside them.
+// fixture is a box with three members: alice with her files, bob with his
+// beside them, and carol. Each has an SMB password, drawn as the Settings do.
 type fixture struct {
 	store *storage.Store
 	files map[string][]byte // alice's files, by path
+	// core is the core's auth service: what the API changes, with
+	// OnSMBRevoke telling the smb service through Postgres.
+	core      *auth.Service
+	passwords map[string]string // the SMB password of each member
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -74,8 +80,25 @@ func newFixture(t *testing.T) *fixture {
 		"docs/sub/b.txt":    []byte("deeper\n"),
 		"photos/big.bin":    big,
 		"\u00e9t\u00e9.txt": []byte("summer\n"),
-	}}
+	}, passwords: map[string]string{}}
 	ctx := context.Background()
+	fx.core = auth.NewService(pool)
+	fx.core.OnSMBRevoke = NotifyRevoke(pool, nil)
+	if _, err := fx.core.Setup(ctx, testUser, "", accountPassword); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"bob", "carol"} {
+		if _, err := fx.core.Create(ctx, name, "", name+"-account-password", auth.RoleMember); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{testUser, "bob", "carol"} {
+		pw, _, err := fx.core.NewSMBPassword(ctx, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fx.passwords[name] = pw
+	}
 	for p, b := range fx.files {
 		if _, err := s.Put(ctx, testUser, p, bytes.NewReader(b), storage.NoExpectations()); err != nil {
 			t.Fatalf("put %s: %v", p, err)
@@ -140,20 +163,23 @@ func (fx *fixture) snapshot(t *testing.T) string {
 	return strings.Join(lines, "\n")
 }
 
-func serve(t *testing.T, fx *fixture) string {
+// serve starts the smb side: its own auth service, as the smb process has,
+// with a limiter of its own.
+func serve(t *testing.T, fx *fixture) *Server {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	srv, err := Start(ctx, Config{
-		Addr: "127.0.0.1:0",
-		User: testUser, Password: testPassword, Owner: testUser,
-		Store: fx.store,
+		Addr:       "127.0.0.1:0",
+		Auth:       auth.NewService(fx.store.Pool),
+		Store:      fx.store,
+		loginDelay: time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	return srv.Addr().String()
+	return srv
 }
 
 func dial(t *testing.T, addr, user, password string) (*smb2.Session, error) {
@@ -172,11 +198,11 @@ func dial(t *testing.T, addr, user, password string) (*smb2.Session, error) {
 	return s, nil
 }
 
-func mount(t *testing.T, addr string) *smb2.Share {
+func mountAs(t *testing.T, addr, user, password string) *smb2.Share {
 	t.Helper()
-	s, err := dial(t, addr, testUser, testPassword)
+	s, err := dial(t, addr, user, password)
 	if err != nil {
-		t.Fatalf("login: %v", err)
+		t.Fatalf("login of %s: %v", user, err)
 	}
 	share, err := s.Mount(ShareName)
 	if err != nil {
@@ -186,32 +212,105 @@ func mount(t *testing.T, addr string) *smb2.Share {
 	return share
 }
 
-func TestServer(t *testing.T) {
-	fx := newFixture(t)
-	addr := serve(t, fx)
-	t.Run("login", func(t *testing.T) { testLogin(t, addr) })
-	t.Run("read", func(t *testing.T) { testRead(t, addr, fx) })
-	t.Run("paths", func(t *testing.T) { testPaths(t, addr) })
-	t.Run("writes", func(t *testing.T) { testWrites(t, addr, fx) })
+func (fx *fixture) mount(t *testing.T, addr string) *smb2.Share {
+	t.Helper()
+	return mountAs(t, addr, testUser, fx.passwords[testUser])
 }
 
-func testLogin(t *testing.T, addr string) {
+// gone waits until a request on share fails: its connection was closed.
+func gone(t *testing.T, share *smb2.Share) bool {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := share.Stat("."); err != nil {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return false
+}
+
+func TestServer(t *testing.T) {
+	fx := newFixture(t)
+	srv := serve(t, fx)
+	addr := srv.Addr().String()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go srv.WatchRevocations(ctx, fx.store.Pool, time.Hour)
+	waitListening(t, fx)
+	t.Run("login", func(t *testing.T) { testLogin(t, addr, fx) })
+	t.Run("own drive", func(t *testing.T) { testOwnDrive(t, addr, fx) })
+	t.Run("read", func(t *testing.T) { testRead(t, addr, fx) })
+	t.Run("paths", func(t *testing.T) { testPaths(t, addr, fx) })
+	t.Run("writes", func(t *testing.T) { testWrites(t, addr, fx) })
+	t.Run("disabled", func(t *testing.T) { testDisabled(t, addr, fx) })
+}
+
+func testLogin(t *testing.T, addr string, fx *fixture) {
+	pw := fx.passwords[testUser]
+	if _, err := dial(t, addr, testUser, pw); err != nil {
+		t.Fatalf("the SMB password was refused: %v", err)
+	}
+	if _, err := dial(t, addr, strings.ToUpper(testUser), pw); err != nil {
+		t.Errorf("the name in capitals was refused: %v", err)
+	}
 	if _, err := dial(t, addr, testUser, "wrong password"); err == nil {
 		t.Error("a wrong password logged in")
 	}
-	if _, err := dial(t, addr, "bob", testPassword); err == nil {
+	if _, err := dial(t, addr, testUser, accountPassword); err == nil {
+		t.Error("the account's own password logged in over SMB")
+	}
+	if _, err := dial(t, addr, "bob", pw); err == nil {
+		t.Error("alice's SMB password opened bob's account")
+	}
+	if _, err := dial(t, addr, "nobody", pw); err == nil {
 		t.Error("an unknown user logged in")
 	}
 	if _, err := dial(t, addr, "", ""); err == nil {
 		t.Error("an anonymous login was accepted")
 	}
-	if _, err := dial(t, addr, strings.ToUpper(testUser), testPassword); err != nil {
-		t.Errorf("the name in capitals was refused: %v", err)
+	var used *time.Time
+	if err := fx.store.Pool.QueryRow(context.Background(), `SELECT last_used_at FROM smb_passwords WHERE account = $1`, testUser).Scan(&used); err != nil || used == nil {
+		t.Errorf("the SMB password's last use was not noted: %v, %v", used, err)
+	}
+}
+
+// Each account sees its own drive, and only it.
+func testOwnDrive(t *testing.T, addr string, fx *fixture) {
+	bob := mountAs(t, addr, "bob", fx.passwords["bob"])
+	list, err := bob.ReadDir(".")
+	if err != nil || len(list) != 1 || list[0].Name() != "secret.txt" {
+		t.Errorf("bob's drive lists %v, %v; want secret.txt alone", list, err)
+	}
+	if _, err := bob.Stat(`docs\a.txt`); err == nil {
+		t.Error("bob sees alice's docs/a.txt")
+	}
+	alice := fx.mount(t, addr)
+	if _, err := alice.Stat("secret.txt"); err == nil {
+		t.Error("alice sees bob's secret.txt")
+	}
+	if b, err := bob.ReadFile("secret.txt"); err != nil || string(b) != "bob's\n" {
+		t.Errorf("bob reads %q, %v", b, err)
+	}
+}
+
+// A disabled account is refused, and its open sessions close.
+func testDisabled(t *testing.T, addr string, fx *fixture) {
+	carol := mountAs(t, addr, "carol", fx.passwords["carol"])
+	yes := true
+	if _, err := fx.core.Update(context.Background(), "carol", nil, &yes); err != nil {
+		t.Fatal(err)
+	}
+	if !gone(t, carol) {
+		t.Error("the session of a disabled account is still open")
+	}
+	if _, err := dial(t, addr, "carol", fx.passwords["carol"]); err == nil {
+		t.Error("a disabled account logged in")
 	}
 }
 
 func testRead(t *testing.T, addr string, fx *fixture) {
-	share := mount(t, addr)
+	share := fx.mount(t, addr)
 	root, err := share.ReadDir(".")
 	if err != nil {
 		t.Fatalf("list the root: %v", err)
@@ -252,14 +351,14 @@ func testRead(t *testing.T, addr string, fx *fixture) {
 	}
 }
 
-func testPaths(t *testing.T, addr string) {
-	share := mount(t, addr)
+func testPaths(t *testing.T, addr string, fx *fixture) {
+	share := fx.mount(t, addr)
 	for _, p := range []string{
 		`..\bob\secret.txt`, `docs\..\..\bob\secret.txt`, `..\..\..\etc\passwd`,
 		`/etc/passwd`, `docs\a.txt:Zone.Identifier`, `docs\a.txt::$DATA:x`, `C:\Windows\win.ini`,
 		`missing.txt`,
-		// U+F029 is the Mac's private-range period: smbsrv turns it into "."
-		// after its own ".." check, so only Clean stands in the way.
+		// U+F029 is the Mac's private-range period: smbsrv refuses it as
+		// "." or ".." (PATCHES.md, 1), and Clean would too.
 		"\\bob\\secret.txt", "docs\\\\\\bob\\secret.txt",
 	} {
 		if f, err := share.Open(p); err == nil {
@@ -274,7 +373,7 @@ func testPaths(t *testing.T, addr string) {
 }
 
 func testWrites(t *testing.T, addr string, fx *fixture) {
-	share := mount(t, addr)
+	share := fx.mount(t, addr)
 	before := fx.snapshot(t)
 	refused := func(what string, fn func() error) {
 		t.Helper()
@@ -338,5 +437,145 @@ func testWrites(t *testing.T, addr string, fx *fixture) {
 	b, err := share.ReadFile(`docs\a.txt`)
 	if err != nil || !bytes.Equal(b, fx.files["docs/a.txt"]) {
 		t.Errorf("docs/a.txt reads %q, %v after the writes", b, err)
+	}
+}
+
+// After 5 failures of an account from one address, even its SMB password is
+// refused for a minute; a success before that clears the count.
+func TestLoginAttemptsAreLimited(t *testing.T) {
+	fx := newFixture(t)
+	addr := serve(t, fx).Addr().String()
+	pw := fx.passwords[testUser]
+	for range 4 {
+		if _, err := dial(t, addr, testUser, "wrong"); err == nil {
+			t.Fatal("a wrong password logged in")
+		}
+	}
+	if _, err := dial(t, addr, testUser, pw); err != nil {
+		t.Fatalf("the SMB password after 4 failures: %v", err)
+	}
+	for range 5 {
+		if _, err := dial(t, addr, testUser, "wrong"); err == nil {
+			t.Fatal("a wrong password logged in")
+		}
+	}
+	if _, err := dial(t, addr, testUser, pw); err == nil {
+		t.Error("the SMB password logged in after 5 failures in a row")
+	}
+	// Another account at the same address is not held back.
+	if _, err := dial(t, addr, "bob", fx.passwords["bob"]); err != nil {
+		t.Errorf("bob was held back by alice's failures: %v", err)
+	}
+}
+
+// The core revokes or replaces an SMB password: Postgres tells the smb
+// service, which closes the sessions it opened.
+func TestRevokeByNotify(t *testing.T) {
+	fx := newFixture(t)
+	srv := serve(t, fx)
+	addr := srv.Addr().String()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go srv.WatchRevocations(ctx, fx.store.Pool, time.Hour)
+	waitListening(t, fx)
+
+	old := fx.passwords[testUser]
+	share := fx.mount(t, addr)
+	bob := mountAs(t, addr, "bob", fx.passwords["bob"])
+	if err := fx.core.RevokeSMBPassword(context.Background(), testUser); err != nil {
+		t.Fatal(err)
+	}
+	if !gone(t, share) {
+		t.Fatal("a request on the open session still works after the revocation")
+	}
+	if _, err := dial(t, addr, testUser, old); err == nil {
+		t.Error("the revoked password logged in again")
+	}
+	if _, err := bob.Stat("secret.txt"); err != nil {
+		t.Errorf("bob's session closed with alice's: %v", err)
+	}
+
+	// A new password closes the sessions of the one before.
+	first, _, err := fx.core.NewSMBPassword(context.Background(), testUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	share = mountAs(t, addr, testUser, first)
+	if _, _, err := fx.core.NewSMBPassword(context.Background(), testUser); err != nil {
+		t.Fatal(err)
+	}
+	if !gone(t, share) {
+		t.Error("a session of the replaced password is still open")
+	}
+	if _, err := dial(t, addr, testUser, first); err == nil {
+		t.Error("the replaced password logged in")
+	}
+}
+
+// waitListening waits until the smb side listens on RevokeChannel.
+func waitListening(t *testing.T, fx *fixture) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var n int
+		if err := fx.store.Pool.QueryRow(context.Background(),
+			`SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND query = $1`,
+			"LISTEN "+RevokeChannel).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n > 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("the smb side is not listening")
+}
+
+// A notification lost (the smb service was not listening): the sweep closes
+// the sessions anyway, every minute and as it starts listening again.
+func TestRevokeBySweep(t *testing.T) {
+	fx := newFixture(t)
+	srv := serve(t, fx)
+	addr := srv.Addr().String()
+	ctx := context.Background()
+	// The core's changes reach no one.
+	quiet := auth.NewService(fx.store.Pool)
+
+	alice := fx.mount(t, addr)
+	bob := mountAs(t, addr, "bob", fx.passwords["bob"])
+	carol := mountAs(t, addr, "carol", fx.passwords["carol"])
+	if n, err := srv.Sweep(ctx, fx.store.Pool); err != nil || n != 0 {
+		t.Fatalf("a sweep with nothing revoked closed %d connections, %v", n, err)
+	}
+
+	if err := quiet.RevokeSMBPassword(ctx, testUser); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := quiet.NewSMBPassword(ctx, "bob"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := alice.Stat("docs"); err != nil {
+		t.Fatalf("the session closed without a notification: %v", err)
+	}
+	if n, err := srv.Sweep(ctx, fx.store.Pool); err != nil || n != 2 {
+		t.Errorf("the sweep closed %d connections, %v; want alice's and bob's", n, err)
+	}
+	if !gone(t, alice) || !gone(t, bob) {
+		t.Error("a session of a revoked or replaced password is still open")
+	}
+	if _, err := carol.Stat("."); err != nil {
+		t.Errorf("carol's session closed: %v", err)
+	}
+
+	// Disabled while nobody listened: the sweep of the first LISTEN closes it.
+	yes := true
+	if _, err := quiet.Update(ctx, "carol", nil, &yes); err != nil {
+		t.Fatal(err)
+	}
+	watch, cancel := context.WithCancel(ctx)
+	t.Cleanup(cancel)
+	go srv.WatchRevocations(watch, fx.store.Pool, time.Hour)
+	if !gone(t, carol) {
+		t.Error("the session of an account disabled while nobody listened is still open")
 	}
 }

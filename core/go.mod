@@ -23,3 +23,5 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
 )
+
+replace github.com/tobychui/smbsrv => ./third_party/smbsrv
