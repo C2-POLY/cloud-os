@@ -29,8 +29,14 @@ var allowedErasers = map[string]string{
 	"storage.removeVersionsDir":   "the trash purge of a file: erases its versions, strictly at .cloudos/versions/<owner>/<file>",
 	"storage.commitPending":       "removes its own temporary file under .cloudos/tmp once linked (WebDAV writes)",
 	"storage.dropPending":         "removes its own temporary file under .cloudos/tmp when a WebDAV write is aborted",
+	"storage.Truncate":            "Staged.Truncate: cuts an SMB working file under .cloudos/tmp/smb, never the stored file it started from",
+	"storage.commitStage":         "removes its own SMB working file under .cloudos/tmp/smb once linked, or when storing it failed",
+	"storage.dropWork":            "removes its own SMB working file under .cloudos/tmp/smb when an SMB write is aborted",
+	"storage.CleanStaged":         "empties .cloudos/tmp/smb when the smb service starts, before it serves",
 	"davfs.removeAppleFile":       "erases a Finder file (.DS_Store, ._*) under .cloudos/appledouble/<owner>, never a user document",
-	"smbsrv.setEndOfFile":         "SMB's SET_INFO end of file: calls the Backend's File.Truncate, which smbfs refuses with ErrReadOnly",
+	"smbfs.Truncate":              "a handle's SET_INFO end of file: Staged.Truncate on the SMB working file, or a Finder file under .cloudos/appledouble",
+	"smbfs.emptyStaged":           "an open that truncates a file being written over SMB: Staged.Truncate on its working file",
+	"smbsrv.setEndOfFile":         "SMB's SET_INFO end of file: calls the Backend's File.Truncate, which smbfs applies to a working file or a Finder file only",
 	"smbsrv.timewarp":             "time.Time.Truncate: rounds the time of a snapshot, erases nothing",
 }
 

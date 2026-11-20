@@ -30,7 +30,7 @@ func (l renamingListener) Accept() (net.Conn, error) {
 	return renamedConn{Conn: c, remote: l.remote}, nil
 }
 
-// PATCHES.md, 7: the server serves a listener it is given, and the address
+// PATCHES.md, 8: the server serves a listener it is given, and the address
 // its connections name is the one the Backend and the limits see. Upstream
 // had no Listener and always listened on Address itself.
 func TestPatchServesTheGivenListener(t *testing.T) {

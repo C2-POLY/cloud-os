@@ -100,7 +100,7 @@ func (s *Server) detach(o *open) {
 			return
 		}
 		s.log("Nobody came back for "+o.getPath()+", the durable handle was closed", nil)
-		s.closeOpen(o)
+		s.closeOpen(o, false)
 	})
 	s.durables.mu.Unlock()
 }
@@ -143,7 +143,7 @@ func (s *Server) closeDetached() {
 	}
 	s.durables.mu.Unlock()
 	for _, o := range list {
-		s.closeOpen(o)
+		s.closeOpen(o, false)
 	}
 }
 
@@ -171,7 +171,7 @@ func (s *Server) purgeDurable(o *open) {
 		//coming back meanwhile is refused instead of handed a closing file
 		s.forgetDurable(o)
 	}
-	s.spawn("purge durable", func() { s.closeOpen(o) })
+	s.spawn("purge durable", func() { s.closeOpen(o, false) })
 }
 
 // reconnectDurable is a CREATE with DH2C: a client taking back a durable

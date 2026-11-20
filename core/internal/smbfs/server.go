@@ -16,7 +16,7 @@ import (
 
 // Config describes the SMB server: each account signs in with its own SMB
 // password (auth.SMBHash, never the account's password) and sees its drive,
-// read-only.
+// which it writes through storage.
 type Config struct {
 	// Addr is the listen address, ":445" in the smb service's container.
 	Addr string
@@ -34,6 +34,9 @@ type Config struct {
 	// loginDelay holds back the answer to a failed login; zero is smbsrv's
 	// two seconds. Tests shorten it.
 	loginDelay time.Duration
+	// freeSpace is the disk's free space; nil is the disk of Store.Root.
+	// Tests fill the disk with it.
+	freeSpace func() uint64
 }
 
 // Server is a running SMB server.
@@ -43,8 +46,8 @@ type Server struct {
 	logger  *slog.Logger
 }
 
-// Start listens on cfg.Addr and serves every account's drive, read-only, with
-// smbsrv (core/third_party/smbsrv). The server stops when ctx ends or on Close.
+// Start listens on cfg.Addr and serves every account's drive with smbsrv
+// (core/third_party/smbsrv). The server stops when ctx ends or on Close.
 func Start(ctx context.Context, cfg Config) (*Server, error) {
 	if cfg.Auth == nil {
 		return nil, errors.New("smbfs: an auth service is required")
@@ -56,7 +59,7 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		cfg.Logger = slog.Default()
 	}
 	logger := cfg.Logger.With("smb", "smbsrv")
-	b := newBackend(ctx, cfg.Auth, cfg.Store, logger)
+	b := newBackend(ctx, cfg.Auth, cfg.Store, logger, cfg.freeSpace)
 	var listener net.Listener
 	if cfg.Proxies != nil {
 		l, err := net.Listen("tcp", cfg.Addr)
@@ -72,8 +75,9 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		Backend:    b,
 		Logger:     logger,
 		LoginDelay: cfg.loginDelay,
-		// Change notifications and lease checks list watched folders on a
-		// timer; a read-only drive has nothing to watch for.
+		// Change notifications and lease checks would list watched folders
+		// on a timer. The share is not a PollableShare: smbsrv reports the
+		// changes made over SMB itself, and grants no lease.
 		NotifyPoll: -1,
 	})
 	if err != nil {

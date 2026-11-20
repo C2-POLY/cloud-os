@@ -608,7 +608,7 @@ func (s *session) closeAllTrees(c *conn, keepDurable bool) {
 			c.srv.detach(o)
 			continue
 		}
-		c.closeOpen(o)
+		c.closeOpen(o, false)
 	}
 }
 
@@ -623,7 +623,7 @@ func (s *session) closeOpensOf(c *conn, t *tree) {
 	}
 	s.mu.Unlock()
 	for _, o := range list {
-		c.closeOpen(o)
+		c.closeOpen(o, false)
 	}
 }
 

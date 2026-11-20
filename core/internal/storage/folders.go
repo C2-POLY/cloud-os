@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Mkdir creates the folder owner/p and its missing parents, on disk and in the index.
@@ -224,97 +225,111 @@ func applyMove(ctx context.Context, db beginner, moveID int64, owner, from, to s
 	return tx.Commit(ctx)
 }
 
-// RecoverMoves settles the moves, trashes and restores left by a crash. Call
-// it at startup, before serving. One whose target is on disk and source is
-// gone is finished; one whose source is still there and target is not is
-// dropped; anything else is left in the journal and logged, never guessed.
+// RecoverMoves settles the moves, trashes, restores and replaces left by a
+// crash. The core calls it at startup, before serving. One whose target is on
+// disk and source is gone is finished; one whose source is still there and
+// target is not is dropped; anything else is left in the journal and logged,
+// never guessed.
+//
+// The smb service is a process of its own, which may be writing while the
+// core starts: each entry is settled under its owner's lock, and only if it is
+// still there once the lock is held. An operation in progress holds that lock
+// until it has cleared its own entry.
 func (s *Store) RecoverMoves(ctx context.Context) (finished, dropped int, err error) {
-	rows, err := s.Pool.Query(ctx, `SELECT id, owner, from_path, to_path, op, trash_id, version_id FROM moves ORDER BY id`)
+	rows, err := s.Pool.Query(ctx, `SELECT id, owner FROM moves ORDER BY id`)
 	if err != nil {
 		return 0, 0, err
 	}
-	type move struct {
-		id              int64
-		owner, from, to string
-		op              string
-		trashID         *int64
-		versionID       *int64
+	type pending struct {
+		id    int64
+		owner string
 	}
-	var moves []move
-	for rows.Next() {
-		var m move
-		if err := rows.Scan(&m.id, &m.owner, &m.from, &m.to, &m.op, &m.trashID, &m.versionID); err != nil {
-			rows.Close()
-			return 0, 0, err
-		}
-		moves = append(moves, m)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	list, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (pending, error) {
+		var p pending
+		return p, r.Scan(&p.id, &p.owner)
+	})
+	if err != nil {
 		return 0, 0, err
 	}
-
-	for _, m := range moves {
-		if m.op == "version" && m.versionID != nil {
-			fin, drop, err := s.recoverVersion(ctx, m.id, m.owner, m.from, *m.versionID)
-			if err != nil {
-				return finished, dropped, err
-			}
+	for _, p := range list {
+		err := s.withOwnerLock(ctx, p.owner, func(conn *pgxpool.Conn) error {
+			fin, drop, err := s.recoverMove(ctx, conn, p.id)
 			if fin {
 				finished++
 			}
 			if drop {
 				dropped++
 			}
-			continue
-		}
-		src, dst := s.diskPath(m.owner, m.from), s.diskPath(m.owner, m.to)
-		var trashID int64
-		if m.trashID != nil {
-			trashID = *m.trashID
-		}
-		switch m.op {
-		case "trash":
-			dst = s.trashDisk(m.owner, trashID, m.from)
-		case "restore":
-			src = s.trashDisk(m.owner, trashID, m.from)
-		}
-		_, srcErr := os.Lstat(src)
-		_, dstErr := os.Lstat(dst)
-		srcThere, dstThere := srcErr == nil, dstErr == nil
-		switch {
-		case !srcThere && dstThere:
-			var err error
-			switch m.op {
-			case "trash":
-				err = applyTrash(ctx, s.Pool, m.id, m.owner, m.from, trashID)
-			case "restore":
-				removeEmptyTrashDir(s.trashDir(m.owner, trashID))
-				err = applyRestore(ctx, s.Pool, m.id, m.owner, m.from, m.to, trashID)
-			default:
-				err = applyMove(ctx, s.Pool, m.id, m.owner, m.from, m.to)
-			}
-			if err != nil {
-				return finished, dropped, err
-			}
-			finished++
-		case srcThere && !dstThere:
-			if _, err := s.Pool.Exec(ctx, `DELETE FROM moves WHERE id = $1`, m.id); err != nil {
-				return finished, dropped, err
-			}
-			if m.op == "trash" {
-				// The item never reached the trash: its trash row goes too.
-				if _, err := s.Pool.Exec(ctx, `DELETE FROM trash WHERE id = $1`, trashID); err != nil {
-					return finished, dropped, err
-				}
-			}
-			dropped++
-		default:
-			slog.Error("operation left in the journal: check the disk by hand", "op", m.op,
-				"owner", m.owner, "from", m.from, "to", m.to, "source_on_disk", srcThere, "target_on_disk", dstThere)
+			return err
+		})
+		if err != nil {
+			return finished, dropped, err
 		}
 	}
 	return finished, dropped, nil
+}
+
+// recoverMove settles journal entry id, if it is still there. conn holds its
+// owner's lock: every query goes through it, never through another
+// connection of the pool, which would wait for that same lock.
+func (s *Store) recoverMove(ctx context.Context, conn *pgxpool.Conn, id int64) (finished, dropped bool, err error) {
+	var (
+		owner, from, to, op string
+		trashID, versionID  *int64
+	)
+	err = conn.QueryRow(ctx, `SELECT owner, from_path, to_path, op, trash_id, version_id FROM moves WHERE id = $1`, id).
+		Scan(&owner, &from, &to, &op, &trashID, &versionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, false, nil // settled by its own operation meanwhile
+	}
+	if err != nil {
+		return false, false, err
+	}
+	switch {
+	case op == "version" && versionID != nil:
+		return s.recoverVersion(ctx, conn, id, owner, from, *versionID)
+	case op == "replace" && versionID != nil:
+		return s.recoverReplace(ctx, conn, id, owner, from, to, *versionID)
+	}
+	src, dst := s.diskPath(owner, from), s.diskPath(owner, to)
+	var tid int64
+	if trashID != nil {
+		tid = *trashID
+	}
+	switch op {
+	case "trash":
+		dst = s.trashDisk(owner, tid, from)
+	case "restore":
+		src = s.trashDisk(owner, tid, from)
+	}
+	srcThere, dstThere := exists(src), exists(dst)
+	switch {
+	case !srcThere && dstThere:
+		switch op {
+		case "trash":
+			err = applyTrash(ctx, conn, id, owner, from, tid)
+		case "restore":
+			removeEmptyTrashDir(s.trashDir(owner, tid))
+			err = applyRestore(ctx, conn, id, owner, from, to, tid)
+		default:
+			err = applyMove(ctx, conn, id, owner, from, to)
+		}
+		return err == nil, false, err
+	case srcThere && !dstThere:
+		if _, err := conn.Exec(ctx, `DELETE FROM moves WHERE id = $1`, id); err != nil {
+			return false, false, err
+		}
+		if op == "trash" {
+			// The item never reached the trash: its trash row goes too.
+			if _, err := conn.Exec(ctx, `DELETE FROM trash WHERE id = $1`, tid); err != nil {
+				return false, false, err
+			}
+		}
+		return false, true, nil
+	}
+	slog.Error("operation left in the journal: check the disk by hand", "op", op,
+		"owner", owner, "from", from, "to", to, "source_on_disk", srcThere, "target_on_disk", dstThere)
+	return false, false, nil
 }
 
 // Tree returns every live file (not folder) under folder dir, at any depth,

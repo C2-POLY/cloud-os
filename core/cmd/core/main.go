@@ -312,11 +312,13 @@ func serve(ctx context.Context, c core) error {
 }
 
 // serveSMB is the smb service (`core smb`): every account's drive over SMB,
-// read-only, signed in with the account's SMB password, until ctx ends. It
-// runs in a process of its own, so a fault in SMB cannot take the core down.
-// It applies no migration and does none of the core's start-up cleaning
-// (temporary files, moves): that is the core's, which may be writing meanwhile.
-// It connects as the database role smbfs.DBRole, and refuses a wider one.
+// signed in with the account's SMB password, written through storage, until
+// ctx ends. It runs in a process of its own, so a fault in SMB cannot take
+// the core down. It applies no migration and does none of the core's
+// start-up cleaning (temporary files, moves): that is the core's, which may
+// be writing meanwhile. It empties only its own staging folder,
+// .cloudos/tmp/smb, which nothing else writes. It connects as the database
+// role smbfs.DBRole, and refuses a wider one.
 func serveSMB(ctx context.Context) error {
 	if os.Getenv("CLOUDOS_SMB") != "1" {
 		return errors.New("SMB is off: set CLOUDOS_SMB=1 to serve it")
@@ -325,7 +327,7 @@ func serveSMB(ctx context.Context) error {
 	if url == "" {
 		return errors.New("DATABASE_URL is not set")
 	}
-	pool, err := db.Open(ctx, url)
+	pool, err := db.Open(ctx, smbPoolURL(url))
 	if err != nil {
 		return err
 	}
@@ -344,7 +346,19 @@ func serveSMB(ctx context.Context) error {
 		return errors.New("the database is not migrated yet: the core applies the migrations, start it first")
 	}
 
-	files := &storage.Store{Root: envOr("CLOUDOS_DATA_DIR", "/data"), Pool: pool}
+	files := &storage.Store{
+		Root: envOr("CLOUDOS_DATA_DIR", "/data"), Pool: pool, TrashTTL: trashTTL(),
+		VersionsKeep: envInt("CLOUDOS_VERSIONS_KEEP"), VersionsMaxAge: time.Duration(envInt("CLOUDOS_VERSIONS_DAYS")) * 24 * time.Hour,
+	}
+	// What a file stored over SMB queues and journals, as the core does
+	files.AfterStore = queueBackgroundWork(&tasks.Queue{Pool: pool}, tasks.PriorityNew)
+	files.Notify = (&activity.Log{Pool: pool}).Record
+	// SMB writes cut off by the last stop: never stored, nothing to keep
+	if n, err := files.CleanStaged(); err != nil {
+		return fmt.Errorf("clean the SMB staging folder: %w", err)
+	} else if n > 0 {
+		slog.Warn("removed SMB writes left unfinished by the last stop", "count", n)
+	}
 	addr := envOr("CLOUDOS_SMB_ADDR", ":445")
 	// The tailscale service relays the tailnet's SMB with a PROXY header
 	// naming each device, so the attempt limits count per device.
@@ -361,7 +375,7 @@ func serveSMB(ctx context.Context) error {
 	}
 	defer srv.Close()
 	go srv.WatchRevocations(ctx, pool, smbfs.SweepEvery)
-	slog.Info("SMB serving the drives read-only", "addr", srv.Addr().String(), "share", smbfs.ShareName, "version", version)
+	slog.Info("SMB serving the drives", "addr", srv.Addr().String(), "share", smbfs.ShareName, "version", version)
 	<-ctx.Done()
 	return nil
 }
@@ -408,6 +422,23 @@ func originOf(name, v string, httpsOnly bool) (string, error) {
 		return "", fmt.Errorf("%s=%q: want %s, nothing after", name, v, want)
 	}
 	return u.Scheme + "://" + u.Host, nil
+}
+
+// smbPoolMaxConns keeps the smb service's pool, with its LISTEN connection,
+// under its role's limit of 8 connections (migration 0026), whatever the
+// number of processors pgxpool would size it by.
+const smbPoolMaxConns = 6
+
+// smbPoolURL caps the pool size of url, unless it sets one already.
+func smbPoolURL(url string) string {
+	if strings.Contains(url, "pool_max_conns=") {
+		return url
+	}
+	sep := "?"
+	if strings.Contains(url, "?") {
+		sep = "&"
+	}
+	return url + sep + "pool_max_conns=" + strconv.Itoa(smbPoolMaxConns)
 }
 
 // checkHealth asks the core listening on addr for /api/health: the

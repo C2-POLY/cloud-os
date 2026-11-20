@@ -94,7 +94,18 @@ Each test below fails on the upstream code. The failure seen at `7a70fc2e0cbb` i
   - `TestPatchLookupHashGetsTheAddress`.
   - `TestPatchShortHashLogsNobodyIn`: upstream let a client in with a 3-byte or a 17-byte hash.
 
-## 7. The server can serve a listener it is given
+## 7. Only a client's CLOSE stores a staged file
+
+- **Files:** `backend.go` (`Aborter`, new), `create.go` (`closeOpen`, `releaseOpen`), and the callers of `closeOpen` in `conn.go`, `session.go`, `durable.go`.
+- **Why:** Cloud OS stages what a client writes and stores it when the file closes (`internal/smbfs/write.go`). Upstream ends every open with `File.Close`, whatever ends it. A Finder copy whose connection drops, a logoff or tree disconnect with the file still open, a durable handle nobody came back for, or the server stopping, all closed the file the same way as the client's own CLOSE: half a copy was stored, over the original. A file marked for deletion was stored first, then deleted.
+- **Change:**
+  - A `File` may implement `Aborter` (`Abort() error`).
+  - `closeOpen` takes whether the client sent the CLOSE. Only `handleClose` says yes.
+  - For an `Aborter`, `Close` runs only for that CLOSE, and only if the file is not waiting to be deleted. Every other end calls `Abort`: a cut connection, a logoff or tree disconnect, an expired, purged or server-closed durable handle, a CREATE that failed after opening the file (`releaseOpen`) or that the client never heard of (`dropUnseenOpen`), and a close while a delete is pending.
+  - A `File` that is not an `Aborter` is closed as upstream did.
+- **Test:** `TestPatchOnlyACloseStores` (`patch_abort_test.go`): a CLOSE calls `Close`; a cut connection, a server that stops and a CLOSE after a delete disposition call `Abort`. Upstream never called `Abort`: the cut connection and the stopping server stored their half-written files.
+
+## 8. The server can serve a listener it is given
 
 - **Files:** `server.go` (`Config.Listener`, `Start`).
 - **Why:** behind the box's tailscale service, every SMB connection comes from the proxy. The proxy names the real client in a PROXY protocol header, which a wrapping listener reads (`core/internal/edge`, `ProxyListener`). Upstream always listened on `Address` itself, so its limits per address and `LookupHash` only ever saw the proxy.
