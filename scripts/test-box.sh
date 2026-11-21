@@ -7,7 +7,7 @@ set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
-trap 'chmod -R u+w "$work" 2>/dev/null; rm -rf "$work"' EXIT
+trap 'chmod -R u+rwx "$work" 2>/dev/null; rm -rf "$work"' EXIT
 mkdir -p "$work/bin" "$work/files" "$work/maps"
 log=$work/calls.log
 
@@ -116,6 +116,15 @@ out=$("$box" backup-init 2>&1) || fail "a second backup-init failed: $out"
 case $out in *"$key"*) fail "a second backup-init showed the key again" ;; esac
 cmp -s "$CLOUDOS_BOX_ENV" "$work/box.env.after" || fail "a second backup-init changed box.env"
 pass "a second backup-init changes nothing"
+
+# On Linux the repository is the backup user's, mode 0700: unreadable from
+# here and with no sudo, backup-init still takes it for the box's backup.
+chmod 000 "$disk/restic"
+out=$("$box" backup-init 2>&1) || fail "backup-init over an unreadable repository failed: $out"
+case $out in *"already holds this box's backup"*) ;; *) fail "backup-init over an unreadable repository said: $out" ;; esac
+cmp -s "$CLOUDOS_BOX_ENV" "$work/box.env.after" || fail "backup-init over an unreadable repository changed box.env"
+chmod 700 "$disk/restic"
+pass "backup-init leaves a repository it cannot read alone"
 
 # up turns the backup service on, and refuses a development key.
 : >"$log"

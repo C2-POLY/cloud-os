@@ -147,7 +147,8 @@ jobs:
           mkdir -p "$usb"
           # backup-init shows the key once: kept out of the job's log.
           scripts/box backup-init "$usb" > "$RUNNER_TEMP/backup-init.log"
-          [ -f "$usb/restic/config" ]
+          # The repository is the backup user's (uid 65532), mode 0700.
+          sudo test -f "$usb/restic/config"
           scripts/box backup
           scripts/box run --rm backup backup restore-test
           scripts/box backup-status | tee "$RUNNER_TEMP/status.txt"

@@ -153,6 +153,7 @@ scripts/box backup-remote-init                      # le dépôt distant, si CLO
   - **La fin :** il lance `up`. Le profil `backup` est alors actif à chaque `up`, et `up` refuse une clé vide ou de développement.
 
   Relancé sur le même dossier, il ne fait rien et ne montre rien.
+- **Le dépôt vu de l'hôte.** restic ne laisse entrer dans le dépôt que son propriétaire, l'uid 65532. Sur Linux, `scripts/box` y regarde donc avec `sudo` quand il le faut (`backup-init`, `restore`). S'il ne le peut pas, un dossier `restic` compte comme un dépôt : `backup-init` n'écrit rien par-dessus, et `restore` laisse restic trancher.
 - **`update`.** Une mise à jour commence par une sauvegarde : `git pull --ff-only`, puis `backup` avec les images en place, puis `up --build`. Si la sauvegarde échoue, la mise à jour s'arrête et la box tourne comme avant. Sans sauvegarde configurée, `update` refuse.
 - **`backup-remote-init`.** Le dépôt distant se crée avec `restic init --from-repo --copy-chunker-params` : il déduplique comme le dépôt local, et il a la même clé.
 
