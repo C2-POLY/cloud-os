@@ -1,0 +1,24 @@
+{
+  "TCP": {
+    "443": { "HTTPS": true },
+    "445": { "TCPForward": "smb:445", "ProxyProtocol": 1 },
+    "8443": { "HTTPS": true }
+  },
+  "Web": {
+    "${TS_CERT_DOMAIN}:443": {
+      "Handlers": {
+        "/": { "Proxy": "http://core:8080" }
+      }
+    },
+    "${TS_CERT_DOMAIN}:8443": {
+      "Handlers": {
+        "/s/": { "Proxy": "http://core:8080/s" },
+        "/api/s/": { "Proxy": "http://core:8080/api/s" },
+        "/assets/": { "Proxy": "http://core:8080/assets" }
+      }
+    }
+  },
+  "AllowFunnel": {
+    "${TS_CERT_DOMAIN}:8443": true
+  }
+}

@@ -3,6 +3,8 @@
 #
 #   scripts/box init                  draw the secrets into box.env (once) and create the data folders
 #   scripts/box up                    check box.env, then build and start the stack
+#   scripts/box tailscale             once the box is in the tailnet, write its https address
+#                                     (and the share links' with Funnel) into box.env, then apply them
 #   scripts/box backup-init DIR       create the encrypted backup on the disk at DIR, show its key once
 #   scripts/box backup                back the box up now
 #   scripts/box backup-status         the last backups, checks and restore tests
@@ -18,11 +20,17 @@
 # the production stack never mixes with the development stack of a worktree.
 # CLOUDOS_BOX_ENV names another env file (the CI uses a temporary one), and
 # CLOUDOS_BOX_PROJECT another project (a test box beside the real one).
-# The backup is docs/architecture/backup.md.
+#
+# Settings, in box.env or the shell: CLOUDOS_SMB=1 starts the smb service,
+# CLOUDOS_TAILSCALE=1 the tailscale service (with TS_AUTHKEY in box.env for its
+# first sign-in), CLOUDOS_FUNNEL=1 opens the share links to the internet
+# (docs/access.md). The backup service runs once backup-init has run
+# (docs/architecture/backup.md).
 
 set -eu
 
 PROJECT=${CLOUDOS_BOX_PROJECT:-cloud-os-box}
+only_profiles=
 CORE_UID=65532
 DEV_PASSWORDS="cloudos cloudos-smb cloudos-backup cloudos-backup-dev"
 
@@ -35,6 +43,23 @@ note() { printf 'scripts/box: %s\n' "$*"; }
 # The value of KEY in the env file (the last one wins), empty when absent.
 env_value() {
 	sed -n "s/^$1=//p" "$env_file" | tail -n 1
+}
+
+# A setting: the shell's value wins over box.env's.
+setting() {
+	eval "v=\${$1:-}"
+	[ -n "$v" ] || v=$(env_value "$1")
+	printf '%s' "$v"
+}
+
+# Set KEY=VALUE in the env file, keeping its mode 0600 and its other lines.
+set_env() {
+	tmp="$env_file.tmp.$$"
+	(
+		umask 077
+		sed "/^$1=/d" "$env_file" >"$tmp" && printf '%s=%s\n' "$1" "$2" >>"$tmp"
+	) || { rm -f "$tmp"; die "cannot write $env_file"; }
+	mv "$tmp" "$env_file" || { rm -f "$tmp"; die "cannot write $env_file"; }
 }
 
 # Add KEY=VALUE to the env file when KEY is not there yet. Nothing already in
@@ -131,9 +156,17 @@ check_env() {
 	[ -d "$data" ] || die "CLOUDOS_DATA_DIR $data does not exist (is the disk mounted?); not creating it"
 	# Once backup-init has run, the backup's key and role password are required.
 	# Its disk may be absent: the backup service then records failed runs.
-	if [ -n "$(env_value CLOUDOS_BACKUP_DIR)" ]; then
+	if backup_on; then
 		check_secret RESTIC_PASSWORD
 		check_secret CLOUDOS_BACKUP_DB_PASSWORD
+	fi
+	if [ "$(setting CLOUDOS_FUNNEL)" = 1 ] && [ "$(setting CLOUDOS_TAILSCALE)" != 1 ]; then
+		die "CLOUDOS_FUNNEL=1 needs CLOUDOS_TAILSCALE=1"
+	fi
+	# The first sign-in needs a key; after it, the node's identity is in its volume.
+	if [ "$(setting CLOUDOS_TAILSCALE)" = 1 ] && [ -z "$(env_value TS_AUTHKEY)" ] &&
+		! docker volume inspect "${PROJECT}_tailscale-state" >/dev/null 2>&1; then
+		die "TS_AUTHKEY is empty in $env_file: create an auth key in Tailscale's admin console (docs/access.md)"
 	fi
 }
 
@@ -141,42 +174,92 @@ backup_on() {
 	[ -n "$(env_value CLOUDOS_BACKUP_DIR)" ]
 }
 
-# The Compose profiles to turn on: smb with CLOUDOS_SMB=1, backup once
-# backup-init has run.
+# The Compose profiles of the services that are on: backup once backup-init
+# has run.
 profiles() {
 	p=
-	[ "${CLOUDOS_SMB:-}" != 1 ] || p=smb
+	[ "$(setting CLOUDOS_SMB)" != 1 ] || p=smb
+	[ "$(setting CLOUDOS_TAILSCALE)" != 1 ] || p=${p:+$p,}tailscale
 	! backup_on || p=${p:+$p,}backup
 	printf '%s' "$p"
 }
 
-# docker compose on the box's project, in a subshell: the env file is the
-# only source of the box's secrets and folders, so a development variable of
-# the shell must not win over it.
-dc() (
+# docker compose on the box's project, files and env file.
+dc() {
+	[ -f "$env_file" ] || die "$env_file is missing, run: scripts/box init"
+	# The services that are on, unless the caller names them (only_profiles).
+	COMPOSE_PROFILES=${only_profiles:-$(profiles)}
+	serve=serve.json
+	[ "$(setting CLOUDOS_FUNNEL)" != 1 ] || serve=serve-funnel.json
+	# The env file is the only source of the box's secrets, folders and
+	# addresses: a development variable of the shell must not win over it.
 	unset CLOUDOS_DB_PASSWORD CLOUDOS_SMB_DB_PASSWORD CLOUDOS_DATA_DIR CLOUDOS_MAPS_DIR COMPOSE_FILE COMPOSE_PROJECT_NAME \
+		TS_AUTHKEY TS_HOSTNAME CLOUDOS_PUBLIC_URL CLOUDOS_SHARE_ORIGIN CLOUDOS_TRUSTED_PROXIES \
 		RESTIC_PASSWORD CLOUDOS_BACKUP_DB_PASSWORD CLOUDOS_BACKUP_DIR CLOUDOS_BACKUP_REMOTE \
 		AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION PGPASSWORD
+	# The core and smb believe the tailscale service's headers, and look its
+	# name up, only when it runs: an unknown name would go to the home DNS.
+	trusted=
+	case ,$COMPOSE_PROFILES, in *,tailscale,*) trusted=tailscale ;; esac
+	export COMPOSE_PROFILES CLOUDOS_TS_SERVE="$serve" CLOUDOS_TRUSTED_PROXIES="$trusted"
 	# The one password passed on, from the env file: the restore's (cmd_restore).
-	if [ -n "${BOX_PGPASSWORD:-}" ]; then
-		PGPASSWORD=$BOX_PGPASSWORD
-		export PGPASSWORD
-	fi
-	[ -f "$env_file" ] || die "$env_file is missing, run: scripts/box init"
-	cd "$root"
-	docker compose -p "$PROJECT" --env-file "$env_file" -f compose.yaml -f compose.prod.yaml "$@"
-)
+	(
+		if [ -n "${BOX_PGPASSWORD:-}" ]; then
+			PGPASSWORD=$BOX_PGPASSWORD
+			export PGPASSWORD
+		fi
+		cd "$root" && docker compose -p "$PROJECT" --env-file "$env_file" -f compose.yaml -f compose.prod.yaml "$@"
+	)
+}
+
+compose() {
+	dc "$@"
+	exit $?
+}
 
 cmd_up() {
 	check_compose
 	check_env
-	COMPOSE_PROFILES=$(profiles)
-	export COMPOSE_PROFILES
+	# The smb service only starts with CLOUDOS_SMB=1 (docs/architecture/smb.md),
+	# the tailscale service with CLOUDOS_TAILSCALE=1 (docs/access.md).
 	port=${CLOUDOS_CORE_PORT:-$(env_value CLOUDOS_CORE_PORT)}
 	if [ "$#" -eq 0 ]; then
 		note "starting $PROJECT; the box will be on http://localhost:${port:-8480}"
 	fi
-	dc up --build --detach --wait "$@"
+	# Tailscale turned off: stop it, since up leaves a service of an inactive profile running.
+	if [ "$(setting CLOUDOS_TAILSCALE)" != 1 ]; then
+		only_profiles=tailscale
+		dc rm --stop --force tailscale >/dev/null 2>&1 || true
+		only_profiles=
+	fi
+	dc up --build --detach --wait "$@" || exit $?
+	if [ "$(setting CLOUDOS_TAILSCALE)" = 1 ] && [ -z "$(env_value CLOUDOS_PUBLIC_URL)" ]; then
+		note "once the box shows in your tailnet, run: scripts/box tailscale"
+	fi
+}
+
+cmd_tailscale() {
+	[ "$(setting CLOUDOS_TAILSCALE)" = 1 ] || die "Tailscale is off: set CLOUDOS_TAILSCALE=1 in $env_file, then scripts/box up"
+	status=$(dc exec -T tailscale tailscale status --json --peers=false) ||
+		die "the tailscale service does not answer: scripts/box up, then scripts/box logs tailscale"
+	name=$(printf '%s\n' "$status" | sed -n 's/^ *"DNSName": *"\([^"]*\)".*/\1/p' | head -n 1)
+	name=${name%.}
+	case $name in
+	'' | *[!A-Za-z0-9.-]*) die "the box is not signed in to Tailscale yet: scripts/box logs tailscale" ;;
+	*.ts.net) ;;
+	*) die "$name is not a ts.net name: turn on MagicDNS in Tailscale's admin console (docs/access.md)" ;;
+	esac
+	case $status in
+	*'"CertDomains": ['*) ;;
+	*) die "HTTPS certificates are off in the tailnet: turn them on in Tailscale's admin console (docs/access.md)" ;;
+	esac
+	share=
+	[ "$(setting CLOUDOS_FUNNEL)" != 1 ] || share="https://$name:8443"
+	set_env CLOUDOS_PUBLIC_URL "https://$name"
+	set_env CLOUDOS_SHARE_ORIGIN "$share"
+	note "the box is at https://$name${share:+; share links open at $share}"
+	# The core reads the addresses at start; Funnel also changes the tailscale service.
+	dc up --detach --wait
 }
 
 # The backup folder: the argument, else box.env's.
@@ -304,7 +387,7 @@ cmd_restore() {
 }
 
 if [ $# -eq 0 ]; then
-	sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
 	exit 0
 fi
 
@@ -313,12 +396,15 @@ shift
 case $cmd in
 init) cmd_init ;;
 up) cmd_up "$@" ;;
+tailscale)
+	check_compose
+	cmd_tailscale
+	;;
 down)
 	check_compose
-	# Stop the smb and backup services too, whatever is set now.
-	COMPOSE_PROFILES=smb,backup
-	export COMPOSE_PROFILES
-	dc down "$@"
+	# Stop smb, tailscale and backup too, whether or not they are on now.
+	only_profiles=smb,tailscale,backup
+	compose down "$@"
 	;;
 backup-init) cmd_backup_init "$@" ;;
 backup) cmd_backup ;;
@@ -331,8 +417,6 @@ update) cmd_update ;;
 restore) cmd_restore "$@" ;;
 *)
 	check_compose
-	COMPOSE_PROFILES=${COMPOSE_PROFILES:-$(profiles)}
-	export COMPOSE_PROFILES
-	dc "$cmd" "$@"
+	compose "$cmd" "$@"
 	;;
 esac

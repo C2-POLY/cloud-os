@@ -8,7 +8,9 @@
 #   no default: Compose refuses to start without them; the backup's key and
 #   role password too, once scripts/box backup-init has drawn them;
 # - db, worker and smb publish no port, and Vite (web) never starts;
-# - the services restart after a reboot and their logs are capped.
+# - the services restart after a reboot and their logs are capped;
+# - with CLOUDOS_TAILSCALE=1, the tailscale service is the only way in from
+#   outside the box (docs/architecture/box.md, « Accès »).
 
 x-database-url: &database-url postgres://cloudos:${CLOUDOS_DB_PASSWORD:?run scripts/box init}@db:5432/cloudos?sslmode=disable
 x-smb-db-password: &smb-db-password ${CLOUDOS_SMB_DB_PASSWORD:?run scripts/box init}
@@ -44,7 +46,8 @@ services:
     restart: unless-stopped
     logging: *logging
 
-  # Off unless CLOUDOS_SMB=1. Not reachable from outside until #100.
+  # Off unless CLOUDOS_SMB=1. No port: the tailscale service relays the
+  # tailnet's SMB to it over the Compose network.
   smb:
     environment:
       PGPASSWORD: *smb-db-password
@@ -58,6 +61,11 @@ services:
       PGPASSWORD: *backup-db-password
       RESTIC_PASSWORD: ${RESTIC_PASSWORD:-}
     restart: unless-stopped
+    logging: *logging
+
+  # Off unless CLOUDOS_TAILSCALE=1. It publishes no port either: it reaches
+  # Tailscale's servers outward, and the tailnet reaches the box through them.
+  tailscale:
     logging: *logging
 
   # Vite is a development server: never started in production.

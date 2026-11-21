@@ -1,3 +1,4 @@
+import type { BoxConfig } from '../../../shared/api-types.ts'
 import { api } from '../api.ts'
 import type { Entry } from '../drive/files.ts'
 
@@ -41,6 +42,19 @@ export function revokeShare(id: number): Promise<void> {
 /** The address a guest opens. */
 export function shareURL(token: string, origin = window.location.origin): string {
   return `${origin}/s/${token}`
+}
+
+/**
+ * Where guests open links: the box's public share address when Tailscale
+ * Funnel is on (GET /api/config), else this page's own origin.
+ */
+export async function shareOrigin(fallback = window.location.origin): Promise<string> {
+  try {
+    const { share_origin } = await api<BoxConfig>('GET', '/api/config')
+    return share_origin || fallback
+  } catch {
+    return fallback
+  }
 }
 
 /** The token of a guest page address, or null. */

@@ -51,7 +51,8 @@ L'assistant tourne sous un verrou consultatif : deux installations lancées en m
 
 ## Session et cookie
 
-- **Cookie :** `cloudos_session`, en `HttpOnly` et `SameSite=Lax`. Il devient `Secure` dès que la requête arrive en HTTPS, directement ou derrière un proxy (`X-Forwarded-Proto`). En HTTP sur le réseau local, un cookie `Secure` ne serait jamais renvoyé.
+- **Cookie :** `cloudos_session`, en `HttpOnly` et `SameSite=Lax`. Il devient `Secure` quand la box s'ouvre en HTTPS (`edge.Secure`) : `CLOUDOS_PUBLIC_URL` en https, ou `X-Forwarded-Proto: https` venu du proxy de confiance, le service `tailscale` ([box.md](box.md), « Accès »). L'en-tête d'un autre client ne décide de rien. En HTTP sur le réseau local, un cookie `Secure` ne serait jamais renvoyé.
+- **L'adresse du client**, par laquelle comptent les limites d'essais, est `edge.ClientIP` : le `X-Forwarded-For` du proxy de confiance, sinon l'adresse de la connexion.
 - **Clients sans cookie :** l'app mobile envoie le même jeton en `Authorization: Bearer`.
 - **CSRF :** toute requête qui modifie quelque chose doit être en JSON, ou porter l'en-tête `X-Cloudos-Client` (cas d'un envoi de fichier brut). Un navigateur ne peut envoyer ni l'un ni l'autre depuis un autre site sans vérification préalable CORS, que le cœur n'accorde jamais.
 

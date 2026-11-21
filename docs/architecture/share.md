@@ -73,7 +73,7 @@ sequenceDiagram
     C-->>G: octets en attachment, no-store
 ```
 
-- **Cookie d'accès :** `cloudos_share`, `HttpOnly`, `SameSite=Strict`, `Secure` en HTTPS. Son `Path` est celui du lien (`/api/s/<jeton>`) : chaque lien a le sien, et l'accès d'un lien n'en ouvre aucun autre.
+- **Cookie d'accès :** `cloudos_share`, `HttpOnly`, `SameSite=Strict`, `Secure` en HTTPS (`edge.Secure`, comme le cookie de session). Avec Tailscale Funnel, l'invité ouvre le lien sur `https://<box>:8443`, où seules les routes des liens répondent ; `GET /api/config` donne cette adresse au web, qui y construit les liens ([box.md](box.md), « Accès »). Son `Path` est celui du lien (`/api/s/<jeton>`) : chaque lien a le sien, et l'accès d'un lien n'en ouvre aucun autre.
 - **Mot de passe :** de 6 à 256 caractères, haché en argon2id comme ceux des comptes. 5 échecs par minute pour un même lien depuis une même IP, puis 429.
 - **Zip :** `archive/zip` de la bibliothèque standard, écrit en flux dans la réponse, en méthode Store (sans compression : photos et vidéos le sont déjà), sans fichier temporaire. Un fichier déplacé ou mis à la corbeille pendant l'écriture est sauté. Les dossiers vides n'y figurent pas.
 

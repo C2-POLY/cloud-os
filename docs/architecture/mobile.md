@@ -25,7 +25,7 @@ Expo SDK 58, React Native 0.88, TypeScript, expo-router. Toutes les dépendances
 
 ## Session
 
-- **Connexion :** l'écran Connexion demande l'adresse de la box (`192.168.1.20:8480`, complétée en `http://…`), l'identifiant et le mot de passe, puis appelle `POST /api/login`.
+- **Connexion :** l'écran Connexion demande l'adresse de la box (`192.168.1.20:8480`, complétée en `http://…` ; un nom en `.ts.net`, celui de la box par Tailscale, en `https://…`), l'identifiant et le mot de passe, puis appelle `POST /api/login`.
 - **Jeton :** le cœur rend un jeton de session, que l'app garde dans le trousseau (expo-secure-store). Elle l'envoie en `Authorization: Bearer` avec `X-Cloudos-Client: mobile` (`auth.TokenFrom` lit le cookie ou ce jeton). Pas de cookie : les téléchargements et les images natives ne partagent pas forcément ceux de `fetch`, alors que l'en-tête passe partout (expo-image, `File.downloadFileAsync`).
 - **Au démarrage :** `GET /api/me` vérifie le jeton. Un 401 l'oublie et renvoie à la Connexion. Une box injoignable garde le jeton pour plus tard.
 - **Déconnexion :** `POST /api/logout`, puis le jeton est effacé, même si la box ne répond pas.

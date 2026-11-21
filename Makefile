@@ -7,18 +7,17 @@ DB_PORT ?= $(or $(CLOUDOS_DB_PORT),54320)
 TEST_DATABASE_URL ?= postgres://cloudos:cloudos@127.0.0.1:$(DB_PORT)/cloudos?sslmode=disable
 EXTERNAL_DB ?=
 
-comma := ,
-
 # CLOUDOS_SMB=1 adds the smb service, CLOUDOS_BACKUP=1 the backup service
-# (their Compose profiles) to up and logs.
-ifeq ($(CLOUDOS_SMB),1)
-COMPOSE_PROFILES := smb
+# (their Compose profiles) to up and logs, and CLOUDOS_TAILSCALE=1 the
+# tailscale service (TS_AUTHKEY in the shell; docs/access.md).
+comma := ,
+profiles := $(strip $(if $(filter 1,$(CLOUDOS_SMB)),smb) $(if $(filter 1,$(CLOUDOS_BACKUP)),backup) $(if $(filter 1,$(CLOUDOS_TAILSCALE)),tailscale))
+ifneq ($(profiles),)
+export COMPOSE_PROFILES := $(subst $() ,$(comma),$(profiles))
 endif
-ifeq ($(CLOUDOS_BACKUP),1)
-COMPOSE_PROFILES := $(if $(COMPOSE_PROFILES),$(COMPOSE_PROFILES)$(comma))backup
-endif
-ifneq ($(COMPOSE_PROFILES),)
-export COMPOSE_PROFILES
+# The core and smb believe the tailscale service's headers only when it runs.
+ifeq ($(CLOUDOS_TAILSCALE),1)
+export CLOUDOS_TRUSTED_PROXIES ?= tailscale
 endif
 
 # The backup tests run in the backup image, beside the test database: on the
@@ -42,9 +41,9 @@ ifeq ($(CLOUDOS_SMB),1)
 	@echo "SMB, read-only: smb://<account>@localhost:$${CLOUDOS_SMB_PORT:-1445}/drive, with the account's SMB password (Settings)"
 endif
 
-## down: stop the stack, smb and backup included (keeps the database volume)
+## down: stop the stack, smb, backup and tailscale included (keeps the database volume)
 down:
-	docker compose --profile smb --profile backup down
+	docker compose --profile smb --profile backup --profile tailscale down
 
 ## logs: follow the logs of every service
 logs:

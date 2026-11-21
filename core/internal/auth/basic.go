@@ -5,10 +5,11 @@ import (
 	"crypto/sha256"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/C2-POLY/cloud-os/core/internal/edge"
 )
 
 // BasicTTL is how long a checked Basic login is trusted before the password
@@ -77,11 +78,8 @@ func (b *BasicAuth) authenticate(ctx context.Context, r *http.Request) (Account,
 		b.mu.Unlock()
 		return Account{}, ErrBadCredentials
 	}
-	from, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		from = r.RemoteAddr
-	}
-	a, err := b.svc.CheckCredentials(ctx, name, password, from)
+	// The client's address behind the trusted proxy: the attempt limit counts by it.
+	a, err := b.svc.CheckCredentials(ctx, name, password, edge.ClientIP(r))
 	if err != nil {
 		return Account{}, err
 	}

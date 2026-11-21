@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
 
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
+	"github.com/C2-POLY/cloud-os/core/internal/edge"
 )
 
 type accountsAPI struct {
@@ -55,13 +55,9 @@ func fail(w http.ResponseWriter, err error) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
+// clientIP is the address the attempt limits count by: the client's, as the
+// trusted proxy forwards it (edge.ClientIP).
+func clientIP(r *http.Request) string { return edge.ClientIP(r) }
 
 func (a *accountsAPI) setupNeeded(w http.ResponseWriter, r *http.Request) {
 	needed, err := a.auth.SetupNeeded(r.Context())
