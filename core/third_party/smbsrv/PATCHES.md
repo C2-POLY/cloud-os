@@ -104,3 +104,10 @@ Each test below fails on the upstream code. The failure seen at `7a70fc2e0cbb` i
   - For an `Aborter`, `Close` runs only for that CLOSE, and only if the file is not waiting to be deleted. Every other end calls `Abort`: a cut connection, a logoff or tree disconnect, an expired, purged or server-closed durable handle, a CREATE that failed after opening the file (`releaseOpen`) or that the client never heard of (`dropUnseenOpen`), and a close while a delete is pending.
   - A `File` that is not an `Aborter` is closed as upstream did.
 - **Test:** `TestPatchOnlyACloseStores` (`patch_abort_test.go`): a CLOSE calls `Close`; a cut connection, a server that stops and a CLOSE after a delete disposition call `Abort`. Upstream never called `Abort`: the cut connection and the stopping server stored their half-written files.
+
+## 8. The server can serve a listener it is given
+
+- **Files:** `server.go` (`Config.Listener`, `Start`).
+- **Why:** behind the box's tailscale service, every SMB connection comes from the proxy. The proxy names the real client in a PROXY protocol header, which a wrapping listener reads (`core/internal/edge`, `ProxyListener`). Upstream always listened on `Address` itself, so its limits per address and `LookupHash` only ever saw the proxy.
+- **Change:** `Config.Listener`, when set, is served instead of listening on `Address`. The `RemoteAddr` of its connections is the client's address for `Allow`, the per-address limit, `LookupHash` and `AuthLog`. `Close` closes it.
+- **Test:** `TestPatchServesTheGivenListener` (`patch_listener_test.go`). Upstream has no `Listener`, so the test does not build.

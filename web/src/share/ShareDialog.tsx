@@ -3,7 +3,7 @@ import { useState, type FormEvent } from 'react'
 import { messageOf } from '../api.ts'
 import { DismissButton, Modal } from '../drive/Dialogs.tsx'
 import type { Entry } from '../drive/files.ts'
-import { createShare, expiryOf, shareURL } from './shares.ts'
+import { createShare, expiryOf, shareOrigin, shareURL } from './shares.ts'
 
 const choices = [
   { value: '1', label: '1 jour' },
@@ -38,7 +38,7 @@ export function ShareDialog({ entry, onClose }: { entry: Entry; onClose: () => v
     setError(null)
     try {
       const { token } = await createShare(entry.path, expires, protect ? password : '')
-      setURL(shareURL(token))
+      setURL(shareURL(token, await shareOrigin()))
     } catch (err) {
       setError(messageOf(err))
     } finally {

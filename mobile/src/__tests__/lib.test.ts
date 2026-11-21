@@ -17,6 +17,10 @@ describe('api', () => {
   it('normalizes the box address', () => {
     expect(normalizeBox(' 192.168.1.20:8480/ ')).toBe('http://192.168.1.20:8480')
     expect(normalizeBox('https://box.maison')).toBe('https://box.maison')
+    expect(normalizeBox('cloudos.tailnet-1a2b.ts.net/')).toBe('https://cloudos.tailnet-1a2b.ts.net')
+    expect(normalizeBox('CloudOS.Tailnet.TS.NET')).toBe('https://CloudOS.Tailnet.TS.NET')
+    expect(normalizeBox('http://cloudos.tailnet.ts.net')).toBe('http://cloudos.tailnet.ts.net')
+    expect(normalizeBox('ts.net.example.org')).toBe('http://ts.net.example.org')
     expect(normalizeBox('')).toBe('')
   })
 

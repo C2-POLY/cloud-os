@@ -16,7 +16,7 @@ Issues : #90 (essai), #91 (mot de passe SMB), #95 (serveur durci et isolé), #97
 - **Un compte, un drive.** Le nom SMB est le nom du compte, dans n'importe quelle casse. Il voit un seul partage, `drive`, qui est son espace. Sa clé, `cloudos:<compte>`, sépare les verrous, les modes de partage et les notifications de deux comptes.
 - **Essais limités.** 5 échecs par minute pour un compte depuis une adresse (`auth.SMBHash`, clé `smb:<compte>|<ip>`), après quoi même le bon mot de passe est refusé. Une connexion réussie efface le compte de ses échecs. smbsrv retient la réponse d'un échec 2 s.
 - **Révoquer coupe.** Un mot de passe révoqué ou régénéré, ou un compte désactivé, ferme les sessions ouvertes, et la reconnexion avec l'ancien mot de passe est refusée (voir « Révocation » plus bas).
-- **Réseau privé seulement.** `Backend.Allow` n'accepte que les adresses privées, de boucle locale ou de lien local. Compose publie `127.0.0.1:${CLOUDOS_SMB_PORT:-1445}` vers le port 445 du service : le partage de fichiers de macOS occupe déjà le 445 du Mac. Sous Docker Desktop, le client vu par le service est la passerelle Docker, une adresse privée : `Allow` ne filtre vraiment que sur la box.
+- **Réseau privé seulement.** `Backend.Allow` n'accepte que les adresses privées, de boucle locale ou de lien local. Compose publie `127.0.0.1:${CLOUDOS_SMB_PORT:-1445}` vers le port 445 du service : le partage de fichiers de macOS occupe déjà le 445 du Mac. Sous Docker Desktop, le client vu par le service est la passerelle Docker, une adresse privée : `Allow` ne filtre vraiment que sur la box. Sur la box, SMB n'est joint que par le service `tailscale`, qui nomme l'appareil dans un en-tête PROXY : `Allow` admet alors aussi les adresses Tailscale (100.64.0.0/10), et les limites comptent par appareil ([box.md](box.md), « Accès »).
 - **Écrire sans risque de perte (#92).** Tout passe par `storage`, comme en WebDAV : un fichier écrit est vérifié par son SHA-256 puis lié à sa place, un contenu remplacé devient une version, une suppression va à la corbeille, un renommage est journalisé dans `moves`. L'adaptateur ne touche jamais `/data` lui-même. Un fichier ouvert en écriture se remplit dans un fichier de travail, enregistré seulement au CLOSE du client : une coupure laisse l'original intact et ne crée rien (voir « Écriture » plus bas).
 - **Deux processus qui écrivent.** Le cœur et le service `smb` écrivent tous deux par `storage`, qui sérialise les écritures d'un compte par son verrou Postgres (`pg_advisory_lock`). `RecoverMoves`, au démarrage du cœur, prend ce verrou pour chaque entrée du journal : il ne reprend jamais une opération que le service `smb` est en train de faire. Les fichiers de travail de SMB (`.cloudos/tmp/smb`) n'appartiennent qu'au service `smb`, qui les vide à son démarrage ; `CleanTmp` du cœur les laisse.
 
@@ -203,7 +203,7 @@ flowchart LR
 
 ## Le serveur durci
 
-La copie de smbsrv dans `core/third_party/smbsrv` corrige les cinq défauts de l'ADR 006, et ajoute ce dont l'écriture a besoin (7). Chaque correction a un test qui échoue sur la version d'origine. Le détail, avec le pourquoi, est dans `core/third_party/smbsrv/PATCHES.md`.
+La copie de smbsrv dans `core/third_party/smbsrv` corrige les cinq défauts de l'ADR 006, et ajoute ce dont l'écriture (7) et le proxy Tailscale (8) ont besoin. Chaque correction a un test qui échoue sur la version d'origine. Le détail, avec le pourquoi, est dans `core/third_party/smbsrv/PATCHES.md`.
 
 1. **U+F029 et ses voisins** de la zone privée sont convertis avant le contrôle de `.` et `..`. Ils ne peuvent plus écrire `..` ni un séparateur.
 2. **Un bind RPC sur IPC$** avec un `max_recv_frag` trop petit le voit porté à 1432 octets, et la réponse ne boucle plus.
@@ -216,9 +216,10 @@ La copie de smbsrv dans `core/third_party/smbsrv` corrige les cinq défauts de l
    - au plus 1024 requêtes en attente d'un changement ou d'un verrou.
 5. **Un `recover`** dans chaque goroutine du serveur. Une panique ferme la seule connexion fautive, avec sa pile dans le journal.
 
-S'y ajoutent deux écarts d'interface :
+S'y ajoutent trois écarts d'interface :
 - `Backend.LookupHash(nom, ip:port)` reçoit l'adresse du client, et une empreinte qui n'a pas 16 octets n'ouvre aucune session (6) ;
-- un `File` peut être un `Aborter` : seul un CLOSE du client appelle `Close`, et toute autre fin appelle `Abort` (7).
+- un `File` peut être un `Aborter` : seul un CLOSE du client appelle `Close`, et toute autre fin appelle `Abort` (7) ;
+- `Config.Listener` sert une écoute qu'on lui donne : derrière Tailscale, celle qui lit l'en-tête PROXY (8).
 
 `cmd/` et `wsd/` (WS-Discovery, LLMNR) ne sont pas copiés : rien n'annonce le serveur sur le réseau. `make test` lance les tests de la copie avec `-race`, et `make lint` les vérifie. `core/internal/guard` contrôle aussi son code : seule `setEndOfFile` y peut tronquer, et elle passe par `File.Truncate` de l'adaptateur, qui ne coupe qu'un fichier de travail ou un fichier du Finder. Le `localfs` de smbsrv, qui efface des fichiers, n'est lié nulle part : le garde échoue si un fichier l'importe.
 

@@ -15,6 +15,7 @@ import (
 
 	"github.com/C2-POLY/cloud-os/core/internal/activity"
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
+	"github.com/C2-POLY/cloud-os/core/internal/edge"
 	"github.com/C2-POLY/cloud-os/core/internal/share"
 	"github.com/C2-POLY/cloud-os/core/internal/storage"
 )
@@ -189,7 +190,7 @@ func (a *sharesAPI) unlock(w http.ResponseWriter, r *http.Request) {
 		Path:     "/api/s/" + token,
 		MaxAge:   max(1, int(time.Until(expires).Seconds())),
 		HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		Secure:   edge.Secure(r),
 		SameSite: http.SameSiteStrictMode,
 	})
 	w.WriteHeader(http.StatusNoContent)

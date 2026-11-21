@@ -3,6 +3,8 @@
 #
 #   scripts/box init       draw the secrets into box.env (once) and create the data folders
 #   scripts/box up         check box.env, then build and start the stack
+#   scripts/box tailscale  once the box is in the tailnet, write its https address
+#                          (and the share links' with Funnel) into box.env, then apply them
 #   scripts/box <anything> pass it to `docker compose`, for example
 #                          scripts/box logs --follow
 #                          scripts/box run --rm core verify
@@ -11,10 +13,16 @@
 # It always uses the project cloud-os-box, box.env and both Compose files, so
 # the production stack never mixes with the development stack of a worktree.
 # CLOUDOS_BOX_ENV names another env file (the CI uses a temporary one).
+#
+# Settings, in box.env or the shell: CLOUDOS_SMB=1 starts the smb service,
+# CLOUDOS_TAILSCALE=1 the tailscale service (with TS_AUTHKEY in box.env for its
+# first sign-in), CLOUDOS_FUNNEL=1 opens the share links to the internet
+# (docs/access.md).
 
 set -eu
 
 PROJECT=cloud-os-box
+only_profiles=
 CORE_UID=65532
 DEV_PASSWORDS="cloudos cloudos-smb"
 
@@ -27,6 +35,23 @@ note() { printf 'scripts/box: %s\n' "$*"; }
 # The value of KEY in the env file (the last one wins), empty when absent.
 env_value() {
 	sed -n "s/^$1=//p" "$env_file" | tail -n 1
+}
+
+# A setting: the shell's value wins over box.env's.
+setting() {
+	eval "v=\${$1:-}"
+	[ -n "$v" ] || v=$(env_value "$1")
+	printf '%s' "$v"
+}
+
+# Set KEY=VALUE in the env file, keeping its mode 0600 and its other lines.
+set_env() {
+	tmp="$env_file.tmp.$$"
+	(
+		umask 077
+		sed "/^$1=/d" "$env_file" >"$tmp" && printf '%s=%s\n' "$1" "$2" >>"$tmp"
+	) || { rm -f "$tmp"; die "cannot write $env_file"; }
+	mv "$tmp" "$env_file" || { rm -f "$tmp"; die "cannot write $env_file"; }
 }
 
 random_password() {
@@ -101,19 +126,74 @@ check_env() {
 	data=$(env_value CLOUDOS_DATA_DIR)
 	[ -n "$data" ] || die "CLOUDOS_DATA_DIR is not set in $env_file"
 	[ -d "$data" ] || die "CLOUDOS_DATA_DIR $data does not exist (is the disk mounted?); not creating it"
+	if [ "$(setting CLOUDOS_FUNNEL)" = 1 ] && [ "$(setting CLOUDOS_TAILSCALE)" != 1 ]; then
+		die "CLOUDOS_FUNNEL=1 needs CLOUDOS_TAILSCALE=1"
+	fi
+	# The first sign-in needs a key; after it, the node's identity is in its volume.
+	if [ "$(setting CLOUDOS_TAILSCALE)" = 1 ] && [ -z "$(env_value TS_AUTHKEY)" ] &&
+		! docker volume inspect "${PROJECT}_tailscale-state" >/dev/null 2>&1; then
+		die "TS_AUTHKEY is empty in $env_file: create an auth key in Tailscale's admin console (docs/access.md)"
+	fi
+}
+
+# The Compose profiles of the services that are on.
+profiles() {
+	p=
+	[ "$(setting CLOUDOS_SMB)" != 1 ] || p=smb
+	[ "$(setting CLOUDOS_TAILSCALE)" != 1 ] || p=${p:+$p,}tailscale
+	printf '%s' "$p"
+}
+
+# docker compose on the box's project, files and env file.
+dc() {
+	[ -f "$env_file" ] || die "$env_file is missing, run: scripts/box init"
+	# The services that are on, unless the caller names them (only_profiles).
+	COMPOSE_PROFILES=${only_profiles:-$(profiles)}
+	serve=serve.json
+	[ "$(setting CLOUDOS_FUNNEL)" != 1 ] || serve=serve-funnel.json
+	# The env file is the only source of the box's secrets, folders and
+	# addresses: a development variable of the shell must not win over it.
+	unset CLOUDOS_DB_PASSWORD CLOUDOS_SMB_DB_PASSWORD CLOUDOS_DATA_DIR CLOUDOS_MAPS_DIR COMPOSE_FILE COMPOSE_PROJECT_NAME \
+		TS_AUTHKEY TS_HOSTNAME CLOUDOS_PUBLIC_URL CLOUDOS_SHARE_ORIGIN CLOUDOS_TRUSTED_PROXIES
+	# The core and smb believe the tailscale service's headers, and look its
+	# name up, only when it runs: an unknown name would go to the home DNS.
+	trusted=
+	case ,$COMPOSE_PROFILES, in *,tailscale,*) trusted=tailscale ;; esac
+	export COMPOSE_PROFILES CLOUDOS_TS_SERVE="$serve" CLOUDOS_TRUSTED_PROXIES="$trusted"
+	(cd "$root" && docker compose -p "$PROJECT" --env-file "$env_file" -f compose.yaml -f compose.prod.yaml "$@")
 }
 
 compose() {
-	# The env file is the only source of the box's secrets and folders: a
-	# development variable of the shell must not win over it.
-	unset CLOUDOS_DB_PASSWORD CLOUDOS_SMB_DB_PASSWORD CLOUDOS_DATA_DIR CLOUDOS_MAPS_DIR COMPOSE_FILE COMPOSE_PROJECT_NAME
-	[ -f "$env_file" ] || die "$env_file is missing, run: scripts/box init"
-	cd "$root"
-	exec docker compose -p "$PROJECT" --env-file "$env_file" -f compose.yaml -f compose.prod.yaml "$@"
+	dc "$@"
+	exit $?
+}
+
+cmd_tailscale() {
+	[ "$(setting CLOUDOS_TAILSCALE)" = 1 ] || die "Tailscale is off: set CLOUDOS_TAILSCALE=1 in $env_file, then scripts/box up"
+	status=$(dc exec -T tailscale tailscale status --json --peers=false) ||
+		die "the tailscale service does not answer: scripts/box up, then scripts/box logs tailscale"
+	name=$(printf '%s\n' "$status" | sed -n 's/^ *"DNSName": *"\([^"]*\)".*/\1/p' | head -n 1)
+	name=${name%.}
+	case $name in
+	'' | *[!A-Za-z0-9.-]*) die "the box is not signed in to Tailscale yet: scripts/box logs tailscale" ;;
+	*.ts.net) ;;
+	*) die "$name is not a ts.net name: turn on MagicDNS in Tailscale's admin console (docs/access.md)" ;;
+	esac
+	case $status in
+	*'"CertDomains": ['*) ;;
+	*) die "HTTPS certificates are off in the tailnet: turn them on in Tailscale's admin console (docs/access.md)" ;;
+	esac
+	share=
+	[ "$(setting CLOUDOS_FUNNEL)" != 1 ] || share="https://$name:8443"
+	set_env CLOUDOS_PUBLIC_URL "https://$name"
+	set_env CLOUDOS_SHARE_ORIGIN "$share"
+	note "the box is at https://$name${share:+; share links open at $share}"
+	# The core reads the addresses at start; Funnel also changes the tailscale service.
+	dc up --detach --wait
 }
 
 if [ $# -eq 0 ]; then
-	sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
 	exit 0
 fi
 
@@ -125,19 +205,32 @@ up)
 	shift
 	check_compose
 	check_env
-	# The smb service only starts with CLOUDOS_SMB=1 (docs/architecture/smb.md).
-	[ "${CLOUDOS_SMB:-}" != 1 ] || export COMPOSE_PROFILES=smb
+	# The smb service only starts with CLOUDOS_SMB=1 (docs/architecture/smb.md),
+	# the tailscale service with CLOUDOS_TAILSCALE=1 (docs/access.md).
 	port=${CLOUDOS_CORE_PORT:-$(env_value CLOUDOS_CORE_PORT)}
 	if [ "$#" -eq 0 ]; then
 		note "starting $PROJECT; the box will be on http://localhost:${port:-8480}"
 	fi
-	compose up --build --detach --wait "$@"
+	# Tailscale turned off: stop it, since up leaves a service of an inactive profile running.
+	if [ "$(setting CLOUDOS_TAILSCALE)" != 1 ]; then
+		only_profiles=tailscale
+		dc rm --stop --force tailscale >/dev/null 2>&1 || true
+		only_profiles=
+	fi
+	dc up --build --detach --wait "$@" || exit $?
+	if [ "$(setting CLOUDOS_TAILSCALE)" = 1 ] && [ -z "$(env_value CLOUDOS_PUBLIC_URL)" ]; then
+		note "once the box shows in your tailnet, run: scripts/box tailscale"
+	fi
+	;;
+tailscale)
+	check_compose
+	cmd_tailscale
 	;;
 down)
 	shift
 	check_compose
-	# Stop the smb service too, whether or not CLOUDOS_SMB is set now.
-	export COMPOSE_PROFILES=smb
+	# Stop smb and tailscale too, whether or not they are on now.
+	only_profiles=smb,tailscale
 	compose down "$@"
 	;;
 *)

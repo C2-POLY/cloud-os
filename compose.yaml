@@ -36,6 +36,18 @@ services:
       # The worker's query endpoint (POST /embed), on the Compose network only.
       WORKER_URL: http://worker:8090
       CLOUDOS_SMB_DB_PASSWORD: *smb-db-password
+      # The front door (docs/architecture/box.md, « Accès »): the core believes
+      # X-Forwarded-For and X-Forwarded-Proto from these proxies only.
+      # CLOUDOS_TAILSCALE=1 sets it to "tailscale" (scripts/box, make), a name
+      # resolved again every 30 s. Empty, no header is believed and no name is
+      # looked up: Docker would ask the home network's DNS for an unknown one.
+      CLOUDOS_TRUSTED_PROXIES: ${CLOUDOS_TRUSTED_PROXIES:-}
+      # https://cloudos.<tailnet>.ts.net, written by `scripts/box tailscale`:
+      # https makes every cookie Secure.
+      CLOUDOS_PUBLIC_URL: ${CLOUDOS_PUBLIC_URL:-}
+      # https://cloudos.<tailnet>.ts.net:8443 when Funnel is on: where guests
+      # open share links. Empty: the web front's own address.
+      CLOUDOS_SHARE_ORIGIN: ${CLOUDOS_SHARE_ORIGIN:-}
     ports:
       - "127.0.0.1:${CLOUDOS_CORE_PORT:-8480}:8080"
     volumes:
@@ -69,6 +81,9 @@ services:
       PGPASSWORD: *smb-db-password
       CLOUDOS_DATA_DIR: /data
       CLOUDOS_SMB: ${CLOUDOS_SMB:-}
+      # The tailscale service relays the tailnet's SMB with a PROXY header
+      # naming each device; only its header is believed (set as for the core).
+      CLOUDOS_TRUSTED_PROXIES: ${CLOUDOS_TRUSTED_PROXIES:-}
       # The Go runtime collects well before the container's limit.
       GOMEMLIMIT: 384MiB
     ports:
@@ -80,6 +95,43 @@ services:
     mem_limit: 512m
     cpus: 1
     pids_limit: 256
+    restart: unless-stopped
+    depends_on:
+      core:
+        condition: service_healthy
+
+  # HTTPS and access from outside the home through Tailscale
+  # (docs/architecture/box.md, « Accès »; docs/access.md). Off by default:
+  # the profile `tailscale`, which scripts/box turns on with CLOUDOS_TAILSCALE=1.
+  # `tailscale serve` ends HTTPS with the box's ts.net certificate and relays
+  # to core:8080, and SMB to smb:445; with Funnel (serve-funnel.json), the
+  # share links only, on :8443. Userspace networking: no NET_ADMIN, no
+  # /dev/net/tun, no port opened on the host nor on the home router.
+  tailscale:
+    image: tailscale/tailscale:v1.104.7
+    profiles: [tailscale]
+    environment:
+      # Used for the first sign-in only (TS_AUTH_ONCE): the node's identity
+      # then lives in the tailscale-state volume.
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_AUTH_ONCE: "true"
+      TS_HOSTNAME: ${TS_HOSTNAME:-cloudos}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      # The box keeps the Compose network's DNS, so that `core` and `smb` resolve.
+      TS_ACCEPT_DNS: "false"
+      TS_SERVE_CONFIG: /config/${CLOUDOS_TS_SERVE:-serve.json}
+      TS_ENABLE_HEALTH_CHECK: "true"
+      TS_LOCAL_ADDR_PORT: 127.0.0.1:9002
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./box/tailscale:/config:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9002/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    mem_limit: 256m
     restart: unless-stopped
     depends_on:
       core:
@@ -120,3 +172,6 @@ services:
 volumes:
   pgdata:
   web_node_modules:
+  # The tailscale node's identity and certificate. Removing it signs the box
+  # out of the tailnet: it then needs a new TS_AUTHKEY.
+  tailscale-state:
