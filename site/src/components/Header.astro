@@ -1,0 +1,45 @@
+---
+import { type Lang, t, pagePath } from '../i18n';
+
+interface Props {
+  lang: Lang;
+  page: string;
+}
+
+const { lang, page } = Astro.props;
+const s = t(lang);
+const home = pagePath(lang);
+const other: Lang = lang === 'en' ? 'fr' : 'en';
+---
+
+<header class="top">
+  <div class="wrap top-row">
+    <a class="brand" href={page === '' ? '#main' : home}><svg class="ic"><use href="#i-cloud"></use></svg><span>Cloud OS</span></a>
+    <nav aria-label={s.a11y.mainNav}>
+      <a href={`${home}#la-box`}>{s.nav.box}</a>
+      <a href={`${home}#fichiers`}>{s.nav.features}</a>
+      <a href={`${home}#bureau`}>{s.nav.screen}</a>
+      <a href={`${home}#installer`}>{s.nav.install}</a>
+    </nav>
+    <div class="tools">
+      <a class="lang" href={pagePath(other)} hreflang={other} lang={other} aria-label={t(other).langName} title={t(other).langName}>
+        {other.toUpperCase()}
+      </a>
+      <button class="theme" type="button" aria-label={s.a11y.theme} title={s.a11y.theme}><svg class="ic"><use href="#i-half"></use></svg></button>
+    </div>
+  </div>
+</header>
+
+<script>
+  // The toggle flips the theme on screen and remembers it; the system's
+  // choice applies until it is used. The 3D box follows data-theme.
+  const root = document.documentElement;
+  document.querySelector<HTMLButtonElement>('.theme')?.addEventListener('click', () => {
+    const now = root.getAttribute('data-theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    const next = now === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try {
+      localStorage.setItem('cloudos-theme', next);
+    } catch {}
+  });
+</script>

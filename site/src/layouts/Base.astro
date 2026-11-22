@@ -1,0 +1,85 @@
+---
+import '@fontsource/inter/latin-300.css';
+import '@fontsource/inter/latin-400.css';
+import '@fontsource/inter/latin-500.css';
+import '@fontsource/inter/latin-600.css';
+import '@fontsource/jetbrains-mono/latin-400.css';
+import '@fontsource/jetbrains-mono/latin-500.css';
+import '../styles/site.css';
+// The weights the first screen uses most, preloaded so that the title and
+// the lead do not reflow when they arrive.
+import inter400 from '@fontsource/inter/files/inter-latin-400-normal.woff2?url';
+import inter600 from '@fontsource/inter/files/inter-latin-600-normal.woff2?url';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+import Icons from '../components/Icons.astro';
+import { type Lang, langs, t, pagePath, asset } from '../i18n';
+
+interface Props {
+  lang: Lang;
+  page: '' | '404.html';
+  title: string;
+  description: string;
+}
+
+const { lang, page, title, description } = Astro.props;
+const s = t(lang);
+const canonical = new URL(pagePath(lang, page), Astro.site).href;
+const alternates = langs.map((l) => ({ lang: l, href: new URL(pagePath(l, page), Astro.site).href }));
+const og = new URL(asset(lang === 'fr' ? 'og-fr.png' : 'og.png'), Astro.site).href;
+---
+
+<!doctype html>
+<html lang={lang}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>{title}</title>
+    {[inter400, inter600].map((font) => <link rel="preload" href={font} as="font" type="font/woff2" crossorigin />)}
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    {alternates.map((a) => <link rel="alternate" hreflang={a.lang} href={a.href} />)}
+    <link rel="alternate" hreflang="x-default" href={alternates[0].href} />
+    <link rel="icon" type="image/svg+xml" href={asset('favicon.svg')} />
+    <link rel="apple-touch-icon" href={asset('apple-touch-icon.png')} />
+    <meta name="theme-color" content="#f7f7f5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#161615" media="(prefers-color-scheme: dark)" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={og} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content={lang === 'fr' ? 'fr_FR' : 'en_GB'} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script is:inline>
+      // Before the first paint: the theme the toggle chose, and .motion, which
+      // lets the reveals start slightly below their place. Without motion, or if
+      // the page script has not started after a few seconds, nothing is moved.
+      (function () {
+        var r = document.documentElement;
+        try {
+          var t = localStorage.getItem('cloudos-theme');
+          if (t === 'light' || t === 'dark') r.setAttribute('data-theme', t);
+        } catch (e) {}
+        if (matchMedia('(prefers-reduced-motion: no-preference)').matches) {
+          r.classList.add('motion');
+          setTimeout(function () {
+            if (!r.classList.contains('motion-ready')) r.classList.remove('motion');
+          }, 3000);
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <Icons />
+    <a class="skip" href="#main">{s.a11y.skip}</a>
+    <Header lang={lang} page={page} />
+    <slot name="stage" />
+    <main id="main" tabindex="-1">
+      <slot />
+    </main>
+    <Footer lang={lang} />
+  </body>
+</html>

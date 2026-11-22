@@ -7,7 +7,8 @@ An all-in-one home cloud OS installed on a box: drive, photos, documents and med
 - 2026-11-17: repository created; phase 1 skeleton in place (Compose stack, health endpoint, worker heartbeat, CI). The V1 is phases 1 to 3 of the PRD roadmap (Core + Drive, Photos + mobile, AI search + Documents), run in Docker Compose. The OS packaging comes after.
 - Decisions are recorded in `docs/decisions/` (one numbered file each, with the why and the options rejected). Stack: `001-stack.md`.
 - How it is built, domain by domain with diagrams, is in `docs/architecture/` (index in its `README.md`). Every subject with a design updates its domain's file in the same PR as the code.
-- Still open in the PRD: product name, open or closed source, reference hardware (Raspberry Pi 5 or x86 mini PC). Update this file and the `topic` skill when one is decided.
+- 2026-11-22: the code is open source, under MIT OR Apache-2.0 at the user's choice (`LICENSE-MIT`, `LICENSE-APACHE`, `docs/decisions/007-licence.md`). The public website is in `site/` (see Commands).
+- Still open in the PRD: product name, reference hardware (Raspberry Pi 5 or x86 mini PC). Update this file and the `topic` skill when one is decided.
 
 ## Stack
 
@@ -138,9 +139,16 @@ CLOUDOS_SMB=1 make up
 
 # Set a new password for an account that lost it (read from stdin) and end its sessions
 printf '%s\n' '<new password>' | docker compose run --rm -T core reset-password <account>
+
+# The public website (site/, Astro; docs/architecture/site.md), on its own:
+# no Compose, no core. Node 24 (site/.nvmrc). Dev server with hot reload at
+# http://localhost:4321/cloud-os/ (French at /cloud-os/fr/); the build goes to
+# site/dist, which `npm run preview` serves as GitHub Pages will.
+cd site && npm ci && npm run dev
+cd site && npm run build && npm run preview
 ```
 
-Layout: `core/` (Go module, `cmd/core`, `internal/`, SQL migrations in `core/migrations/`, applied by the core at startup with goose), `worker/` (Python, uv; the models' fetch script in `worker/models/`, their benchmark in `worker/bench/`), `web/` (React, Vite, npm), `mobile/` (Expo, React Native; `docs/architecture/mobile.md`), `shared/api-types.ts` (API types used by web and mobile), `backup/` (the backup service's image and restic's pinned fetch script; `docs/architecture/backup.md`), `compose.yaml`, `compose.prod.yaml` and `scripts/box` (production), `Makefile`, `.github/workflows/ci.yml` (`make lint` and `make test` on every PR and on `main`) and `images.yml` (the images and the production stack, on amd64 and arm64).
+Layout: `core/` (Go module, `cmd/core`, `internal/`, SQL migrations in `core/migrations/`, applied by the core at startup with goose), `worker/` (Python, uv; the models' fetch script in `worker/models/`, their benchmark in `worker/bench/`), `web/` (React, Vite, npm), `mobile/` (Expo, React Native; `docs/architecture/mobile.md`), `shared/api-types.ts` (API types used by web and mobile), `backup/` (the backup service's image and restic's pinned fetch script; `docs/architecture/backup.md`), `compose.yaml`, `compose.prod.yaml` and `scripts/box` (production), `Makefile`, `.github/workflows/ci.yml` (`make lint` and `make test` on every PR and on `main`) and `images.yml` (the images and the production stack, on amd64 and arm64). `site/` is the public website (Astro, Lenis and three.js, English at `/` and French at `/fr/`), independent of the box: nothing in it is built into an image, and `.github/workflows/site.yml` builds it on a PR that touches it and publishes it to GitHub Pages (<https://c2-poly.github.io/cloud-os/>) on a push to `main`. The page asks nothing from another origin (fonts from @fontsource, no CDN, no analytics), keeps its first load under 30 KB gzip and loads three.js only after the page.
 
 **One stack per worktree.** Give each worktree its own Compose project and, when another stack runs, its own host ports, so stacks never share a database:
 
@@ -174,7 +182,7 @@ Issues are written in French and kept short:
 - Title: `<Zone> : <ce qu'il apporte>`, for example `Drive : partager un dossier par lien avec expiration`.
 - Body: `**En tant que** …, **je veux** …, **afin de** …`, then `**Critères d'acceptation**` with 3 to 5 checkboxes, then `**Livré** : \`vX.Y.Z\`` once delivered.
 - Type: the organisation's issue types, `Feature` (a capability, a parent issue when it is split), `Task` (an improvement, tooling, docs) or `Bug`. Split work is sub-issues; "B cannot start before A" is a `blocked by` relation, not a sentence.
-- Labels: one `zone:` label (`zone:cœur`, `zone:drive`, `zone:photos`, `zone:documents`, `zone:bibliothèques`, `zone:recherche`, `zone:ia`, `zone:web`, `zone:mobile`, `zone:os`, `zone:outillage`), and once delivered one version label (`v0.1.0`). Create a missing label rather than skipping it.
+- Labels: one `zone:` label (`zone:cœur`, `zone:drive`, `zone:photos`, `zone:documents`, `zone:bibliothèques`, `zone:recherche`, `zone:ia`, `zone:web`, `zone:mobile`, `zone:os`, `zone:outillage`, `zone:site`), and once delivered one version label (`v0.1.0`). Create a missing label rather than skipping it.
 - Assignee: the person who did the work.
 - Status on the project: `Backlog` (defined), `Ready` (ready to take), `In progress` (its worktree exists), `In review` (PR open), `To test` (merged, a criterion still untested by hand), `Done` (tested by the dev and merged).
 - Every delivered change has an issue, including small ones only visible in `git log`.
@@ -185,7 +193,7 @@ Project ids for `gh project item-edit`: project `PVT_kwDODd-WqM4Br97_`, Status f
 ## Versioning
 
 - `MAJOR.MINOR.PATCH`, 0.x until the first box runs at home. The version lives only in `VERSION` at the repository root; the core gets it at build time (`-X main.version`) and `/api/health` returns it. `web/package.json` and `worker/pyproject.toml` keep their own package versions, not the product's.
-- One working day is one minor version. Bump it in the first commit of the day that changes something visible to a user. A day that only fixes bugs bumps the patch instead. Commits that only touch docs or tooling do not bump it.
+- One working day is one minor version. Bump it in the first commit of the day that changes something visible to a user. A day that only fixes bugs bumps the patch instead. Commits that only touch docs or tooling do not bump it, nor do commits that only touch the website (`site/`), which is not part of the box.
 - Never put the version number in a commit message.
 
 ## Commits and language
