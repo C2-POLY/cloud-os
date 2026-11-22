@@ -1,0 +1,354 @@
+---
+// The page, in the chapters of proposal A « La box ». Each section carries
+// data-k, the state of the 3D box while it is on screen (scripts/page.ts),
+// data-band when the box shows above it on a phone, and data-in on what
+// rises into place. Every string comes from the language's catalogue.
+import { type Lang, t } from '../i18n';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const s = t(lang);
+const wip = s.badge.wip;
+const catColours = ['#c2410c', '#2f6fdf', '#7c4ddb', '#13996b', '#0e7490'];
+const dockTiles = [
+  { c: 'var(--c-files)', i: 'i-drive' },
+  { c: 'var(--c-photos)', i: 'i-image' },
+  { c: 'var(--c-docs)', i: 'i-file' },
+  { c: 'var(--c-ask)', i: 'i-search' },
+];
+const chipIcons = ['i-monitor', 'i-monitor', 'i-cloud', 'i-phone'];
+let word = 0;
+---
+
+<section class="hero" data-k="0" data-band>
+  <div class="wrap">
+    <div class="copy">
+      <p class="label"><span class="led" aria-hidden="true"></span>{s.hero.label}</p>
+      <h1>
+        {
+          s.hero.title.map((line, n) => (
+            <span class={n === 0 ? 'a' : 'b'}>
+              {line.map((w, j) => (
+                <>
+                  {j > 0 && ' '}
+                  <span class="w" style={`--i:${word++}`}>
+                    {w}
+                  </span>
+                </>
+              ))}
+            </span>
+          ))
+        }
+      </h1>
+      <p class="lead">{s.hero.lead}</p>
+      <div class="actions">
+        <a class="button primary" href="#la-box">{s.hero.primary} <svg class="ic"><use href="#i-down"></use></svg></a>
+        <a class="button" href="#installer">{s.hero.secondary}</a>
+      </div>
+      <ul class="mini-dock" aria-label={s.hero.dockLabel}>
+        {
+          s.hero.dock.map((name, i) => (
+            <li>
+              <span class="tile" style={`--tile:${dockTiles[i].c}`}>
+                <svg class="ic">
+                  <use href={`#${dockTiles[i].i}`} />
+                </svg>
+              </span>
+              {name}
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="chapter" id="la-box" data-k="1" data-band>
+  <div class="wrap">
+    <div class="copy">
+      <p class="label" data-in><span class="led" aria-hidden="true"></span>{s.box.label}</p>
+      <h2 data-in>{s.box.title}</h2>
+      <p class="lead" data-in>{s.box.lead}</p>
+      <ul class="points">
+        {s.box.points.map((p) => (<li data-in><h3>{p.title}</h3><p>{p.text}</p></li>))}
+      </ul>
+      <figure class="tree figure" data-in>
+<pre><code><span class="d">/srv/cloudos/files/</span>
+├── <span class="d">camille/</span>
+│   ├── {s.box.tree.docDir}<span class="f">{s.box.tree.docFile}</span>
+│   └── {s.box.tree.photoDir}<span class="f">{s.box.tree.photoFile}</span>
+└── <span class="d">.cloudos/</span>
+    ├── trash/     <span class="n">{s.box.tree.trash}</span>
+    └── versions/  <span class="n">{s.box.tree.versions}</span></code></pre>
+        <figcaption>{s.box.caption}</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section class="chapter" id="fichiers" data-k="2" data-band>
+  <div class="wrap">
+    <div class="copy">
+      <p class="label" data-in><span class="tile" style="--tile:var(--c-files)"><svg class="ic"><use href="#i-drive"></use></svg></span>{s.files.label}</p>
+      <h2 data-in>{s.files.title}</h2>
+      <p class="lead" data-in>{s.files.lead}</p>
+      <ul class="points two">
+        {s.files.points.map((p) => (<li data-in><h3>{p.title}</h3><p>{p.text}</p></li>))}
+      </ul>
+      <div class="figure" data-in role="img" aria-label={s.files.figure}>
+        <div class="win" aria-hidden="true">
+          <div class="win-bar"><span class="wb"><svg class="ic"><use href="#i-x"></use></svg></span><span class="win-title"><svg class="ic"><use href="#i-drive"></use></svg>{s.files.win}</span><span class="wb"><svg class="ic"><use href="#i-max"></use></svg></span></div>
+          <div class="win-body">
+            <div class="segs">{s.files.segs.map((g, i) => <span class={i === 0 ? 'seg on' : 'seg'}>{g}</span>)}</div>
+            <ul class="rows">
+              {
+                s.files.rows.map((r) => (
+                  <li>
+                    <svg class={`ic ${r.kind}`}>
+                      <use href={r.kind === 'folder' ? '#i-folder' : '#i-file'} />
+                    </svg>
+                    <span>{r.name}</span>
+                    <small>{r.meta}</small>
+                  </li>
+                ))
+              }
+            </ul>
+            <div class="upload" data-in>
+              <div class="up-row"><span>{s.files.upload.name}</span><span>{s.files.upload.state}</span></div>
+              <div class="bar"><i></i></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <ul class="chips" data-in aria-label={s.files.chipsLabel}>
+        {s.files.chips.map((c, i) => (<li><svg class="ic"><use href={`#${chipIcons[i]}`} /></svg>{c}</li>))}
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="chapter" id="photos" data-k="3" data-band>
+  <div class="wrap">
+    <div class="copy">
+      <p class="label" data-in><span class="tile" style="--tile:var(--c-photos)"><svg class="ic"><use href="#i-image"></use></svg></span>{s.photos.label}</p>
+      <h2 data-in>{s.photos.title}</h2>
+      <p class="lead" data-in>{s.photos.lead}</p>
+      <ul class="points">
+        {s.photos.points.map((p) => (<li data-in><h3>{p.title}</h3><p>{p.text}</p></li>))}
+      </ul>
+      <div class="figure" data-in role="img" aria-label={s.photos.figure}>
+        <div class="win" aria-hidden="true">
+          <div class="win-bar"><span class="wb"><svg class="ic"><use href="#i-x"></use></svg></span><span class="win-title"><svg class="ic"><use href="#i-image"></use></svg>{s.photos.win}</span><span class="wb"><svg class="ic"><use href="#i-max"></use></svg></span></div>
+          <div class="win-body">
+            <div class="segs">{s.photos.segs.map((g, i) => <span class={i === 0 ? 'seg on' : 'seg'}>{g}</span>)}</div>
+            <p class="day">{s.photos.day} <small>{s.photos.dayCount}</small></p>
+            <div class="grid"><i class="ph1"></i><i class="ph2"></i><i class="ph5" data-v="0:42"></i><i class="ph3"></i><i class="ph6"></i><i class="ph4"></i><i class="ph7"></i><i class="ph8"></i></div>
+          </div>
+        </div>
+      </div>
+      <p class="phone-line" data-in><span class="toggle" aria-hidden="true"></span>{s.photos.phone}</p>
+    </div>
+  </div>
+</section>
+
+<section class="chapter" id="recherche" data-k="4" data-band>
+  <div class="wrap">
+    <div class="copy">
+      <p class="label" data-in><span class="tile" style="--tile:var(--c-ask)"><svg class="ic"><use href="#i-search"></use></svg></span>{s.search.label}</p>
+      <h2 data-in>{s.search.title}</h2>
+      <p class="lead" data-in>{s.search.lead}</p>
+      <ul class="points two">
+        {s.search.points.map((p) => (<li data-in><h3>{p.title}</h3><p>{p.text}</p></li>))}
+      </ul>
+      <div class="figure" data-in role="img" aria-label={s.search.figure}>
+        <div class="pal" aria-hidden="true">
+          <div class="pal-input"><svg class="ic"><use href="#i-search"></use></svg><span class="q" data-type={s.search.query}>{s.search.query}</span><kbd>{s.search.esc}</kbd></div>
+          <div class="pal-kinds">{s.search.kinds.map((k, i) => <span class={i === 0 ? 'on' : undefined}>{k}</span>)}</div>
+          <div class="pal-list">
+            <div class="pal-row on"><svg class="ic"><use href="#i-file"></use></svg><div><b>{s.search.results.first.name}</b><small>{s.search.results.first.meta}</small><p>{s.search.results.first.before}<mark>{s.search.results.first.match}</mark>{s.search.results.first.after}</p></div></div>
+            <div class="pal-row"><svg class="ic"><use href="#i-image"></use></svg><div><b>{s.search.results.second.name}</b><small>{s.search.results.second.meta}</small></div></div>
+            <div class="pal-row"><svg class="ic"><use href="#i-file"></use></svg><div><b>{s.search.results.third.name}</b><small>{s.search.results.third.meta}</small></div></div>
+          </div>
+        </div>
+      </div>
+      <ul class="cats" data-in aria-label={s.search.catsLabel}>
+        {s.search.cats.map((c, i) => <li style={`--c:${catColours[i]}`}>{c}</li>)}
+        <li style="--c:#6b6f7a">…</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="chapter" id="acces" data-k="5" data-band>
+  <div class="wrap">
+    <div class="copy">
+      <p class="label" data-in><span class="tile" style="--tile:var(--c-shares)"><svg class="ic"><use href="#i-share"></use></svg></span>{s.access.label} <span class="badge wip">{wip}</span></p>
+      <h2 data-in>{s.access.title}</h2>
+      <p class="lead" data-in>{s.access.lead}</p>
+      <ul class="points two">
+        {s.access.points.map((p) => (<li data-in><h3>{p.title}</h3><p>{p.text}</p></li>))}
+      </ul>
+      <div class="addr figure" data-in role="img" aria-label={s.access.figure}>
+        <div class="addr-bar" aria-hidden="true"><svg class="ic"><use href="#i-lock"></use></svg><span>https://cloudos<em>{s.access.domain}</em></span></div>
+        <ul class="devices" aria-hidden="true">{s.access.devices.map((d) => <li>{d}</li>)}</ul>
+        <div class="share-card" aria-hidden="true"><svg class="ic"><use href="#i-link"></use></svg><div><b>{s.access.shareTitle}</b><small>{s.access.shareText}</small></div><span class="toggle off"></span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="chapter" id="sauvegarde" data-k="6" data-band>
+  <div class="wrap">
+    <div class="copy">
+      <p class="label" data-in><span class="tile" style="--tile:var(--c-settings)"><svg class="ic"><use href="#i-usb"></use></svg></span>{s.backup.label} <span class="badge wip">{wip}</span></p>
+      <h2 data-in>{s.backup.title}</h2>
+      <p class="lead" data-in>{s.backup.lead}</p>
+      <ul class="points">
+        {s.backup.points.map((p) => (<li data-in><h3>{p.title}</h3><p>{p.text}</p></li>))}
+      </ul>
+      <div class="widget figure" data-in role="img" aria-label={s.backup.figure}>
+        <h3 aria-hidden="true">{s.backup.widget}</h3>
+        <p class="w-foot" aria-hidden="true" style="margin:-6px 0 14px"><span>{s.backup.summary}</span></p>
+        <ol class="nights" data-in aria-hidden="true">
+          {
+            s.backup.nights.map((n, i) => (
+              <li style={`--n:${i}`} class={i === 6 ? 'test' : undefined}>
+                {n}
+                <svg class="ic">
+                  <use href={i === 6 ? '#i-check' : '#i-moon'} />
+                </svg>
+              </li>
+            ))
+          }
+        </ol>
+        <p class="w-foot" aria-hidden="true"><span class="w-key"><svg class="ic"><use href="#i-lock"></use></svg>{s.backup.disk}</span><span><svg class="ic"><use href="#i-check"></use></svg>{s.backup.tested}</span><span><svg class="ic"><use href="#i-cloud"></use></svg>{s.backup.remote}</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="desk-sec" id="bureau" data-k="7">
+  <div class="wrap">
+    <div class="desk-head">
+      <div class="copy">
+        <p class="label" data-in><span class="tile" style="--tile:#ffffff;color:#1d1b26;box-shadow:0 0 0 1px var(--line)"><svg class="ic"><use href="#i-monitor"></use></svg></span>{s.desk.label}</p>
+        <h2 data-in>{s.desk.title}</h2>
+      </div>
+      <p class="lead" data-in>{s.desk.lead}</p>
+    </div>
+    <div class="mock-frame" data-in role="img" aria-label={s.desk.figure}>
+      <div class="mock" aria-hidden="true" data-locale={s.locale}>
+        <div class="mock-wp"></div>
+        <div class="mock-bar">
+          <svg class="ic"><use href="#i-cloud"></use></svg>
+          <b>{s.photos.win}</b>
+          <span class="fill"></span>
+          <span class="mock-ask"><svg class="ic"><use href="#i-search"></use></svg>{s.desk.ask} <kbd>⌘K</kbd></span>
+          <span class="fill"></span>
+          <span class="soft" data-now="short">{s.desk.now.short}</span>
+          <span class="soft hide-s">{s.desk.user}</span>
+        </div>
+        <div class="mock-clock hide-s"><time data-now="time">{s.desk.now.time}</time><span data-now="day">{s.desk.now.day}</span></div>
+        <section class="mw mw-files hide-s">
+          <div class="win-bar"><span class="wb"><svg class="ic"><use href="#i-x"></use></svg></span><span class="win-title"><svg class="ic"><use href="#i-drive"></use></svg>{s.files.win}</span><span class="wb"><svg class="ic"><use href="#i-max"></use></svg></span></div>
+          <div class="win-body">
+            <div class="segs">{s.files.segs.map((g, i) => <span class={i === 0 ? 'seg on' : 'seg'}>{g}</span>)}</div>
+            <ul class="rows">
+              {
+                [s.files.rows[0], s.files.rows[1], s.files.rows[3]].map((r) => (
+                  <li>
+                    <svg class={`ic ${r.kind}`}>
+                      <use href={r.kind === 'folder' ? '#i-folder' : '#i-file'} />
+                    </svg>
+                    <span>{r.name}</span>
+                    <small>{r.meta}</small>
+                  </li>
+                ))
+              }
+            </ul>
+          </div>
+        </section>
+        <section class="mw mw-photos front">
+          <div class="win-bar"><span class="wb"><svg class="ic"><use href="#i-x"></use></svg></span><span class="win-title"><svg class="ic"><use href="#i-image"></use></svg>{s.photos.win}</span><span class="wb"><svg class="ic"><use href="#i-max"></use></svg></span></div>
+          <div class="win-body">
+            <div class="segs">{s.photos.segs.map((g, i) => <span class={i === 0 ? 'seg on' : 'seg'}>{g}</span>)}</div>
+            <p class="day">{s.desk.days[0].day} <small>{s.desk.days[0].count}</small></p>
+            <div class="grid"><i class="ph1"></i><i class="ph2"></i><i class="ph5" data-v="0:42"></i><i class="ph3"></i><i class="ph6"></i><i class="ph4"></i><i class="ph7 hide-s"></i><i class="ph8 hide-s"></i><i class="ph2 hide-s"></i><i class="ph3 hide-s"></i><i class="ph1 hide-s"></i><i class="ph6 hide-s"></i></div>
+            <p class="day">{s.desk.days[1].day} <small>{s.desk.days[1].count}</small></p>
+            <div class="grid"><i class="ph8"></i><i class="ph4"></i><i class="ph7"></i><i class="ph5 hide-s"></i></div>
+          </div>
+        </section>
+        <nav class="mock-dock">
+          <span class="dk light" style="--tile:rgba(255,255,255,.9)"><svg class="ic"><use href="#i-monitor"></use></svg></span>
+          <span class="dk open" style="--tile:#2f6fdf"><svg class="ic"><use href="#i-drive"></use></svg></span>
+          <span class="dk open" style="--tile:#e8862a"><svg class="ic"><use href="#i-image"></use></svg></span>
+          <span class="dk" style="--tile:#c2410c"><svg class="ic"><use href="#i-file"></use></svg></span>
+          <span class="dk hide-s" style="--tile:#13996b"><svg class="ic"><use href="#i-share"></use></svg></span>
+          <span class="dk hide-s" style="--tile:#6b6f7a"><svg class="ic"><use href="#i-trash"></use></svg></span>
+          <span class="dk hide-s" style="--tile:#0e7490"><svg class="ic"><use href="#i-gear"></use></svg></span>
+          <span class="dk-sep"></span>
+          <span class="dk" style="--tile:#1d1b26"><svg class="ic"><use href="#i-search"></use></svg></span>
+        </nav>
+      </div>
+    </div>
+    <ul class="desk-notes">
+      {
+        s.desk.notes.map((n) => (
+          <li data-in>
+            <h3>
+              {n.title}
+              {n.wip && ' '}
+              {n.wip && <span class="badge wip">{wip}</span>}
+            </h3>
+            <p>{n.text}</p>
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+</section>
+
+<section class="soon-sec" data-k="8">
+  <div class="wrap">
+    <p class="label" data-in>{s.soon.label}</p>
+    <h2 data-in>{s.soon.title}</h2>
+    <ul class="soon-list">
+      {s.soon.items.map((it) => (<li data-in><span class="badge soon">{s.badge.soon}</span><h3>{it.title}</h3><p>{it.text}</p></li>))}
+    </ul>
+  </div>
+</section>
+
+<section class="chapter end" id="installer" data-k="9">
+  <div class="wrap">
+    <div class="copy">
+      <p class="label" data-in><span class="led" aria-hidden="true"></span>{s.install.label}</p>
+      <h2 data-in>{s.install.title}</h2>
+      <p class="lead" data-in>{s.install.lead}</p>
+      <dl class="needs" data-in>
+        {
+          s.install.needs.map((n) => (
+            <div>
+              <dt>{n.term}</dt>
+              <dd>
+                {n.text}
+                {n.note && <small>{n.note}</small>}
+              </dd>
+            </div>
+          ))
+        }
+      </dl>
+      <ul class="status" data-in>
+        <li><span class="badge ok">{s.badge.ok}</span><span>{s.install.status.ok}</span></li>
+        <li><span class="badge wip">{s.badge.wipShort}</span><span>{s.install.status.wip}</span></li>
+        <li><span class="badge soon">{s.badge.soon}</span><span>{s.install.status.soon}</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<script>
+  import '../scripts/page';
+</script>
