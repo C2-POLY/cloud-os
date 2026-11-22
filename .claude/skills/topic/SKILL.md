@@ -144,12 +144,13 @@ Ce que ces tests doivent couvrir pour le sujet :
 - **Migrations** : si le sujet en ajoute une, un test l'applique, la défait et la réapplique (voir `core/internal/migrate/migrate_test.go`), sur une base qui a déjà des données.
 - **Données** : si le sujet touche au stockage, à la corbeille, à la déduplication ou à la sauvegarde, un test vérifie que les originaux sont intacts (même hash avant et après).
 - **Tests externes** : seulement si le sujet touche un fournisseur d'IA externe ou GitHub, ceux qui les appellent pour de vrai, lancés à part.
+- **Site public** : un sujet qui ne touche que `site/` n'a ni pile ni `make test`. Il se construit avec `cd site && npm ci && npm run build` (ce que fait `.github/workflows/site.yml`). Son poids se mesure en gzip : au plus 30 Ko pour le premier chargement (la page et son CSS en ligne, plus le JavaScript chargé avant `load`) et au plus 180 Ko pour la 3D. Lighthouse sur mobile doit donner au moins 90 dans chaque catégorie, et la page ne demande rien à un autre domaine (`docs/architecture/site.md`).
 
 Un test qui échoue s'explique par le sujet ou se corrige ; ne le désactive pas. Un warning nouveau se corrige. En cas de doute, lance la même commande dans le dossier principal, sur `main`, pour comparer.
 
 ## 6. Tester visuellement
 
-Vérifie ce que le sujet change à l'écran : lance la pile du worktree avec un jeu de données d'exemple (jamais de vrais fichiers personnels), ouvre l'interface web dans le navigateur intégré (`mcp__Claude_Browser__preview_start`), et regarde la page touchée par une capture. Contrôle aussi la largeur mobile (`resize_window`, préréglage `mobile`), le thème sombre, les textes coupés et les états vides ou en cours d'indexation. Pour l'app mobile, utilise le simulateur iOS. Dis ce que tu as vu et ce que tu n'as pas pu voir (un upload en arrière-plan, un vrai disque, la box réelle).
+Vérifie ce que le sujet change à l'écran : lance la pile du worktree avec un jeu de données d'exemple (jamais de vrais fichiers personnels), ouvre l'interface web dans le navigateur intégré (`mcp__Claude_Browser__preview_start`), et regarde la page touchée par une capture. Contrôle aussi la largeur mobile (`resize_window`, préréglage `mobile`), le thème sombre, les textes coupés et les états vides ou en cours d'indexation. Pour l'app mobile, utilise le simulateur iOS. Pour le site public, ouvre `npm run preview` (dans `site/`) aux deux langues, à 1440 et 375 px, en clair et en sombre. Dis ce que tu as vu et ce que tu n'as pas pu voir (un upload en arrière-plan, un vrai disque, la box réelle).
 
 ## 7. Faire tester le dev, avec lecture du terminal
 
@@ -160,6 +161,8 @@ cd <chemin absolu du worktree> && COMPOSE_PROJECT_NAME=cloud-os-<nom> docker com
 ```
 
 Arrête d'abord ta propre pile du worktree (`docker compose -p cloud-os-<nom> down`) pour libérer ses ports, et ajoute à la commande les variables `CLOUDOS_*_PORT` choisies à l'étape 3 s'il y en a. L'interface est sur `http://localhost:<CLOUDOS_CORE_PORT, 8480 par défaut>`, et Vite en rechargement à chaud sur `<CLOUDOS_WEB_PORT, 5180 par défaut>`.
+
+Pour un sujet qui ne touche que le site public, pas de pile : la commande est `cd <chemin absolu du worktree>/site && npm ci && npm run dev`, et la page est sur `http://localhost:4321/cloud-os/` (en français sous `/cloud-os/fr/`).
 
 Le chemin est celui du worktree, vérifié avec `git worktree list` avant l'envoi : ne reprends jamais celui d'une commande précédente. Si son terminal montre un autre chemin, dis-le tout de suite.
 

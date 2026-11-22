@@ -1,0 +1,14 @@
+---
+import Base from '../layouts/Base.astro';
+import Stage from '../components/Stage.astro';
+import Home from '../components/Home.astro';
+import { t } from '../i18n';
+
+const lang = 'en';
+const s = t(lang);
+---
+
+<Base lang={lang} page="" title={s.meta.title} description={s.meta.description}>
+  <Stage slot="stage" lang={lang} />
+  <Home lang={lang} />
+</Base>
