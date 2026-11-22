@@ -1,0 +1,21 @@
+---
+import { type Lang, t, asset, repo } from '../i18n';
+
+interface Props {
+  lang: Lang;
+}
+
+const s = t(Astro.props.lang);
+---
+
+<footer class="foot">
+  <div class="wrap">
+    <span class="brand"><svg class="ic"><use href="#i-cloud"></use></svg>Cloud OS</span>
+    <span>{s.footer.name}</span>
+    <span class="fill"></span>
+    <a href={repo}>{s.footer.code}</a>
+    <a href={`${repo}#licence`}>{s.footer.licence}</a>
+    <a href={asset('licences.txt')}>{s.footer.thirdParty}</a>
+    <span>{s.footer.trackers}</span>
+  </div>
+</footer>

@@ -23,6 +23,7 @@ Comment Cloud OS est construit, domaine par domaine, avec ses schémas. Le besoi
 | App mobile (Expo) : connexion, fichiers, photos | [mobile.md](mobile.md) | `mobile/`, `shared/api-types.ts` | #37 |
 | Modèles d'IA locaux : texte, photos, OCR, dans l'image du worker | [models.md](models.md) | `worker/src/worker/models.py`, `worker/models/fetch.sh`, `worker/bench/` | #66 |
 | Vecteurs et recherche par le sens : photos, registre des modèles, requêtes encodées par le worker | [embeddings.md](embeddings.md) | `core/internal/photovec`, `core/internal/embed`, `worker/src/worker/photovec.py`, `embedserver.py` | #71 |
+| Le site public : la box qui s'ouvre au défilement, en anglais et en français, publié sur GitHub Pages | [site.md](site.md) | `site/`, `.github/workflows/site.yml` | #113 |
 
 ## Quand mettre un fichier à jour
 

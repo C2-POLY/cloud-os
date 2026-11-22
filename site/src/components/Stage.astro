@@ -1,0 +1,50 @@
+---
+// The fixed 3D stage: the SVG poster of the closed box shows first, and stays
+// as the static view without WebGL; scripts/box3d.ts draws the exploded box
+// on the canvas once three.js has loaded, after the page.
+import { type Lang, t } from '../i18n';
+
+interface Props {
+  lang: Lang;
+}
+
+const s = t(Astro.props.lang);
+---
+
+<div class="stage" aria-hidden="true" data-layers={JSON.stringify(s.layers)}>
+  <svg class="poster" viewBox="-300 -200 600 400">
+    <defs>
+      <rect id="p-sq" x="-150" y="-150" width="300" height="300" rx="69" vector-effect="non-scaling-stroke" />
+      <linearGradient id="p-side" x1="0" x2="1" y1="0" y2="0">
+        <stop offset="0" class="p-s1" /><stop offset="0.5" class="p-s2" /><stop offset="1" class="p-s3" />
+      </linearGradient>
+      <linearGradient id="p-topg" x1="0" x2="1" y1="0" y2="1">
+        <stop offset="0" class="p-s2" /><stop offset="1" class="p-s3" />
+      </linearGradient>
+      <linearGradient id="p-led" x1="0" x2="1">
+        <stop offset="0" class="p-l1" /><stop offset="0.5" class="p-l2" /><stop offset="1" class="p-l3" />
+      </linearGradient>
+      <radialGradient id="p-shadow">
+        <stop offset="0" class="p-sh" /><stop offset="1" class="p-sh0" />
+      </radialGradient>
+      <clipPath id="p-front" clipPathUnits="userSpaceOnUse"><rect x="-300" y="0" width="600" height="300" /></clipPath>
+      <filter id="p-blur" x="-1" y="-3" width="3" height="7"><feGaussianBlur stdDeviation="7" /></filter>
+    </defs>
+    <ellipse cx="0" cy="118" rx="250" ry="58" fill="url(#p-shadow)" />
+    <use href="#p-sq" transform="translate(0 67) scale(1 .44) rotate(45)" fill="url(#p-side)" />
+    <rect x="-183.9" y="-60" width="367.8" height="127" fill="url(#p-side)" />
+    <g transform="translate(0 -32.7)" clip-path="url(#p-front)"><use href="#p-sq" class="p-groove" transform="scale(1 .44) rotate(45)" /></g>
+    <g transform="translate(0 -15.8)" clip-path="url(#p-front)"><use href="#p-sq" class="p-groove" transform="scale(1 .44) rotate(45)" /></g>
+    <g transform="translate(0 1.1)" clip-path="url(#p-front)"><use href="#p-sq" class="p-groove" transform="scale(1 .44) rotate(45)" /></g>
+    <g transform="translate(0 18.1)" clip-path="url(#p-front)"><use href="#p-sq" class="p-groove" transform="scale(1 .44) rotate(45)" /></g>
+    <g transform="translate(0 35)" clip-path="url(#p-front)"><use href="#p-sq" class="p-groove" transform="scale(1 .44) rotate(45)" /></g>
+    <g transform="translate(0 52)" clip-path="url(#p-front)"><use href="#p-sq" class="p-groove" transform="scale(1 .44) rotate(45)" /></g>
+    <use href="#p-sq" transform="translate(0 -60) scale(1 .44) rotate(45)" fill="url(#p-topg)" />
+    <g transform="translate(-92 -6) rotate(23.8)">
+      <rect x="-34" y="-6" width="68" height="12" rx="6" fill="url(#p-led)" opacity=".55" filter="url(#p-blur)" />
+      <rect x="-26" y="-2.6" width="52" height="5.2" rx="2.6" fill="url(#p-led)" />
+    </g>
+  </svg>
+  <canvas id="box3d"></canvas>
+  <div class="callout" id="callout"><i></i><span></span><b></b></div>
+</div>
