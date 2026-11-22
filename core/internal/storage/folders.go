@@ -225,11 +225,12 @@ func applyMove(ctx context.Context, db beginner, moveID int64, owner, from, to s
 	return tx.Commit(ctx)
 }
 
-// RecoverMoves settles the moves, trashes, restores and replaces left by a
-// crash. The core calls it at startup, before serving. One whose target is on
-// disk and source is gone is finished; one whose source is still there and
-// target is not is dropped; anything else is left in the journal and logged,
-// never guessed.
+// RecoverMoves settles the moves, trashes, restores, replaces and rescues
+// (an SMB write kept in the trash, SettleRescued) left by a crash. The core
+// calls it at startup, before serving. One whose target is on disk and
+// source is gone is finished; one whose source is still there and target is
+// not is dropped; anything else is left in the journal and logged, never
+// guessed.
 //
 // The smb service is a process of its own, which may be writing while the
 // core starts: each entry is settled under its owner's lock, and only if it is
@@ -290,6 +291,8 @@ func (s *Store) recoverMove(ctx context.Context, conn *pgxpool.Conn, id int64) (
 		return s.recoverVersion(ctx, conn, id, owner, from, *versionID)
 	case op == "replace" && versionID != nil:
 		return s.recoverReplace(ctx, conn, id, owner, from, to, *versionID)
+	case op == "rescue" && trashID != nil:
+		return s.recoverRescue(ctx, conn, id, owner, from, to, *trashID)
 	}
 	src, dst := s.diskPath(owner, from), s.diskPath(owner, to)
 	var tid int64

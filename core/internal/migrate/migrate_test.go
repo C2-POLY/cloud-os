@@ -3,6 +3,7 @@ package migrate_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -80,6 +81,8 @@ var tables = []struct {
 	{26, []string{}, `SELECT 1`},
 	// Migration 27 grants that role storage's SMB writes and journals op 'replace', no table (TestSMBWriteMigration).
 	{27, []string{}, `SELECT 1`},
+	// Migration 29 gives the trash a reason and journals op 'rescue', no table (TestSMBRescueMigration).
+	{29, []string{}, `SELECT 1`},
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {
@@ -392,6 +395,80 @@ func TestSMBWriteMigration(t *testing.T) {
 		t.Fatalf("up 27 again: %v", err)
 	}
 	check("up again", want, true)
+}
+
+// TestSMBRescueMigration checks that migration 29 gives the trash its
+// reason, journals op 'rescue' and grants the smb service's role the two
+// columns of a kept SMB write; that undoing it is refused while a rescue is
+// journaled, then keeps every trash item; and that it applies again.
+func TestSMBRescueMigration(t *testing.T) {
+	ctx := context.Background()
+	pool, err := db.Open(ctx, testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	p, err := migrate.NewProvider(db.SQL(pool))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.UpTo(ctx, 27); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO trash (owner, path, kind, size, expires_at) VALUES ('enzo', 'deleted.txt', 'file', 1, now() + interval '30 days')`); err != nil {
+		t.Fatal(err)
+	}
+	before := smbWrites(t, pool)
+	with := func(extra ...string) string {
+		w := append(append([]string{}, before...), extra...)
+		slices.Sort(w)
+		return fmt.Sprint(w)
+	}
+
+	if _, err := p.UpTo(ctx, 29); err != nil {
+		t.Fatalf("up 29: %v", err)
+	}
+	if got := fmt.Sprint(smbWrites(t, pool)); got != with("INSERT files.trash_id", "INSERT trash.reason") {
+		t.Errorf("up: cloudos_smb writes\n%v\nwant\n%v", got, with("INSERT files.trash_id", "INSERT trash.reason"))
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO trash (owner, path, kind, size, expires_at, reason) VALUES ('enzo', 'kept.txt', 'file', 1, now() + interval '30 days', 'smb_not_saved')`); err != nil {
+		t.Fatalf("a kept SMB write: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO trash (owner, path, kind, size, expires_at, reason) VALUES ('enzo', 'x.txt', 'file', 1, now(), 'whatever')`); err == nil {
+		t.Error("the trash took an unknown reason")
+	}
+
+	// A rescue in the journal holds the migration up: the core settles it first
+	if _, err := pool.Exec(ctx, `INSERT INTO moves (owner, from_path, to_path, op, trash_id) SELECT 'enzo', 'id', 'kept.txt', 'rescue', id FROM trash WHERE path = 'kept.txt'`); err != nil {
+		t.Fatalf("journal a rescue: %v", err)
+	}
+	if _, err := p.Down(ctx); err == nil {
+		t.Fatal("down 29 with a rescue in the journal was not refused")
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM moves WHERE op = 'rescue'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Down(ctx); err != nil {
+		t.Fatalf("down 29: %v", err)
+	}
+	if got := fmt.Sprint(smbWrites(t, pool)); got != with() {
+		t.Errorf("down: cloudos_smb writes %v, want %v", got, with())
+	}
+	var items int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM trash`).Scan(&items); err != nil || items != 2 {
+		t.Errorf("after down: %d trash items (%v), want 2", items, err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO moves (owner, from_path, to_path, op) VALUES ('enzo', 'id', 'kept.txt', 'rescue')`); err == nil {
+		t.Error("after down, the journal still takes op 'rescue'")
+	}
+
+	if _, err := p.UpTo(ctx, 29); err != nil {
+		t.Fatalf("up 29 again: %v", err)
+	}
+	var reasons int
+	if err := pool.QueryRow(ctx, `SELECT count(reason) FROM trash`).Scan(&reasons); err != nil || reasons != 0 {
+		t.Errorf("up again: %d reasons (%v), want 0", reasons, err)
+	}
 }
 
 // TestFolderBackfill checks that migration 4 gives every existing file's

@@ -2,7 +2,7 @@ import { File, Folder, RotateCcw, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { messageOf } from '../api.ts'
 import { ConfirmDialog } from './Dialogs.tsx'
-import { emptyTrash, formatDate, formatSize, inDays, listTrash, parentOf, purgeTrash, restoreTrash, type TrashEntry } from './files.ts'
+import { emptyTrash, formatDate, formatSize, inDays, listTrash, parentOf, purgeTrash, restoreTrash, trashReasons, type TrashEntry } from './files.ts'
 
 type Confirm = { kind: 'purge'; item: TrashEntry } | { kind: 'empty' } | null
 
@@ -66,11 +66,12 @@ export function TrashPage() {
                     {it.kind === 'dir' ? <Folder size={18} aria-hidden className="icon-folder" /> : <File size={18} aria-hidden />}
                     <span>{it.name}</span>
                     <span className="meta muted">
-                      {formatSize(it.size)} · supprimé le {formatDate(it.deleted_at)}
+                      {formatSize(it.size)} · {it.reason ? 'gardé' : 'supprimé'} le {formatDate(it.deleted_at)}
                     </span>
                     <span className="origin muted">
                       Était dans {parentOf(it.path) || 'Mon drive'} · effacé {inDays(it.expires_at)}
                     </span>
+                    {it.reason && <span className="origin kept">{trashReasons[it.reason]}</span>}
                   </div>
                 </td>
                 <td className="col-size muted">{formatSize(it.size)}</td>

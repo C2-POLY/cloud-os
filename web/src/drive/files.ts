@@ -113,6 +113,13 @@ export interface TrashEntry {
   size: number
   deleted_at: string
   expires_at: string
+  /** Why the box put it there itself; absent for a deletion. */
+  reason?: 'smb_not_saved'
+}
+
+/** What a trash item's reason says, for the one the box put there itself. */
+export const trashReasons: Record<NonNullable<TrashEntry['reason']>, string> = {
+  smb_not_saved: 'Gardé : l’enregistrement en SMB a échoué',
 }
 
 export function trashEntry(path: string): Promise<TrashEntry> {

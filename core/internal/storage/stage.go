@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // Staged is a file being written at random offsets by a client that sends its
@@ -236,7 +238,8 @@ func (st *Staged) Truncate(size int64) error {
 // file already there, whether the one it started from or one stored there
 // since by someone else, has its content kept as a version first. The last
 // writer wins and nothing is lost. A content identical to the stored one
-// stores nothing. The working file is gone afterwards, whatever the outcome.
+// stores nothing. A content it cannot store is kept, in the trash or until
+// the database answers (KeptError), never dropped.
 func (st *Staged) Commit(opt PutOptions) (File, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -278,34 +281,78 @@ func (st *Staged) closeBase() {
 
 // commitStage syncs and closes the working file, then stores it. The file is
 // closed before it is linked: nothing can write through it once stored.
+//
+// Once closed, the working file is never dropped: stored, its extra name
+// goes; not stored (the database down, the name taken), it is kept
+// (keepStaged), in the trash at once if the database answers, and the error
+// wraps ErrKept (KeptError).
 func (s *Store) commitStage(st *Staged, opt PutOptions) (File, error) {
 	st.closeBase()
 	name := st.work.Name()
-	// Its own working file under .cloudos/tmp/smb: linked into place on
-	// success, dropped on failure.
-	defer os.Remove(name)
 	if err := st.work.Sync(); err != nil {
 		st.work.Close()
+		os.Remove(name) //nolint:errcheck // its own working file under .cloudos/tmp/smb, which the disk failed to write
 		return File{}, fmt.Errorf("sync: %w", err)
 	}
 	if err := st.work.Close(); err != nil {
+		os.Remove(name) //nolint:errcheck // its own working file under .cloudos/tmp/smb, which the disk failed to write
 		return File{}, fmt.Errorf("close: %w", err)
 	}
-	info, err := os.Lstat(name)
-	if err != nil {
-		return File{}, err
+	mod := opt.ModTime
+	if mod.IsZero() {
+		mod = time.Now()
 	}
-	sum, sniff, err := hashFile(name)
-	if err != nil {
-		return File{}, err
+	var (
+		sum  []byte
+		size int64
+	)
+	f, err := func() (File, error) {
+		info, err := os.Lstat(name)
+		if err != nil {
+			return File{}, err
+		}
+		size = info.Size()
+		var sniff []byte
+		if sum, sniff, err = hashFile(name); err != nil {
+			return File{}, err
+		}
+		if cur, err := s.Lookup(st.ctx, st.owner, st.path); err == nil && !cur.IsDir() &&
+			cur.Size == size && bytes.Equal(cur.SHA256, sum) {
+			return cur, nil
+		}
+		opt.Replace = true
+		opt.ModTime = mod
+		return s.finish(st.ctx, st.owner, st.path, name, sum, size, sniff, opt)
+	}()
+	if err == nil {
+		// Linked into place, or the same content already there: its own
+		// working file under .cloudos/tmp/smb is a name too many.
+		os.Remove(name) //nolint:errcheck // linked into place, or not needed
+		return f, nil
 	}
-	if cur, err := s.Lookup(st.ctx, st.owner, st.path); err == nil && !cur.IsDir() &&
-		cur.Size == info.Size() && bytes.Equal(cur.SHA256, sum) {
-		return cur, nil
-	}
-	opt.Replace = true
-	return s.finish(st.ctx, st.owner, st.path, name, sum, info.Size(), sniff, opt)
+	return File{}, s.keep(st.ctx, st.owner, st.path, name, sum, size, mod, err)
 }
+
+// keep rescues the content a Commit could not store, and moves it into the
+// trash at once if the database answers, without waiting long for it.
+func (s *Store) keep(ctx context.Context, owner, p, name string, sum []byte, size int64, mod time.Time, cause error) error {
+	id, err := s.keepStaged(owner, p, name, sum, size, mod, cause)
+	if err != nil {
+		slog.Error("smb write could not be kept: its working file stays under .cloudos/tmp/smb until core smb restarts",
+			"owner", owner, "path", p, "file", name, "err", err)
+		return fmt.Errorf("%w (and keeping it failed: %v)", cause, err)
+	}
+	kept := &KeptError{Cause: cause, ID: id}
+	settle, cancel := context.WithTimeout(context.WithoutCancel(ctx), settleNowTimeout)
+	defer cancel()
+	// An error here is the database still away: the rescue waits for it.
+	kept.TrashID, _ = s.settleRescue(settle, owner, id)
+	return kept
+}
+
+// settleNowTimeout bounds the wait for the database at a failed Commit: the
+// client waits for its CLOSE meanwhile.
+const settleNowTimeout = 10 * time.Second
 
 // dropWork removes the working file of an aborted write.
 func (st *Staged) dropWork() {

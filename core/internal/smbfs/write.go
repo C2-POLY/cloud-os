@@ -180,7 +180,8 @@ func emptyStaged(e *staging) error { return e.st.Truncate(0) }
 // release ends one handle. The last one stores the file, unless a handle
 // that wrote ended without a CLOSE, or one of its writes failed (a full
 // disk): what is there is not what the client meant. clientClose is whether
-// this one closed with a CLOSE.
+// this one closed with a CLOSE. A CLOSE whose storing fails keeps the
+// content (storage.KeptError) and still gets an error.
 func (r *registry) release(e *staging, wrote, failed, clientClose bool, logger *slog.Logger) error {
 	r.mu.Lock()
 	if (wrote && !clientClose) || failed {
@@ -206,11 +207,19 @@ func (r *registry) release(e *staging, wrote, failed, clientClose bool, logger *
 	opt := storage.NoExpectations()
 	opt.ModTime = mod
 	_, err := e.st.Commit(opt)
-	if err != nil {
+	var kept *storage.KeptError
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &kept) && kept.TrashID != 0:
+		logger.Warn("smb write kept in the trash", "owner", e.owner, "path", p, "trash_id", kept.TrashID, "reason", kept.Cause)
+	case errors.As(err, &kept):
+		logger.Warn("smb write kept until the database answers", "owner", e.owner, "path", p, "rescue", kept.ID, "reason", kept.Cause)
+	default:
 		logger.Error("smb write not stored", "owner", e.owner, "path", p, "err", err)
-		return toOS(err)
 	}
-	return nil
+	// The client is told it was not saved, whether or not it was kept.
+	return toOS(err)
 }
 
 // errNotSaved is what a CLOSE gets when the file it closes was not stored.

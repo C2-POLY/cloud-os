@@ -252,6 +252,7 @@ func serve(ctx context.Context, c core) error {
 	if finished+dropped > 0 {
 		slog.Warn("settled moves left by a crash", "finished", finished, "dropped", dropped)
 	}
+	settleRescued(ctx, c.files)
 
 	// The smb service connects as its own database role (migration 0026),
 	// with this password; unset, the role cannot log in. Before listening:
@@ -317,7 +318,9 @@ func serve(ctx context.Context, c core) error {
 // the core down. It applies no migration and does none of the core's
 // start-up cleaning (temporary files, moves): that is the core's, which may
 // be writing meanwhile. It empties only its own staging folder,
-// .cloudos/tmp/smb, which nothing else writes. It connects as the database
+// .cloudos/tmp/smb, which nothing else writes, and moves the SMB writes it
+// kept while the database was away into the trash, at its start and every
+// minute. It connects as the database
 // role smbfs.DBRole, and refuses a wider one.
 func serveSMB(ctx context.Context) error {
 	if os.Getenv("CLOUDOS_SMB") != "1" {
@@ -359,6 +362,9 @@ func serveSMB(ctx context.Context) error {
 	} else if n > 0 {
 		slog.Warn("removed SMB writes left unfinished by the last stop", "count", n)
 	}
+	// SMB writes that could not be stored, kept until the database answers
+	settleRescued(ctx, files)
+	go settleRescuedEvery(ctx, files, time.Minute)
 	addr := envOr("CLOUDOS_SMB_ADDR", ":445")
 	// The tailscale service relays the tailnet's SMB with a PROXY header
 	// naming each device, so the attempt limits count per device.
@@ -378,6 +384,33 @@ func serveSMB(ctx context.Context) error {
 	slog.Info("SMB serving the drives", "addr", srv.Addr().String(), "share", smbfs.ShareName, "version", version)
 	<-ctx.Done()
 	return nil
+}
+
+// settleRescued moves the SMB writes kept while the database was away into
+// the trash (storage.SettleRescued). A failure is logged: they wait for the
+// next attempt, and the service goes on.
+func settleRescued(ctx context.Context, files *storage.Store) {
+	n, err := files.SettleRescued(ctx)
+	if n > 0 {
+		slog.Warn("moved SMB writes kept while the database was away into the trash", "count", n)
+	}
+	if err != nil && ctx.Err() == nil {
+		slog.Error("kept SMB writes wait for the database", "err", err)
+	}
+}
+
+// settleRescuedEvery tries settleRescued again every so often until ctx ends.
+func settleRescuedEvery(ctx context.Context, files *storage.Store, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			settleRescued(ctx, files)
+		}
+	}
 }
 
 // frontDoor reads how the box is reached (docs/architecture/box.md, « Accès »):

@@ -29,6 +29,9 @@ type TrashItem struct {
 	Size      int64 // bytes, children included
 	DeletedAt time.Time
 	ExpiresAt time.Time
+	// Reason is why it is in the trash when nobody deleted it: RescueReason
+	// for an SMB write the box could not store. Empty for a deletion.
+	Reason string
 }
 
 func (s *Store) trashTTL() time.Duration {
@@ -72,11 +75,11 @@ func (s *Store) withOwnerLock(ctx context.Context, owner string, fn func(conn *p
 	return fn(conn)
 }
 
-const trashColumns = `id, owner, path, kind, size, deleted_at, expires_at`
+const trashColumns = `id, owner, path, kind, size, deleted_at, expires_at, coalesce(reason, '')`
 
 func scanTrash(row pgx.Row) (TrashItem, error) {
 	var t TrashItem
-	err := row.Scan(&t.ID, &t.Owner, &t.Path, &t.Kind, &t.Size, &t.DeletedAt, &t.ExpiresAt)
+	err := row.Scan(&t.ID, &t.Owner, &t.Path, &t.Kind, &t.Size, &t.DeletedAt, &t.ExpiresAt, &t.Reason)
 	return t, err
 }
 
