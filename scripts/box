@@ -1,30 +1,38 @@
 #!/bin/sh
 # The one entry point of the production stack (docs/architecture/box.md).
 #
-#   scripts/box init       draw the secrets into box.env (once) and create the data folders
-#   scripts/box up         check box.env, then build and start the stack
-#   scripts/box tailscale  once the box is in the tailnet, write its https address
-#                          (and the share links' with Funnel) into box.env, then apply them
-#   scripts/box <anything> pass it to `docker compose`, for example
-#                          scripts/box logs --follow
-#                          scripts/box run --rm core verify
-#                          scripts/box down
+#   scripts/box init                  draw the secrets into box.env (once) and create the data folders
+#   scripts/box up                    check box.env, then build and start the stack
+#   scripts/box tailscale             once the box is in the tailnet, write its https address
+#                                     (and the share links' with Funnel) into box.env, then apply them
+#   scripts/box backup-init DIR       create the encrypted backup on the disk at DIR, show its key once
+#   scripts/box backup                back the box up now
+#   scripts/box backup-status         the last backups, checks and restore tests
+#   scripts/box backup-remote-init    create the remote copy named by CLOUDOS_BACKUP_REMOTE in box.env
+#   scripts/box update                git pull, back up, then rebuild and restart; stops if the backup fails
+#   scripts/box restore DIR [RUN]     put a backup back onto a new box, then check every file
+#   scripts/box <anything>            pass it to `docker compose`, for example
+#                                     scripts/box logs --follow
+#                                     scripts/box run --rm core verify
+#                                     scripts/box down
 #
 # It always uses the project cloud-os-box, box.env and both Compose files, so
 # the production stack never mixes with the development stack of a worktree.
-# CLOUDOS_BOX_ENV names another env file (the CI uses a temporary one).
+# CLOUDOS_BOX_ENV names another env file (the CI uses a temporary one), and
+# CLOUDOS_BOX_PROJECT another project (a test box beside the real one).
 #
 # Settings, in box.env or the shell: CLOUDOS_SMB=1 starts the smb service,
 # CLOUDOS_TAILSCALE=1 the tailscale service (with TS_AUTHKEY in box.env for its
 # first sign-in), CLOUDOS_FUNNEL=1 opens the share links to the internet
-# (docs/access.md).
+# (docs/access.md). The backup service runs once backup-init has run
+# (docs/architecture/backup.md).
 
 set -eu
 
-PROJECT=cloud-os-box
+PROJECT=${CLOUDOS_BOX_PROJECT:-cloud-os-box}
 only_profiles=
 CORE_UID=65532
-DEV_PASSWORDS="cloudos cloudos-smb"
+DEV_PASSWORDS="cloudos cloudos-smb cloudos-backup cloudos-backup-dev"
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 env_file=${CLOUDOS_BOX_ENV:-$root/box.env}
@@ -54,6 +62,13 @@ set_env() {
 	mv "$tmp" "$env_file" || { rm -f "$tmp"; die "cannot write $env_file"; }
 }
 
+# Add KEY=VALUE to the env file when KEY is not there yet. Nothing already in
+# the file is ever rewritten.
+env_add() {
+	[ -z "$(env_value "$1")" ] || return 0
+	(umask 077 && printf '%s=%s\n' "$1" "$2" >>"$env_file") || die "cannot write $env_file"
+}
+
 random_password() {
 	LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32
 }
@@ -72,6 +87,25 @@ make_dir() {
 		chown "$CORE_UID:$CORE_UID" "$1" 2>/dev/null || as_root chown "$CORE_UID:$CORE_UID" "$1" 2>/dev/null ||
 			note "warning: $1 is not owned by uid $CORE_UID, the core may not write there: sudo chown $CORE_UID:$CORE_UID $1"
 	fi
+}
+
+# Whether the folder holds nothing but the lost+found of a formatted disk.
+is_empty() {
+	[ -z "$(ls -A "$1" | grep -vx 'lost+found' || true)" ]
+}
+
+# Whether the folder holds a restic repository. restic lets only its owner,
+# the backup's uid 65532, into it: on Linux this shell may not see inside, and
+# asks sudo. When neither can look, a folder named restic counts as one:
+# backup-init then creates nothing over it, and restore lets restic tell.
+has_repo() {
+	[ -d "$1/restic" ] || return 1
+	if [ -x "$1/restic" ]; then
+		[ -f "$1/restic/config" ]
+		return
+	fi
+	as_root test -f "$1/restic/config" 2>/dev/null && return 0
+	! as_root true 2>/dev/null
 }
 
 cmd_init() {
@@ -114,18 +148,32 @@ check_compose() {
 	fi
 }
 
+# A secret of the env file: set, and not a development default.
+check_secret() {
+	value=$(env_value "$1")
+	[ -n "$value" ] || die "$1 is empty in $env_file"
+	for dev in $DEV_PASSWORDS; do
+		[ "$value" != "$dev" ] || die "$1 is a development password in $env_file"
+	done
+}
+
 check_env() {
 	[ -f "$env_file" ] || die "$env_file is missing, run: scripts/box init"
-	for key in CLOUDOS_DB_PASSWORD CLOUDOS_SMB_DB_PASSWORD; do
-		value=$(env_value "$key")
-		[ -n "$value" ] || die "$key is empty in $env_file"
-		for dev in $DEV_PASSWORDS; do
-			[ "$value" != "$dev" ] || die "$key is a development password in $env_file"
-		done
-	done
+	case $(ls -ln "$env_file" | cut -c5-10) in
+	------) ;;
+	*) note "warning: $env_file can be read by other users of this machine: chmod 600 $env_file" ;;
+	esac
+	check_secret CLOUDOS_DB_PASSWORD
+	check_secret CLOUDOS_SMB_DB_PASSWORD
 	data=$(env_value CLOUDOS_DATA_DIR)
 	[ -n "$data" ] || die "CLOUDOS_DATA_DIR is not set in $env_file"
 	[ -d "$data" ] || die "CLOUDOS_DATA_DIR $data does not exist (is the disk mounted?); not creating it"
+	# Once backup-init has run, the backup's key and role password are required.
+	# Its disk may be absent: the backup service then records failed runs.
+	if backup_on; then
+		check_secret RESTIC_PASSWORD
+		check_secret CLOUDOS_BACKUP_DB_PASSWORD
+	fi
 	if [ "$(setting CLOUDOS_FUNNEL)" = 1 ] && [ "$(setting CLOUDOS_TAILSCALE)" != 1 ]; then
 		die "CLOUDOS_FUNNEL=1 needs CLOUDOS_TAILSCALE=1"
 	fi
@@ -136,11 +184,17 @@ check_env() {
 	fi
 }
 
-# The Compose profiles of the services that are on.
+backup_on() {
+	[ -n "$(env_value CLOUDOS_BACKUP_DIR)" ]
+}
+
+# The Compose profiles of the services that are on: backup once backup-init
+# has run.
 profiles() {
 	p=
 	[ "$(setting CLOUDOS_SMB)" != 1 ] || p=smb
 	[ "$(setting CLOUDOS_TAILSCALE)" != 1 ] || p=${p:+$p,}tailscale
+	! backup_on || p=${p:+$p,}backup
 	printf '%s' "$p"
 }
 
@@ -154,18 +208,48 @@ dc() {
 	# The env file is the only source of the box's secrets, folders and
 	# addresses: a development variable of the shell must not win over it.
 	unset CLOUDOS_DB_PASSWORD CLOUDOS_SMB_DB_PASSWORD CLOUDOS_DATA_DIR CLOUDOS_MAPS_DIR COMPOSE_FILE COMPOSE_PROJECT_NAME \
-		TS_AUTHKEY TS_HOSTNAME CLOUDOS_PUBLIC_URL CLOUDOS_SHARE_ORIGIN CLOUDOS_TRUSTED_PROXIES
+		TS_AUTHKEY TS_HOSTNAME CLOUDOS_PUBLIC_URL CLOUDOS_SHARE_ORIGIN CLOUDOS_TRUSTED_PROXIES \
+		RESTIC_PASSWORD CLOUDOS_BACKUP_DB_PASSWORD CLOUDOS_BACKUP_DIR CLOUDOS_BACKUP_REMOTE \
+		AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION PGPASSWORD
 	# The core and smb believe the tailscale service's headers, and look its
 	# name up, only when it runs: an unknown name would go to the home DNS.
 	trusted=
 	case ,$COMPOSE_PROFILES, in *,tailscale,*) trusted=tailscale ;; esac
 	export COMPOSE_PROFILES CLOUDOS_TS_SERVE="$serve" CLOUDOS_TRUSTED_PROXIES="$trusted"
-	(cd "$root" && docker compose -p "$PROJECT" --env-file "$env_file" -f compose.yaml -f compose.prod.yaml "$@")
+	# The one password passed on, from the env file: the restore's (cmd_restore).
+	(
+		if [ -n "${BOX_PGPASSWORD:-}" ]; then
+			PGPASSWORD=$BOX_PGPASSWORD
+			export PGPASSWORD
+		fi
+		cd "$root" && docker compose -p "$PROJECT" --env-file "$env_file" -f compose.yaml -f compose.prod.yaml "$@"
+	)
 }
 
 compose() {
 	dc "$@"
 	exit $?
+}
+
+cmd_up() {
+	check_compose
+	check_env
+	# The smb service only starts with CLOUDOS_SMB=1 (docs/architecture/smb.md),
+	# the tailscale service with CLOUDOS_TAILSCALE=1 (docs/access.md).
+	port=${CLOUDOS_CORE_PORT:-$(env_value CLOUDOS_CORE_PORT)}
+	if [ "$#" -eq 0 ]; then
+		note "starting $PROJECT; the box will be on http://localhost:${port:-8480}"
+	fi
+	# Tailscale turned off: stop it, since up leaves a service of an inactive profile running.
+	if [ "$(setting CLOUDOS_TAILSCALE)" != 1 ]; then
+		only_profiles=tailscale
+		dc rm --stop --force tailscale >/dev/null 2>&1 || true
+		only_profiles=
+	fi
+	dc up --build --detach --wait "$@" || exit $?
+	if [ "$(setting CLOUDOS_TAILSCALE)" = 1 ] && [ -z "$(env_value CLOUDOS_PUBLIC_URL)" ]; then
+		note "once the box shows in your tailnet, run: scripts/box tailscale"
+	fi
 }
 
 cmd_tailscale() {
@@ -192,49 +276,161 @@ cmd_tailscale() {
 	dc up --detach --wait
 }
 
+# The backup folder: the argument, else box.env's.
+backup_dir() {
+	dir=${1:-$(env_value CLOUDOS_BACKUP_DIR)}
+	[ -n "$dir" ] || die "name the folder on the backup disk: scripts/box $cmd <folder>"
+	case $dir in /*) ;; *) die "the backup folder must be an absolute path" ;; esac
+	known=$(env_value CLOUDOS_BACKUP_DIR)
+	[ -z "$known" ] || [ "$known" = "$dir" ] || die "$env_file already backs up to $known, not $dir"
+	[ -d "$dir" ] || die "$dir does not exist: plug in and mount the backup disk, then create the folder"
+	# Never the data folder, nor a folder inside it or holding it: the restore
+	# test erases its own folder on the backup disk.
+	data=$(env_value CLOUDOS_DATA_DIR)
+	if [ -n "$data" ] && [ -d "$data" ]; then
+		real_dir=$(cd "$dir" && pwd -P)
+		real_data=$(cd "$data" && pwd -P)
+		case $real_dir/ in "$real_data"/*) die "$dir is in the data folder $data: back up to another disk" ;; esac
+		case $real_data/ in "$real_dir"/*) die "$dir holds the data folder $data: back up to a folder of its own" ;; esac
+	fi
+	printf '%s' "$dir"
+}
+
+cmd_backup_init() {
+	check_compose
+	check_env
+	dir=$(backup_dir "${1:-}")
+	if has_repo "$dir"; then
+		if [ -n "$(env_value RESTIC_PASSWORD)" ] && [ "$(env_value CLOUDOS_BACKUP_DIR)" = "$dir" ]; then
+			note "$dir already holds this box's backup; nothing to do"
+			return 0
+		fi
+		die "$dir already holds a backup: to put it back onto this box, run scripts/box restore $dir"
+	fi
+	is_empty "$dir" || die "$dir is not empty and holds no backup: choose an empty folder on the backup disk"
+
+	# A key drawn by an init that failed before creating the repository was
+	# never shown: it is used, and shown, now.
+	env_add RESTIC_PASSWORD "$(random_password)"
+	env_add CLOUDOS_BACKUP_DB_PASSWORD "$(random_password)"
+	env_add CLOUDOS_BACKUP_DIR "$dir"
+	make_dir "$dir"
+	note "creating the encrypted repository in $dir/restic"
+	dc run --rm --build --no-deps backup backup init || die "the repository was not created"
+
+	cat <<EOF
+
+================================================================================
+  THE BACKUP KEY, shown this once:
+
+      $(env_value RESTIC_PASSWORD)
+
+  Without it, the backup disk cannot be read, by anyone, ever. Write it down
+  and keep it OFF this box (on paper, in a password manager): if the box dies,
+  this key restores everything. scripts/box will not show it again.
+================================================================================
+
+EOF
+	note "starting the backup service; the first backup runs at ${CLOUDOS_BACKUP_AT:-03:00}, or now with: scripts/box backup"
+	cmd_up
+}
+
+cmd_backup() {
+	check_compose
+	check_env
+	backup_on || die "no backup is set up: scripts/box backup-init <folder on the backup disk>"
+	dc run --rm backup backup now
+}
+
+cmd_backup_remote_init() {
+	check_compose
+	check_env
+	backup_on || die "no backup is set up: scripts/box backup-init <folder on the backup disk>"
+	[ -n "$(env_value CLOUDOS_BACKUP_REMOTE)" ] || die "add CLOUDOS_BACKUP_REMOTE (and its access keys) to $env_file first"
+	dc run --rm --no-deps backup backup remote-init
+}
+
+cmd_update() {
+	check_compose
+	check_env
+	backup_on || die "an update starts with a backup, and none is set up: scripts/box backup-init <folder on the backup disk>"
+	git -C "$root" pull --ff-only || die "git pull failed: nothing was updated"
+	note "backing up before the update"
+	cmd_backup || die "the backup failed, so the update stops here; the box runs as before (scripts/box backup-status says why)"
+	cmd_up
+}
+
+cmd_restore() {
+	check_compose
+	check_env
+	dir=$(backup_dir "${1:-}")
+	run=${2:-}
+	has_repo "$dir" || die "$dir holds no backup (is the backup disk mounted?)"
+	data=$(env_value CLOUDOS_DATA_DIR)
+	is_empty "$data" || die "CLOUDOS_DATA_DIR $data is not empty: a restore only goes onto a new box"
+	if [ -z "$(env_value RESTIC_PASSWORD)" ]; then
+		[ -t 0 ] || die "RESTIC_PASSWORD is not in $env_file and there is no terminal to type the backup key"
+		printf 'The backup key: '
+		trap 'stty echo' EXIT INT TERM
+		stty -echo
+		read -r key || key=
+		stty echo
+		trap - EXIT INT TERM
+		printf '\n'
+		[ -n "$key" ] || die "no key typed"
+		case $key in *[!A-Za-z0-9]*) die "a backup key drawn by scripts/box has only letters and digits" ;; esac
+		env_add RESTIC_PASSWORD "$key"
+	fi
+	env_add CLOUDOS_BACKUP_DB_PASSWORD "$(random_password)"
+	env_add CLOUDOS_BACKUP_DIR "$dir"
+	check_env
+
+	note "starting the database alone"
+	dc up --detach --wait db
+	note "restoring the files and the database"
+	# As the database's owner: it creates the tables.
+	BOX_PGPASSWORD=$(env_value CLOUDOS_DB_PASSWORD)
+	export BOX_PGPASSWORD
+	dc run --rm --build --no-deps \
+		-e "DATABASE_URL=postgres://cloudos@db:5432/cloudos?sslmode=disable" -e PGPASSWORD \
+		backup backup restore ${run:+"$run"} || die "the restore failed: empty CLOUDOS_DATA_DIR and the database (scripts/box down -v) before trying again"
+	unset BOX_PGPASSWORD
+	cmd_up
+	note "checking every file against the restored index"
+	dc run --rm core verify
+}
+
 if [ $# -eq 0 ]; then
-	sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
 	exit 0
 fi
 
-case $1 in
-init)
-	cmd_init
-	;;
-up)
-	shift
-	check_compose
-	check_env
-	# The smb service only starts with CLOUDOS_SMB=1 (docs/architecture/smb.md),
-	# the tailscale service with CLOUDOS_TAILSCALE=1 (docs/access.md).
-	port=${CLOUDOS_CORE_PORT:-$(env_value CLOUDOS_CORE_PORT)}
-	if [ "$#" -eq 0 ]; then
-		note "starting $PROJECT; the box will be on http://localhost:${port:-8480}"
-	fi
-	# Tailscale turned off: stop it, since up leaves a service of an inactive profile running.
-	if [ "$(setting CLOUDOS_TAILSCALE)" != 1 ]; then
-		only_profiles=tailscale
-		dc rm --stop --force tailscale >/dev/null 2>&1 || true
-		only_profiles=
-	fi
-	dc up --build --detach --wait "$@" || exit $?
-	if [ "$(setting CLOUDOS_TAILSCALE)" = 1 ] && [ -z "$(env_value CLOUDOS_PUBLIC_URL)" ]; then
-		note "once the box shows in your tailnet, run: scripts/box tailscale"
-	fi
-	;;
+cmd=$1
+shift
+case $cmd in
+init) cmd_init ;;
+up) cmd_up "$@" ;;
 tailscale)
 	check_compose
 	cmd_tailscale
 	;;
 down)
-	shift
 	check_compose
-	# Stop smb and tailscale too, whether or not they are on now.
-	only_profiles=smb,tailscale
+	# Stop smb, tailscale and backup too, whether or not they are on now.
+	only_profiles=smb,tailscale,backup
 	compose down "$@"
 	;;
+backup-init) cmd_backup_init "$@" ;;
+backup) cmd_backup ;;
+backup-status)
+	check_compose
+	dc run --rm --no-deps backup backup status
+	;;
+backup-remote-init) cmd_backup_remote_init ;;
+update) cmd_update ;;
+restore) cmd_restore "$@" ;;
 *)
 	check_compose
-	compose "$@"
+	compose "$cmd" "$@"
 	;;
 esac

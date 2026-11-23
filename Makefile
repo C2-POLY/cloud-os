@@ -7,10 +7,11 @@ DB_PORT ?= $(or $(CLOUDOS_DB_PORT),54320)
 TEST_DATABASE_URL ?= postgres://cloudos:cloudos@127.0.0.1:$(DB_PORT)/cloudos?sslmode=disable
 EXTERNAL_DB ?=
 
-# CLOUDOS_SMB=1 adds the smb service (its Compose profile) to up and logs, and
-# CLOUDOS_TAILSCALE=1 the tailscale service (TS_AUTHKEY in the shell; docs/access.md).
+# CLOUDOS_SMB=1 adds the smb service, CLOUDOS_BACKUP=1 the backup service
+# (their Compose profiles) to up and logs, and CLOUDOS_TAILSCALE=1 the
+# tailscale service (TS_AUTHKEY in the shell; docs/access.md).
 comma := ,
-profiles := $(strip $(if $(filter 1,$(CLOUDOS_SMB)),smb) $(if $(filter 1,$(CLOUDOS_TAILSCALE)),tailscale))
+profiles := $(strip $(if $(filter 1,$(CLOUDOS_SMB)),smb) $(if $(filter 1,$(CLOUDOS_BACKUP)),backup) $(if $(filter 1,$(CLOUDOS_TAILSCALE)),tailscale))
 ifneq ($(profiles),)
 export COMPOSE_PROFILES := $(subst $() ,$(comma),$(profiles))
 endif
@@ -19,7 +20,18 @@ ifeq ($(CLOUDOS_TAILSCALE),1)
 export CLOUDOS_TRUSTED_PROXIES ?= tailscale
 endif
 
-.PHONY: up down logs prod prod-down prod-logs deps ffmpeg models test test-db test-core test-worker test-web test-mobile lint fmt
+# The backup tests run in the backup image, beside the test database: on the
+# worktree's Compose network, or on the host's (CI, EXTERNAL_DB=1).
+PROJECT ?= $(or $(COMPOSE_PROJECT_NAME),cloud-os)
+ifeq ($(EXTERNAL_DB),)
+BACKUP_TEST_NET := --network $(PROJECT)_default
+BACKUP_TEST_DB_URL := postgres://cloudos:cloudos@db:5432/cloudos?sslmode=disable
+else
+BACKUP_TEST_NET := --network host
+BACKUP_TEST_DB_URL := $(TEST_DATABASE_URL)
+endif
+
+.PHONY: up down logs prod prod-down prod-logs deps ffmpeg models test test-db test-core test-backup test-box test-worker test-web test-mobile lint fmt
 
 ## up: build and start the stack, wait until it is healthy
 up:
@@ -29,9 +41,9 @@ ifeq ($(CLOUDOS_SMB),1)
 	@echo "SMB, read-only: smb://<account>@localhost:$${CLOUDOS_SMB_PORT:-1445}/drive, with the account's SMB password (Settings)"
 endif
 
-## down: stop the stack, smb and tailscale included (keeps the database volume)
+## down: stop the stack, smb, backup and tailscale included (keeps the database volume)
 down:
-	docker compose --profile smb --profile tailscale down
+	docker compose --profile smb --profile backup --profile tailscale down
 
 ## logs: follow the logs of every service
 logs:
@@ -79,8 +91,8 @@ models: .tools/models/SHA256SUMS
 .tools/models/SHA256SUMS:
 	worker/models/fetch.sh .tools/models
 
-## test: every test suite (Go, Python, web, mobile)
-test: test-core test-worker test-web test-mobile
+## test: every test suite (Go, the backup in its image, scripts/box, Python, web, mobile)
+test: test-core test-backup test-box test-worker test-web test-mobile
 
 test-db:
 ifeq ($(EXTERNAL_DB),)
@@ -91,6 +103,16 @@ test-core: test-db
 	cd core && CLOUDOS_TEST_DATABASE_URL='$(TEST_DATABASE_URL)' go test -count=1 ./...
 	# The SMB library we keep patched (core/third_party/smbsrv/PATCHES.md), a module of its own
 	cd core/third_party/smbsrv && go test -race -count=1 ./...
+
+## test-backup: the backup's tests in the backup image, which has restic,
+## pg_dump and a Postgres of the database's version (docs/architecture/backup.md)
+test-backup: test-db
+	docker build --file backup/Dockerfile --target test --tag $(PROJECT)-backup-test .
+	docker run --rm $(BACKUP_TEST_NET) -e CLOUDOS_TEST_DATABASE_URL='$(BACKUP_TEST_DB_URL)' -e CLOUDOS_REQUIRE_BACKUP_TOOLS=1 $(PROJECT)-backup-test
+
+## test-box: scripts/box's backup commands, with a fake docker and git
+test-box:
+	scripts/test-box.sh
 
 test-worker: test-db
 	cd worker && CLOUDOS_TEST_DATABASE_URL='$(TEST_DATABASE_URL)' CLOUDOS_FFMPEG_DIR='$(CURDIR)/.tools/ffmpeg/bin' CLOUDOS_MODELS_DIR='$(CURDIR)/.tools/models' uv run --frozen pytest

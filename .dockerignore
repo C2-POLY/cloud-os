@@ -7,3 +7,5 @@ worker/.venv
 **/__pycache__
 mobile
 box.env
+.data
+.tools

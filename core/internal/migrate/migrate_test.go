@@ -81,6 +81,9 @@ var tables = []struct {
 	{26, []string{}, `SELECT 1`},
 	// Migration 27 grants that role storage's SMB writes and journals op 'replace', no table (TestSMBWriteMigration).
 	{27, []string{}, `SELECT 1`},
+	// Migration 28 creates the backup's run history and its role (TestBackupMigration).
+	{28, []string{"backup_runs"}, `INSERT INTO backup_runs (kind, detail) VALUES ('backup', '{"files": 3}');
+		UPDATE backup_runs SET finished_at = now(), ok = true`},
 	// Migration 29 gives the trash a reason and journals op 'rescue', no table (TestSMBRescueMigration).
 	{29, []string{}, `SELECT 1`},
 }
@@ -397,6 +400,134 @@ func TestSMBWriteMigration(t *testing.T) {
 	check("up again", want, true)
 }
 
+// roleWrites lists every write role may make in this database: "INSERT
+// table.column", "UPDATE table.column", "DELETE table", "TRUNCATE table".
+func roleWrites(t *testing.T, pool *pgxpool.Pool, role string) []string {
+	t.Helper()
+	rows, err := pool.Query(context.Background(),
+		`SELECT p.priv || ' ' || c.relname || '.' || a.attname
+		   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+		   JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+		   CROSS JOIN (VALUES ('INSERT'), ('UPDATE')) p(priv)
+		  WHERE c.relkind = 'r' AND has_column_privilege($1, c.oid, a.attnum, p.priv)
+		 UNION ALL
+		 SELECT p.priv || ' ' || c.relname
+		   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+		   CROSS JOIN (VALUES ('DELETE'), ('TRUNCATE')) p(priv)
+		  WHERE c.relkind = 'r' AND has_table_privilege($1, c.oid, p.priv)
+		 ORDER BY 1`, role)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// TestBackupMigration checks that migration 28 creates backup_runs and the
+// backup's role, which reads every table (pg_dump) and writes backup_runs
+// only, the columns of a run's row; that the role logs in as that, writes
+// nothing else; and that undoing it drops the history, the files untouched.
+func TestBackupMigration(t *testing.T) {
+	ctx := context.Background()
+	pool, err := db.Open(ctx, testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	p, err := migrate.NewProvider(db.SQL(pool))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.UpTo(ctx, 27); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO accounts (name, display_name, password_hash, role) VALUES ('enzo', 'Enzo', 'x', 'admin');
+		INSERT INTO files (owner, path, size, mime, sha256, modified_at) VALUES ('enzo', 'a.txt', 1, 'text/plain', sha256('a'), now())`); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"INSERT backup_runs.detail", "INSERT backup_runs.kind",
+		"UPDATE backup_runs.detail", "UPDATE backup_runs.error", "UPDATE backup_runs.finished_at", "UPDATE backup_runs.ok",
+	}
+	check := func(step string) {
+		t.Helper()
+		if got := roleWrites(t, pool, "cloudos_backup"); fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("%s: cloudos_backup writes\n%v\nwant\n%v", step, got, want)
+		}
+		var member, reads, readsHash, super, login bool
+		if err := pool.QueryRow(ctx, `SELECT pg_has_role('cloudos_backup', 'pg_read_all_data', 'USAGE'),
+			has_table_privilege('cloudos_backup', 'files', 'SELECT'),
+			has_column_privilege('cloudos_backup', 'accounts', 'password_hash', 'SELECT'),
+			rolsuper, rolcanlogin FROM pg_roles WHERE rolname = 'cloudos_backup'`).Scan(&member, &reads, &readsHash, &super, &login); err != nil {
+			t.Fatal(err)
+		}
+		if !member || !reads || !readsHash || super {
+			t.Errorf("%s: member of pg_read_all_data %v, reads files %v, reads accounts %v, superuser %v", step, member, reads, readsHash, super)
+		}
+	}
+
+	if _, err := p.UpTo(ctx, 28); err != nil {
+		t.Fatalf("up 28: %v", err)
+	}
+	check("up")
+
+	// Logged in as the role: a run's row, and nothing else.
+	if err := db.SetLoginPassword(ctx, pool, "cloudos_backup", "backup-test-password"); err != nil {
+		t.Fatal(err)
+	}
+	defer db.SetLoginPassword(ctx, pool, "cloudos_backup", "") //nolint:errcheck
+	cfg, err := pgx.ParseConfig(pool.Config().ConnString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.User, cfg.Password = "cloudos_backup", "backup-test-password"
+	as, err := pgx.ConnectConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("log in as cloudos_backup: %v", err)
+	}
+	defer as.Close(ctx)
+	var id int64
+	if err := as.QueryRow(ctx, `INSERT INTO backup_runs (kind) VALUES ('check') RETURNING id`).Scan(&id); err != nil {
+		t.Fatalf("the role cannot start a run: %v", err)
+	}
+	if _, err := as.Exec(ctx, `UPDATE backup_runs SET finished_at = now(), ok = false, error = 'disk absent' WHERE id = $1`, id); err != nil {
+		t.Fatalf("the role cannot end a run: %v", err)
+	}
+	for _, q := range []string{
+		`UPDATE files SET size = 2`, `DELETE FROM files`, `INSERT INTO tasks (kind) VALUES ('selftest')`,
+		`DELETE FROM backup_runs`, `UPDATE backup_runs SET kind = 'copy'`, `TRUNCATE backup_runs`,
+		`UPDATE accounts SET role = 'member'`, `CREATE TABLE x (y int)`,
+	} {
+		if _, err := as.Exec(ctx, q); err == nil {
+			t.Errorf("cloudos_backup may run %s", q)
+		}
+	}
+	var n int
+	if err := as.QueryRow(ctx, `SELECT count(*) FROM accounts WHERE password_hash IS NOT NULL`).Scan(&n); err != nil || n != 1 {
+		t.Errorf("cloudos_backup reads the whole database (pg_dump): %d, %v", n, err)
+	}
+	as.Close(ctx)
+
+	if _, err := p.Down(ctx); err != nil {
+		t.Fatalf("down 28: %v", err)
+	}
+	if tableExists(t, pool, "backup_runs") {
+		t.Error("backup_runs is still there after down")
+	}
+	var files int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM files`).Scan(&files); err != nil || files != 1 {
+		t.Fatalf("after down: %d files (%v)", files, err)
+	}
+
+	if _, err := p.UpTo(ctx, 28); err != nil {
+		t.Fatalf("up 28 again: %v", err)
+	}
+	check("up again")
+}
+
 // TestSMBRescueMigration checks that migration 29 gives the trash its
 // reason, journals op 'rescue' and grants the smb service's role the two
 // columns of a kept SMB write; that undoing it is refused while a rescue is
@@ -412,7 +543,7 @@ func TestSMBRescueMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.UpTo(ctx, 27); err != nil {
+	if _, err := p.UpTo(ctx, 28); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO trash (owner, path, kind, size, expires_at) VALUES ('enzo', 'deleted.txt', 'file', 1, now() + interval '30 days')`); err != nil {

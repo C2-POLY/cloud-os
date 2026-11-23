@@ -9,6 +9,8 @@
 //	core textemb backfill    queue the vectors of every stored document with text that has none
 //	core doccat backfill     queue the category of every stored document whose vectors have none of the workers' version
 //	core smb                 serve the drives over SMB, read-only, with each account's SMB password (CLOUDOS_SMB=1)
+//	core backup daemon|now|status|check|restore-test|restore [RUN]|init|remote-init
+//	                         the nightly encrypted backup and its restore (docs/architecture/backup.md)
 //	core health              exit 0 if the core on CORE_ADDR answers its health check (the container's healthcheck)
 package main
 
@@ -36,6 +38,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/albums"
 	"github.com/C2-POLY/cloud-os/core/internal/analysis"
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
+	"github.com/C2-POLY/cloud-os/core/internal/backup"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
 	"github.com/C2-POLY/cloud-os/core/internal/doccat"
 	"github.com/C2-POLY/cloud-os/core/internal/doctext"
@@ -167,10 +170,12 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		return withCore(ctx, func(c core) error { return resetPassword(ctx, c, args[0], os.Stdin, out) })
 	case "smb":
 		return serveSMB(ctx)
+	case "backup":
+		return runBackup(ctx, args, out)
 	case "health":
 		return checkHealth(ctx, envOr("CORE_ADDR", ":8080"))
 	default:
-		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, text, ocr, photovec, textemb, doccat, reset-password, smb, health)", cmd)
+		return fmt.Errorf("unknown command %q (serve, import, verify, selftest, thumbs, meta, text, ocr, photovec, textemb, doccat, reset-password, smb, backup, health)", cmd)
 	}
 }
 
@@ -260,6 +265,12 @@ func serve(ctx context.Context, c core) error {
 	if err := db.SetLoginPassword(ctx, c.pool, smbfs.DBRole, os.Getenv("CLOUDOS_SMB_DB_PASSWORD")); err != nil {
 		slog.Error("smb: set the password of the smb service's database role; SMB cannot connect until it is set",
 			"role", smbfs.DBRole, "err", err)
+	}
+	// The backup service's role (migration 0028), the same way; unset, it
+	// cannot log in and no backup runs (scripts/box backup-init sets it).
+	if err := db.SetLoginPassword(ctx, c.pool, backup.DBRole, os.Getenv("CLOUDOS_BACKUP_DB_PASSWORD")); err != nil {
+		slog.Error("backup: set the password of the backup service's database role; no backup can run until it is set",
+			"role", backup.DBRole, "err", err)
 	}
 
 	// An SMB password revoked or replaced, an account disabled: the smb
@@ -463,7 +474,10 @@ func originOf(name, v string, httpsOnly bool) (string, error) {
 const smbPoolMaxConns = 6
 
 // smbPoolURL caps the pool size of url, unless it sets one already.
-func smbPoolURL(url string) string {
+func smbPoolURL(url string) string { return poolURL(url, smbPoolMaxConns) }
+
+// poolURL caps the pool size of url at n, unless it sets one already.
+func poolURL(url string, n int) string {
 	if strings.Contains(url, "pool_max_conns=") {
 		return url
 	}
@@ -471,7 +485,7 @@ func smbPoolURL(url string) string {
 	if strings.Contains(url, "?") {
 		sep = "&"
 	}
-	return url + sep + "pool_max_conns=" + strconv.Itoa(smbPoolMaxConns)
+	return url + sep + "pool_max_conns=" + strconv.Itoa(n)
 }
 
 // checkHealth asks the core listening on addr for /api/health: the
