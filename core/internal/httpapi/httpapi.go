@@ -16,6 +16,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/albums"
 	"github.com/C2-POLY/cloud-os/core/internal/analysis"
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
+	"github.com/C2-POLY/cloud-os/core/internal/boxstatus"
 	"github.com/C2-POLY/cloud-os/core/internal/davfs"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
 	"github.com/C2-POLY/cloud-os/core/internal/doccat"
@@ -68,6 +69,8 @@ type Config struct {
 	// Analysis tells where the workers' analysis of the account's files
 	// stands; nil answers 503.
 	Analysis *analysis.Reader
+	// Status gathers the box's state for its administrators; nil answers 503.
+	Status *boxstatus.Collector
 	// MapsDir holds the .pmtiles file of the Photos map; "" when none.
 	MapsDir   string
 	Activity  *activity.Log // nil: no journal (tests that do not need it)
@@ -113,6 +116,7 @@ func routes(c Config) []route {
 	sem := &semanticAPI{docs: c.Documents}
 	dc := &documentsAPI{docs: c.Categories}
 	an := &analysisAPI{reader: c.Analysis, files: c.Files}
+	st := &statusAPI{collector: c.Status}
 	sa := &searchAPI{search: &search.Searcher{Files: c.Files, Docs: c.Documents, Photos: c.Photos}}
 	return []route{
 		{"GET /api/health", public, healthHandler(c.Version, c.Health)},
@@ -128,6 +132,7 @@ func routes(c Config) []route {
 		{"GET /api/accounts", admin, a.list},
 		{"POST /api/accounts", admin, a.create},
 		{"PATCH /api/accounts/{name}", admin, a.update},
+		{"GET /api/box/status", admin, st.get},
 		{"GET /api/files", member, f.list},
 		{"POST /api/files/folders", member, f.mkdir},
 		{"POST /api/files/move", member, f.move},

@@ -2,10 +2,9 @@ import { Cloud, LogOut, Monitor, Search } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { failedLabel, summaryLabel, useAnalysisSummary } from '../analysis/analysis.ts'
 import { Accounts } from '../Accounts.tsx'
-import { api, type Account, type Health as HealthReport } from '../api.ts'
+import { api, type Account } from '../api.ts'
 import { Drive } from '../drive/Drive.tsx'
 import { TrashPage } from '../drive/TrashPage.tsx'
-import { Health } from '../Health.tsx'
 import { driveURL, folderFromURL, navigate, usePath } from '../router.ts'
 import { SharesPage } from '../share/SharesPage.tsx'
 import { Settings } from '../settings/Settings.tsx'
@@ -21,6 +20,7 @@ import { AlbumPage, AlbumsPage } from './Albums.tsx'
 import { albumFromURL, albumsPath, photosPath } from './albums.ts'
 import { mapPath } from './map.ts'
 import { MapView } from './MapView.tsx'
+import { AlertsBadge, BoxStatus } from '../status/BoxStatus.tsx'
 
 /** The signed-in box: a living wallpaper, a menu bar, the app windows and the dock. */
 export function Desktop({ me, onSignedOut }: { me: Account; onSignedOut: () => void }) {
@@ -121,13 +121,10 @@ function AppContent({ win, me }: { win: Win; me: Account }) {
       return <TrashPage />
     case 'settings':
       return <Settings me={me} />
+    case 'status':
+      return <BoxStatus />
     case 'accounts':
-      return (
-        <>
-          <Health />
-          <Accounts me={me} />
-        </>
-      )
+      return <Accounts me={me} />
   }
 }
 
@@ -242,25 +239,6 @@ function Clock() {
   )
 }
 
-/** "Sauvegarde à jour" while the core answers its health check. */
-function useBackupStatus(): string | null {
-  const [status, setStatus] = useState<string | null>(null)
-  useEffect(() => {
-    let current = true
-    const read = () =>
-      api<HealthReport>('GET', '/api/health')
-        .then((h) => current && setStatus(h.db === 'ok' ? 'Sauvegarde à jour' : null))
-        .catch(() => current && setStatus(null))
-    void read()
-    const t = window.setInterval(read, 20_000)
-    return () => {
-      current = false
-      window.clearInterval(t)
-    }
-  }, [])
-  return status
-}
-
 /** Where the analysis of the account's files stands, from /api/analysis; it updates by itself. */
 function AnalysisStatus() {
   const summary = useAnalysisSummary()
@@ -280,7 +258,6 @@ function AnalysisStatus() {
 
 function MenuBar({ title, me, onSignedOut, onAsk }: { title: string; me: Account; onSignedOut: () => void; onAsk: () => void }) {
   const now = useNow(15_000)
-  const status = useBackupStatus()
   return (
     <header className="menubar">
       <Cloud size={16} aria-label="Cloud OS" />
@@ -290,7 +267,7 @@ function MenuBar({ title, me, onSignedOut, onAsk }: { title: string; me: Account
         <Search size={13} aria-hidden /> Demander <kbd>⌘K</kbd>
       </button>
       <span className="menubar-fill" />
-      {status && <span className="menubar-status">{status}</span>}
+      <AlertsBadge admin={me.role === 'admin'} />
       <AnalysisStatus />
       <span className="menubar-clock">
         {shortDay.format(now)} {time.format(now)}

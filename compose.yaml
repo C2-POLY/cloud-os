@@ -52,6 +52,14 @@ services:
       # https://cloudos.<tailnet>.ts.net:8443 when Funnel is on: where guests
       # open share links. Empty: the web front's own address.
       CLOUDOS_SHARE_ORIGIN: ${CLOUDOS_SHARE_ORIGIN:-}
+      # Which services are on, for the box's status (docs/architecture/status.md):
+      # the core asks smb:445 and tailscale:9002 only when they run, and
+      # counts the backup's alerts only when the backup service runs
+      # (scripts/box sets CLOUDOS_BACKUP once backup-init has run).
+      CLOUDOS_SMB: ${CLOUDOS_SMB:-}
+      CLOUDOS_TAILSCALE: ${CLOUDOS_TAILSCALE:-}
+      CLOUDOS_FUNNEL: ${CLOUDOS_FUNNEL:-}
+      CLOUDOS_BACKUP: ${CLOUDOS_BACKUP:-}
     ports:
       - "127.0.0.1:${CLOUDOS_CORE_PORT:-8480}:8080"
     volumes:
@@ -167,7 +175,10 @@ services:
       TS_ACCEPT_DNS: "false"
       TS_SERVE_CONFIG: /config/${CLOUDOS_TS_SERVE:-serve.json}
       TS_ENABLE_HEALTH_CHECK: "true"
-      TS_LOCAL_ADDR_PORT: 127.0.0.1:9002
+      # GET /healthz, for the healthcheck below and the box's status (the
+      # core asks tailscale:9002). On the Compose network only, like the
+      # worker's 8090: never add it to `ports`.
+      TS_LOCAL_ADDR_PORT: 0.0.0.0:9002
     volumes:
       - tailscale-state:/var/lib/tailscale
       - ./box/tailscale:/config:ro

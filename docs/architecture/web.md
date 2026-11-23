@@ -20,7 +20,8 @@ Issues : #6 (assistant, connexion, comptes), #11 (drive), #10 (corbeille), #24 (
 | `/corbeille` | Corbeille | Tout compte |
 | `/reglages` | Réglages : l'accès SMB du compte (voir [auth.md](auth.md#mot-de-passe-smb)) | Tout compte |
 | `/s/<jeton>` | Hors du bureau : la page de l'invité d'un lien de partage | Sans compte |
-| `/comptes` | Comptes : la santé de la box et la gestion des comptes | Admin |
+| `/etat` | État de la box : alertes, disques, services, sauvegarde, fichiers SMB gardés, santé du cœur ([status.md](status.md)) | Admin |
+| `/comptes` | Comptes : la gestion des comptes | Admin |
 | Toute autre adresse, ou une app réservée à l'admin | Remplacée par `/` | |
 
 - **Routage :** `router.ts` s'appuie sur l'API History, sans bibliothèque. Précédent et Suivant marchent, et un lien vers un dossier se partage tel quel. Le cœur renvoie `index.html` pour toute adresse qu'il ne connaît pas.
@@ -32,7 +33,7 @@ Le compte connecté arrive sur un bureau : fond d'écran vivant, barre de menus,
 
 | Fichier | Rôle |
 |---|---|
-| `apps.ts` | Les apps (Fichiers, Photos, Documents, Partages, Corbeille, Réglages, Comptes) : titre, icône, couleur du dock, adresse d'ouverture ; `appOf(adresse)` |
+| `apps.ts` | Les apps (Fichiers, Photos, Documents, Partages, Corbeille, Réglages, État de la box, Comptes) : titre, icône, couleur du dock, adresse d'ouverture ; `appOf(adresse)` |
 | `windows.ts` | `useWindows` : les fenêtres ouvertes, de l'arrière vers l'avant, et `useGeometries` : leurs places, gardées dans `localStorage` (`cloudos.windows.v1`) |
 | `Window.tsx` | Une fenêtre : barre de titre (Fermer, Agrandir), déplacement au pointeur, double-clic pour agrandir |
 | `Desktop.tsx` | Le bureau : fond, barre de menus, horloge, fenêtres, dock, raccourci ⌘K |
@@ -64,7 +65,7 @@ Le compte connecté arrive sur un bureau : fond d'écran vivant, barre de menus,
   - **Ce qu'il ne retient pas :** les téléchargements, qui compteraient chaque morceau d'une vidéo lue.
   - **Garanties :** des lignes, jamais des fichiers. Une écriture ratée dans le journal est notée dans les logs et ne fait jamais échouer l'opération. Le cœur purge les lignes de plus de 90 jours toutes les 30 s, avec `Reap`.
   - **Regroupement :** fait en SQL, pour qu'un import de 50 000 photos donne une ligne, pas 50 000.
-- **Barre de menus :** l'app au premier plan, « Sauvegarde à jour » (`/api/health`, toutes les 20 s, tant que la base répond), l'état de l'analyse des fichiers du compte (voir [Où en est l'analyse](#où-en-est-lanalyse-82)), l'heure, le compte et la déconnexion.
+- **Barre de menus :** l'app au premier plan, pour un admin le badge d'alertes de la box quand il y en a (« 2 alertes », qui ouvre État de la box ; voir [status.md](status.md)), l'état de l'analyse des fichiers du compte (voir [Où en est l'analyse](#où-en-est-lanalyse-82)), l'heure, le compte et la déconnexion.
 - **Dock :** Bureau, puis les apps de ce compte, avec un point sous celles qui sont ouvertes, puis Demander. Demander ouvre la palette de recherche, comme ⌘K ou Ctrl+K et la pilule de la barre de menus (voir [search.md](search.md)).
 - **Téléphone (moins de 768 px) :** une seule fenêtre, celle du premier plan, en plein écran entre la barre de menus et le dock. Ni déplacement ni agrandissement. Le dock garde toutes les apps : au-delà de la largeur de l'écran, ses boutons rétrécissent.
 - **Verre :** fond `--surface` à 86 % et `backdrop-filter`, dans les thèmes clair et sombre. Le fond d'écran a sa version sombre. N'écrire que `backdrop-filter` : le minifieur (lightningcss) ajoute lui-même le préfixe `-webkit-`, et supprime les deux quand on écrit les deux.
@@ -137,7 +138,7 @@ flowchart LR
 
 Un fichier déposé est analysé en arrière-plan (texte, OCR, miniature, métadonnées, vecteurs, catégorie : [tasks.md](tasks.md)). Le front dit où cela en est, sans recharger la page.
 
-- **Barre de menus** (`AnalysisStatus` dans `Desktop.tsx`) : à côté de « Sauvegarde à jour », « Analyse de 3 fichiers… » (avec un point qui pulse) tant qu'un fichier du compte a une étape en file ou en cours, « Analyse à jour » sinon, et en rouge « 2 fichiers non analysés » quand des étapes ont échoué pour de bon. Elle lit `GET /api/analysis` : toutes les 2,5 s quand quelque chose est en cours, toutes les 15 s sinon, et pas du tout quand l'onglet est caché. Sur téléphone, l'indicateur reste, en deux lignes ; « Sauvegarde à jour » disparaît comme avant.
+- **Barre de menus** (`AnalysisStatus` dans `Desktop.tsx`) : « Analyse de 3 fichiers… » (avec un point qui pulse) tant qu'un fichier du compte a une étape en file ou en cours, « Analyse à jour » sinon, et en rouge « 2 fichiers non analysés » quand des étapes ont échoué pour de bon. Elle lit `GET /api/analysis` : toutes les 2,5 s quand quelque chose est en cours, toutes les 15 s sinon, et pas du tout quand l'onglet est caché. Sur téléphone, l'indicateur reste, en deux lignes, à côté du badge d'alertes d'un admin.
 - **Aperçus** (`web/src/analysis/AnalysisSteps.tsx`, dans `DocViewer` sous l'en-tête et dans le panneau sombre de la visionneuse de photos `Viewer`) : la liste des étapes du fichier, chacune « en attente », « en cours », « fait », « sans objet » ou « échec » avec la raison (« Raison : … »), et « nouvel essai à venir (2/5) » avec la dernière erreur quand une étape est reprise. Une ligne au-dessus donne l'ensemble : « Analyse en cours… », « Analyse terminée », ou « L'analyse a échoué : ce fichier ne sera pas retrouvé par son contenu ». `GET /api/analysis/file?path=…` est relu toutes les 2,5 s tant que le fichier est en cours, toutes les 15 s ensuite, et jamais pour un type de fichier que personne n'analyse (rien n'est affiché).
 - **Pourquoi du sondage :** un `fetch` à intervalle suffit pour un compte de foyer, passe tel quel derrière le proxy de Vite et n'exige rien du cœur (pas de connexion longue à garder, pas de reprise à gérer) ; le rythme lent évite de solliciter la base quand tout est fini.
 

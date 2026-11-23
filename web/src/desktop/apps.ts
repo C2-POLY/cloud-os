@@ -1,6 +1,7 @@
-import { FileText, HardDrive, Image, Settings, Share2, Trash2, Users, type LucideIcon } from 'lucide-react'
+import { FileText, Gauge, HardDrive, Image, Settings, Share2, Trash2, Users, type LucideIcon } from 'lucide-react'
 import { categoryFromURL, documentsPath } from '../documents/documents.ts'
 import { folderFromURL } from '../router.ts'
+import { statusPath } from '../status/status.ts'
 
 /** The address of Fichiers' Chronologie view. */
 export const timelinePath = '/chronologie'
@@ -8,7 +9,7 @@ export const timelinePath = '/chronologie'
 /** The address of Réglages. */
 export const settingsPath = '/reglages'
 
-export type AppId = 'files' | 'photos' | 'documents' | 'shares' | 'trash' | 'settings' | 'accounts'
+export type AppId = 'files' | 'photos' | 'documents' | 'shares' | 'trash' | 'settings' | 'status' | 'accounts'
 
 /** An app of the desktop: it opens in a window, at its own addresses. */
 export type AppInfo = {
@@ -29,6 +30,7 @@ export const apps: readonly AppInfo[] = [
   { id: 'shares', title: 'Partages', icon: Share2, color: '#13996b', home: '/partages' },
   { id: 'trash', title: 'Corbeille', icon: Trash2, color: '#6b6f7a', home: '/corbeille' },
   { id: 'settings', title: 'Réglages', icon: Settings, color: '#0e7490', home: settingsPath },
+  { id: 'status', title: 'État de la box', icon: Gauge, color: '#15803d', home: statusPath, adminOnly: true },
   { id: 'accounts', title: 'Comptes', icon: Users, color: '#7c4ddb', home: '/comptes', adminOnly: true },
 ]
 
@@ -44,6 +46,7 @@ export function appOf(path: string): AppId | null {
   if (path === '/partages') return 'shares'
   if (path === '/corbeille') return 'trash'
   if (path === settingsPath) return 'settings'
+  if (path === statusPath) return 'status'
   if (path === '/comptes') return 'accounts'
   return null
 }

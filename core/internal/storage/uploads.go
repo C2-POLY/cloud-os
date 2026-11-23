@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -74,7 +73,7 @@ func (s *Store) CreateUpload(ctx context.Context, owner, p string, length int64,
 	if err := os.MkdirAll(s.uploadsDir(), 0o750); err != nil {
 		return Upload{}, err
 	}
-	if free, err := freeBytes(s.uploadsDir()); err == nil && uint64(length) > free {
+	if _, free, err := DiskUsage(s.uploadsDir()); err == nil && uint64(length) > free {
 		return Upload{}, fmt.Errorf("%w: %d bytes, %d free on the disk", ErrTooLarge, length, free)
 	}
 	// A replacing upload only needs the path to be a file, if anything.
@@ -312,13 +311,4 @@ func (s *Store) CleanUploads(ctx context.Context) (int, error) {
 		removed++
 	}
 	return removed, nil
-}
-
-// freeBytes returns the space available to the core on dir's file system.
-func freeBytes(dir string) (uint64, error) {
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(dir, &st); err != nil {
-		return 0, err
-	}
-	return st.Bavail * uint64(st.Bsize), nil //nolint:gosec // Bsize is positive
 }

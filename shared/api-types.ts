@@ -202,3 +202,76 @@ export interface SMBPasswordStatus {
 export interface SMBPasswordCreated extends SMBPasswordStatus {
   password: string
 }
+
+/** Whether a service of the box answers; `off` when it is not turned on for this box. */
+export type ServiceState = 'ok' | 'down' | 'off'
+
+/** Where a backup run stands; `interrupted` is a run still unfinished after 6 h (the service stopped during it). */
+export type RunState = 'running' | 'ok' | 'failed' | 'interrupted'
+
+/** The size and free space of a disk, in bytes; `at` is when the backup service measured its disk. */
+export interface DiskSpace {
+  total: number
+  free: number
+  at?: string
+}
+
+/** A service of the box, as the core's `boxstatus.Service` writes it. */
+export interface BoxService {
+  name: 'core' | 'worker' | 'smb' | 'tailscale'
+  state: ServiceState
+  /** The worker only: its newest heartbeat (the analysis), and its query endpoint (the searches by meaning). */
+  seen_at?: string
+  analysis?: ServiceState
+  search?: ServiceState
+}
+
+/** A row of backup_runs, as the core's `boxstatus.Run` writes it. */
+export interface BackupRun {
+  started_at: string
+  finished_at?: string
+  ok?: boolean
+  state: RunState
+  error?: string
+  files?: number // a backup: the files and bytes read, the bytes added, how long it took
+  bytes?: number
+  data_added?: number
+  duration_ms?: number
+  sample?: number // a restore test: the files compared with the index, and how many differ
+  mismatches?: number
+}
+
+/** What calls for the administrator (core/internal/boxstatus, Alerts); `service` names the service down. */
+export type AlertKind =
+  | 'data_disk_low'
+  | 'backup_disk_low'
+  | 'service_down'
+  | 'backup_failed'
+  | 'backup_stale'
+  | 'restore_test_failed'
+  | 'restore_test_stale'
+  | 'smb_kept'
+
+export interface BoxAlert {
+  kind: AlertKind
+  service?: BoxService['name']
+}
+
+/** GET /api/box/status (#102, admins only), as the core's `boxstatus.Status` writes it. */
+export interface BoxStatus {
+  version: string
+  checked_at: string
+  data_disk?: DiskSpace // absent when it could not be measured
+  backup_disk?: DiskSpace // as the newest backup run measured it; absent until one has
+  services: BoxService[] // core, worker, smb, tailscale
+  access: { public_url: string; funnel: boolean }
+  backup: {
+    on: boolean // the backup service runs
+    last: { backup?: BackupRun; copy?: BackupRun; check?: BackupRun; restore_test?: BackupRun }
+    last_ok?: string // the end of the newest backup that succeeded
+    first_at?: string
+  }
+  /** SMB writes the box could not store (#111): waiting for the database in .cloudos/rescue, or kept in the trash over 30 days. */
+  smb_kept: { waiting?: number; in_trash: number; last_at?: string }
+  alerts: BoxAlert[]
+}

@@ -215,7 +215,11 @@ dc() {
 	# name up, only when it runs: an unknown name would go to the home DNS.
 	trusted=
 	case ,$COMPOSE_PROFILES, in *,tailscale,*) trusted=tailscale ;; esac
-	export COMPOSE_PROFILES CLOUDOS_TS_SERVE="$serve" CLOUDOS_TRUSTED_PROXIES="$trusted"
+	# The core counts the backup's alerts once backup-init has run (the box's
+	# status, docs/architecture/status.md), whichever services this call names.
+	backup=
+	! backup_on || backup=1
+	export COMPOSE_PROFILES CLOUDOS_TS_SERVE="$serve" CLOUDOS_TRUSTED_PROXIES="$trusted" CLOUDOS_BACKUP="$backup"
 	# The one password passed on, from the env file: the restore's (cmd_restore).
 	(
 		if [ -n "${BOX_PGPASSWORD:-}" ]; then
