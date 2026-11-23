@@ -7,12 +7,13 @@ An all-in-one home cloud OS installed on a box: drive, photos, documents and med
 - 2026-11-17: repository created; phase 1 skeleton in place (Compose stack, health endpoint, worker heartbeat, CI). The V1 is phases 1 to 3 of the PRD roadmap (Core + Drive, Photos + mobile, AI search + Documents), run in Docker Compose. The OS packaging comes after.
 - Decisions are recorded in `docs/decisions/` (one numbered file each, with the why and the options rejected). Stack: `001-stack.md`.
 - How it is built, domain by domain with diagrams, is in `docs/architecture/` (index in its `README.md`). Every subject with a design updates its domain's file in the same PR as the code.
+- 2026-11-20: hardware decided. The project publishes hardware requirements, minimal and recommended (`docs/install.md`), and the Raspberry Pi 5 is the reference machine they are measured and tested on (`docs/decisions/008-materiel.md`); any machine that meets them may run the box, an x86 mini PC for instance. The requirements stay provisional until measured on the Pi 5 with `scripts/measure`.
 - 2026-11-22: the code is open source, under MIT OR Apache-2.0 at the user's choice (`LICENSE-MIT`, `LICENSE-APACHE`, `docs/decisions/007-licence.md`). The public website is in `site/` (see Commands).
-- Still open in the PRD: product name, reference hardware (Raspberry Pi 5 or x86 mini PC). Update this file and the `topic` skill when one is decided.
+- Still open in the PRD: product name. Update this file and the `topic` skill when it is decided.
 
 ## Stack
 
-Containers first: the whole application runs in Docker Compose, and the OS is only a wrapper around it. Daily development happens on a Mac with Docker Desktop; OS image tests in a QEMU/UTM VM; real-hardware tests on the box.
+Containers first: the whole application runs in Docker Compose, and the OS is only a wrapper around it. Daily development happens on a Mac with Docker Desktop; OS image tests in a QEMU/UTM VM; real-hardware tests on the box, a Raspberry Pi 5 (the reference machine).
 
 - Core (accounts, storage, index, API, WebDAV, sharing, task queue): Go.
 - AI workers (text and image embeddings, OCR, speech, classification): Python, models run with ONNX Runtime, no PyTorch in the image. They read the task queue and write results to the database; they read user files from a read-only mount and never modify them. The models (Arctic Embed M v2.0, SigLIP 2, PP-OCRv5; `docs/decisions/005-modeles-locaux.md`) are baked into the worker image at build time by `worker/models/fetch.sh`, each checked against its SHA-256, and loaded by `worker/src/worker/models.py`; ONNX Runtime's telemetry is switched off (`ORT_DISABLE_TELEMETRY`). The one call from the core to a worker is `POST /embed` (`worker/src/worker/embedserver.py`, port 8090 on the Compose network only, never published): the vector of a search, which cannot wait behind the queue. Each worker declares the embedding models and versions it serves in `embedding_models`; a new version makes the core queue every content again (`docs/architecture/embeddings.md`). The worker runs at `nice 10` so the core stays responsive.
@@ -68,6 +69,19 @@ scripts/box tailscale
 scripts/box backup-init /media/usb/cloudos-backup
 scripts/box backup
 scripts/box backup-status
+# Install the box on a new 64-bit Debian or Raspberry Pi OS Lite, once, as root
+# (docs/install.md): Docker from Docker's apt repository (key checked by its
+# fingerprint), the data SSD at /srv/cloudos and the USB backup disk at
+# /media/cloudos-backup by UUID in /etc/fstab (never a format), Docker waiting
+# for the SSD with its folder on it (/srv/cloudos/docker: the database never
+# goes on an SD card), cloudos.service (box/systemd/; `scripts/box up
+# --no-build` at boot), then scripts/box init and up as the clone's owner, who
+# runs sudo. Run again, it changes nothing more.
+sudo scripts/install --data <SSD UUID> --backup <USB disk UUID>
+# Measure the requirements on a throwaway box (project cloud-os-mesure, port
+# 8494): 1 000 photos and 100 PDFs of FOLDER, imported read-only; prints the
+# table of docs/install.md, then removes the box
+scripts/measure <folder>
 # An update starts with a backup: git pull --ff-only, backup, then up --build;
 # a failed backup stops the update.
 scripts/box update
@@ -89,8 +103,16 @@ make lint
 # Every test suite. Starts the Compose database if needed; each database test
 # creates and drops its own throwaway database. The backup's tests run in the
 # backup image (restic, pg_dump, a Postgres of the database's version):
-# `make test-backup`; scripts/box's with a fake docker: `make test-box`.
+# `make test-backup`; scripts/box's with a fake docker: `make test-box`;
+# scripts/install's with fake apt-get, systemctl, blkid, mount and findmnt:
+# `make test-install`.
 make test
+
+# A cut during an upload: a throwaway production box (project cloud-os-crash,
+# port 8494), db and core killed halfway through a 200 MB upload, then core
+# verify and the same SHA-256. Builds the images; not in `make test`, run by
+# the CI images workflow on amd64 and arm64
+make test-crash
 
 # Rewrite Go and Python files in place
 make fmt
@@ -148,7 +170,7 @@ cd site && npm ci && npm run dev
 cd site && npm run build && npm run preview
 ```
 
-Layout: `core/` (Go module, `cmd/core`, `internal/`, SQL migrations in `core/migrations/`, applied by the core at startup with goose), `worker/` (Python, uv; the models' fetch script in `worker/models/`, their benchmark in `worker/bench/`), `web/` (React, Vite, npm), `mobile/` (Expo, React Native; `docs/architecture/mobile.md`), `shared/api-types.ts` (API types used by web and mobile), `backup/` (the backup service's image and restic's pinned fetch script; `docs/architecture/backup.md`), `compose.yaml`, `compose.prod.yaml` and `scripts/box` (production), `Makefile`, `.github/workflows/ci.yml` (`make lint` and `make test` on every PR and on `main`) and `images.yml` (the images and the production stack, on amd64 and arm64). `site/` is the public website (Astro, Lenis and three.js, English at `/` and French at `/fr/`), independent of the box: nothing in it is built into an image, and `.github/workflows/site.yml` builds it on a PR that touches it and publishes it to GitHub Pages (<https://c2-poly.github.io/cloud-os/>) on a push to `main`. The page asks nothing from another origin (fonts from @fontsource, no CDN, no analytics), keeps its first load under 30 KB gzip and loads three.js only after the page.
+Layout: `core/` (Go module, `cmd/core`, `internal/`, SQL migrations in `core/migrations/`, applied by the core at startup with goose), `worker/` (Python, uv; the models' fetch script in `worker/models/`, their benchmark in `worker/bench/`), `web/` (React, Vite, npm), `mobile/` (Expo, React Native; `docs/architecture/mobile.md`), `shared/api-types.ts` (API types used by web and mobile), `backup/` (the backup service's image and restic's pinned fetch script; `docs/architecture/backup.md`), `compose.yaml`, `compose.prod.yaml` and `scripts/box` (production), `scripts/install` and `box/systemd/` (installing the box on a machine; `docs/install.md`), `scripts/measure` (the requirements), `Makefile`, `.github/workflows/ci.yml` (`make lint` and `make test` on every PR and on `main`) and `images.yml` (the images and the production stack, on amd64 and arm64). `site/` is the public website (Astro, Lenis and three.js, English at `/` and French at `/fr/`), independent of the box: nothing in it is built into an image, and `.github/workflows/site.yml` builds it on a PR that touches it and publishes it to GitHub Pages (<https://c2-poly.github.io/cloud-os/>) on a push to `main`. The page asks nothing from another origin (fonts from @fontsource, no CDN, no analytics), keeps its first load under 30 KB gzip and loads three.js only after the page.
 
 **One stack per worktree.** Give each worktree its own Compose project and, when another stack runs, its own host ports, so stacks never share a database:
 
@@ -163,6 +185,7 @@ Defaults: database `54320`, core `8480`, Vite `5180`, all bound to `127.0.0.1`. 
 - **No data loss, ever.** Indexing never modifies original files; integrity is checked by hash; deletes go to the trash; database migrations are versioned and reversible. A feature that can lose a file does not ship.
 - **Nothing leaves the box by default.** Any call to an external API is explicit and enabled per module.
 - Files are stored in clear, in a readable tree: the data stays usable without the product. Only `core/internal/storage` writes there: it writes to a temporary file, checks it, then links it into place without ever replacing a file; it never modifies a stored file in place: replacing one (explicit `Replace` only) first moves its content to `.cloudos/versions`, and deleting means moving to the trash (`.cloudos/trash`); only the trash purge and the version retention erase bytes: on expiry (`CLOUDOS_TRASH_DAYS`, 30 by default), on a confirmed request, or beyond the last `CLOUDOS_VERSIONS_KEEP` (10) versions older than `CLOUDOS_VERSIONS_DAYS` (30). `core/internal/guard` fails the build if any function outside its closed `allowedErasers` list can erase a file. An SMB write goes to a working file of its own under `.cloudos/tmp/smb` (`Store.Stage`), never to the stored file; it is stored like a `Put` with `Replace` only on the client's CLOSE, and dropped on any other end (a cut, a server stop). A CLOSE whose storing fails keeps the content: in `.cloudos/rescue/<owner>` while the database is away, then in the trash with `reason = 'smb_not_saved'` (`SettleRescued`, op `rescue` in `moves`). `CleanTmp` leaves `.cloudos/tmp/smb` alone: only `core smb` empties it, at its start. A move, a trash, a restore, a replace or a rename onto a file (`MoveReplace`) is journaled in `moves` before the disk is touched, holds the owner's lock throughout, never renames onto an existing path, and is finished or dropped by `RecoverMoves` at startup, which settles each entry under its owner's lock (the smb service is a second writing process). Every ancestor of an index row has its own `dir` row. Every query on live files filters `trash_id IS NULL`. The backup's picture (`Store.Freeze`) is hard links, which only works because a stored file is never modified in place; `.cloudos/snapshots` holds nothing else, and only `Frozen.Release` (or the next `Freeze`) erases it.
+- **The install never formats a disk.** `scripts/install` never formats, partitions or wipes a disk: it only adds lines to `/etc/fstab`, after a copy (`/etc/fstab.cloudos.bak`), checked by `findmnt --verify`, and every refusal runs before anything is written (an unknown UUID, an SD card, a file system other than ext4, xfs or btrfs, a mount point taken in fstab or holding files). Never add `mkfs`, `parted`, `wipefs` or the like to it: `scripts/test-install.sh` fails if it calls or names one. The data never goes on an SD card, the database included (Docker's `data-root` on the data SSD), and Docker starts only once the data SSD is mounted (`RequiresMountsFor=/srv/cloudos`). At boot, `cloudos.service` never builds (`scripts/box up --no-build`): new code only runs after `scripts/box update`, which backs up first.
 - **An update starts with a backup.** `scripts/box update` backs up before rebuilding and stops if the backup fails. The backup's key is shown once by `scripts/box backup-init` and must be kept off the box: without it the backup cannot be read.
 - **SMB = the account's SMB password, never its account password.** The SMB password is drawn in Réglages and kept as its NT hash only (`smb_passwords`); the account's password (argon2id) never opens SMB, and there is no guest. Revoking or replacing it, or disabling the account, closes its SMB sessions (Postgres `NOTIFY smb_revoke`, and a sweep every 60 s).
 - **Funnel = share links only.** Tailscale Funnel, off by default, opens only `/s/`, `/api/s/` and `/assets/` to the internet, on `:8443`: twice, by the paths of `box/tailscale/serve-funnel.json` and by the core's guard (`edge.Config.Handler`), which answers 404 to anything else on a request carrying `Tailscale-Funnel-Request`. Never add a path or a port to Funnel, never forward SMB through it. The rest of the box is for the tailnet's devices only, on `:443` and `:445`.

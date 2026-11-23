@@ -13,6 +13,8 @@ on:
       - "backup/**"
       - "compose*.yaml"
       - "scripts/box"
+      - "scripts/test-crash.sh"
+      - "core/internal/storage/**"
       - "box/**"
       - "worker/ffmpeg/**"
       - "worker/models/**"
@@ -154,6 +156,13 @@ jobs:
           scripts/box backup-status | tee "$RUNNER_TEMP/status.txt"
           [ "$(grep -c ' ok ' "$RUNNER_TEMP/status.txt")" -ge 2 ]
           if grep -q FAILED "$RUNNER_TEMP/status.txt"; then echo "a backup run failed"; exit 1; fi
+
+      # A cut during an upload loses nothing (#103): a throwaway box of its
+      # own (project cloud-os-crash, port 8494) beside this one, db and core
+      # killed halfway through a 200 MB upload, then core verify and the
+      # upload's end with the same SHA-256. It sets its own env file and folders.
+      - name: Power cut during an upload
+        run: scripts/test-crash.sh
 
       - name: Logs
         if: failure()

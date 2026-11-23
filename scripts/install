@@ -1,0 +1,474 @@
+#!/bin/sh
+# Install Cloud OS on a new 64-bit Debian machine (Raspberry Pi OS Lite
+# included), once, as root (docs/install.md):
+#
+#   sudo scripts/install [--data UUID] [--backup UUID]
+#
+#   --data UUID     the data SSD (ext4, xfs or btrfs), mounted at /srv/cloudos
+#   --backup UUID   the USB backup disk (ext4, xfs or btrfs), mounted at
+#                   /media/cloudos-backup
+#
+# It mounts the disks by UUID; installs Docker's wait for the data disk and
+# cloudos.service (box/systemd/); installs Docker from Docker's own apt
+# repository, its key checked by its fingerprint, with its folder on the data
+# SSD; then runs scripts/box init and up as the owner of this clone. Without
+# --data, the data stays on the system disk, unless it is an SD card.
+#
+# It never formats, partitions or wipes a disk: it only adds lines to
+# /etc/fstab, after a copy (/etc/fstab.cloudos.bak). Every check runs before
+# anything is written. Run again, it changes nothing more.
+
+set -eu
+
+DOCKER_REPO=https://download.docker.com/linux/debian
+# Docker's release key (https://docs.docker.com/engine/install/debian/).
+DOCKER_KEY_FPR=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+DOCKER_PACKAGES="docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
+# Packages that clash with Docker's own (Docker's guide removes them first).
+CLASHING_PACKAGES="docker.io docker-compose podman-docker containerd runc"
+DATA_MOUNT=/srv/cloudos
+BACKUP_MOUNT=/media/cloudos-backup
+BACKUP_FOLDER=$BACKUP_MOUNT/cloudos-backup
+# Docker's own folder (its volumes, the database's included) on the data SSD.
+DOCKER_ROOT=$DATA_MOUNT/docker
+# A missing disk never holds the boot up: nofail, and 10 s to show up.
+MOUNT_OPTIONS=nofail,noatime,x-systemd.device-timeout=10s
+CORE_UID=65532
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+
+die() {
+	printf 'scripts/install: %s\n' "$*" >&2
+	exit 1
+}
+note() { printf 'scripts/install: %s\n' "$*"; }
+
+# The tests run the script against a tree of their own, with fake commands
+# on the PATH (scripts/test-install.sh). Empty on a real machine.
+sys=
+if [ -n "${CLOUDOS_INSTALL_SYSROOT:-}" ]; then
+	[ "${CLOUDOS_INSTALL_TEST:-}" = 1 ] || die "CLOUDOS_INSTALL_SYSROOT is for scripts/test-install.sh only"
+	sys=$CLOUDOS_INSTALL_SYSROOT
+fi
+fstab=$sys/etc/fstab
+release=$sys/etc/os-release
+keyring=$sys/etc/apt/keyrings/docker.asc
+sources=$sys/etc/apt/sources.list.d/docker.list
+unitdir=$sys/etc/systemd/system
+daemon_json=$sys/etc/docker/daemon.json
+box_env=${CLOUDOS_BOX_ENV:-$root/box.env}
+
+scratch=
+trap '[ -z "$scratch" ] || rm -rf "$scratch"' EXIT
+
+usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; }
+
+# ---------------------------------------------------------------- checks
+
+os_value() {
+	sed -n "s/^$1=//p" "$release" | tail -n 1 | tr -d "\"'"
+}
+
+check_machine() {
+	[ "$(id -u)" = 0 ] || die "run it as root: sudo scripts/install"
+	[ -f "$release" ] || die "$release is missing: Cloud OS installs on Debian or Raspberry Pi OS, 64-bit"
+	os_id=$(os_value ID)
+	case " $os_id $(os_value ID_LIKE) " in
+	*" debian "*) ;;
+	*) die "this system is ${os_id:-unknown}: Cloud OS installs on Debian or Raspberry Pi OS, 64-bit (docs/install.md)" ;;
+	esac
+	codename=$(os_value VERSION_CODENAME)
+	case $codename in
+	'' | *[!a-z]*) die "cannot read the Debian release name (VERSION_CODENAME) in $release" ;;
+	esac
+	arch=$(dpkg --print-architecture) || die "dpkg --print-architecture failed"
+	case $arch in
+	arm64 | amd64) ;;
+	*) die "this system is $arch, 32-bit: Cloud OS needs a 64-bit system (arm64 or amd64); on a Raspberry Pi, flash Raspberry Pi OS Lite (64-bit)" ;;
+	esac
+}
+
+# The owner of this clone runs the box: scripts/box, box.env, cloudos.service.
+check_clone() {
+	# systemd's ExecStart and sed below read the path as it is.
+	case $root in
+	*[!A-Za-z0-9/._-]*) die "the clone's path $root holds spaces or symbols: clone it into a plain path, such as /home/pi/cloud-os" ;;
+	"$DATA_MOUNT" | "$DATA_MOUNT"/* | "$BACKUP_MOUNT" | "$BACKUP_MOUNT"/*) die "clone the repository outside $DATA_MOUNT and $BACKUP_MOUNT" ;;
+	esac
+	owner=$(ls -ld "$root" | awk '{print $3}')
+	case $owner in
+	'' | *[!a-z0-9_-]* | [0-9-]*) die "the owner of $root ($owner) is not a user of this machine" ;;
+	esac
+	# The one who runs sudo runs the box: the docker group is not given to
+	# another user, and root copies nothing from another user's tree.
+	[ "$owner" = "${SUDO_USER:-root}" ] ||
+		die "the clone belongs to $owner, not to ${SUDO_USER:-root}: run sudo scripts/install as $owner"
+	for f in box/systemd/cloudos.service box/systemd/docker.service.d/cloudos.conf; do
+		[ -f "$root/$f" ] && [ ! -L "$root/$f" ] || die "$root/$f is missing or a link: is $root a clone of Cloud OS?"
+	done
+	# An existing box.env keeps its folders (scripts/box init never rewrites it).
+	if [ -f "$box_env" ]; then
+		have=$(sed -n 's/^CLOUDOS_DATA_DIR=//p' "$box_env" | tail -n 1)
+		[ "$have" = "$sys$DATA_MOUNT/files" ] ||
+			die "$box_env keeps the files in ${have:-nothing}, not $DATA_MOUNT/files: move it aside, then run again"
+	fi
+}
+
+# One source of Docker's packages, ours, and none of Debian's own Docker.
+check_apt() {
+	others=$(grep -l -s -F download.docker.com "$sys/etc/apt/sources.list" "$sys"/etc/apt/sources.list.d/* 2>/dev/null |
+		grep -v -x -F "$sources" || true)
+	[ -z "$others" ] || die "Docker's apt repository is already declared in $(echo $others): remove it, then run again (scripts/install adds its own, with Docker's key checked)"
+	clash=
+	for p in $CLASHING_PACKAGES; do
+		if dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q 'install ok installed'; then
+			clash="$clash $p"
+		fi
+	done
+	[ -z "$clash" ] || die "Debian's packages$clash clash with Docker's own: sudo apt-get remove$clash (docs/install.md)"
+}
+
+# A file system UUID as lsblk -f shows it (8-4-4-4-12), in lower case.
+check_uuid() {
+	case $2 in
+	[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+	*) die "$1 '$2' is not a file system UUID: lsblk -f lists them" ;;
+	esac
+}
+
+# The fstab entries as "SOURCE MOUNTPOINT", comments left out, with
+# UUID="…" and /dev/disk/by-uuid/… read as UUID=…, and no trailing slash.
+fstab_entries() {
+	[ -f "$fstab" ] || return 0
+	awk '!/^[ \t]*#/ && NF >= 2 {
+		src = $1; gsub(/"/, "", src); sub(/^\/dev\/disk\/by-uuid\//, "UUID=", src)
+		if (src ~ /^UUID=/) src = "UUID=" tolower(substr(src, 6))
+		m = $2; gsub(/\\040/, " ", m); if (m != "/") sub(/\/+$/, "", m)
+		print src, m
+	}' "$fstab"
+}
+
+# The source fstab mounts at MOUNTPOINT, empty when none.
+fstab_source_at() { fstab_entries | awk -v m="$1" '$2 == m { print $1; exit }'; }
+
+# Where fstab mounts UUID, empty when nowhere.
+fstab_mount_of() { fstab_entries | awk -v s="UUID=$1" '$1 == s { print $2; exit }'; }
+
+is_mounted() { findmnt -n --mountpoint "$1" >/dev/null 2>&1; }
+
+is_empty() {
+	[ -z "$(ls -A "$1" | grep -vx 'lost+found' || true)" ]
+}
+
+# The device of /, without a btrfs subvolume ("/dev/sda2[/@]").
+system_source() {
+	s=$(findmnt -n -o SOURCE / 2>/dev/null || true)
+	printf '%s' "${s%%\[*}"
+}
+
+# The whole disk a partition is on (/dev/sda for /dev/sda2); a whole disk is its own.
+disk_of() {
+	p=$(lsblk -n -o PKNAME "$1" 2>/dev/null | head -n 1)
+	if [ -n "$p" ]; then printf '/dev/%s' "$p"; else printf '%s' "$1"; fi
+}
+
+# check_disk NAME UUID MOUNTPOINT: every refusal for one disk, before
+# anything is written. Sets <NAME>_type and <NAME>_dev.
+check_disk() {
+	name=$1 uuid=$2 mnt=$3
+	check_uuid "--$name" "$uuid"
+	dev=$(blkid -U "$uuid" 2>/dev/null) || dev=
+	[ -n "$dev" ] || die "no disk has the UUID $uuid: lsblk -f lists them (is it plugged in?)"
+	case $dev in
+	/dev/mmcblk*) die "$dev ($uuid) is an SD card or eMMC: the $name goes on a disk of its own" ;;
+	esac
+	[ "$dev" != "$(system_source)" ] || die "$dev ($uuid) holds the system: give another disk to --$name"
+	type=$(blkid -s TYPE -o value "$dev" 2>/dev/null) || type=
+	case $type in
+	ext4 | xfs | btrfs) ;;
+	'') die "$dev ($uuid) has no file system: format it first (docs/install.md, step 2)" ;;
+	*) die "$dev ($uuid) is $type: the $name needs ext4, xfs or btrfs, for hard links and Unix owners (docs/install.md, step 2)" ;;
+	esac
+
+	src=$(fstab_source_at "$mnt")
+	[ -z "$src" ] || [ "$src" = "UUID=$uuid" ] ||
+		die "$fstab already mounts $src at $mnt: remove that line, or give its disk"
+	at=$(fstab_mount_of "$uuid")
+	[ -z "$at" ] || [ "$at" = "$mnt" ] || die "$fstab already mounts $uuid at $at"
+
+	[ ! -L "$sys$mnt" ] || die "$mnt is a symbolic link: the disk would be mounted where it points"
+	if is_mounted "$mnt"; then
+		cur=$(findmnt -n -o UUID --mountpoint "$mnt" 2>/dev/null) || cur=
+		[ "$cur" = "$uuid" ] || die "another file system (${cur:-without a UUID}) is mounted at $mnt"
+	elif [ -e "$sys$mnt" ]; then
+		[ -d "$sys$mnt" ] || die "$mnt exists and is not a folder"
+		is_empty "$sys$mnt" ||
+			die "$mnt holds files and no disk is mounted there: mounting $uuid over it would hide them; move them away first"
+	fi
+	eval "${name}_type=\$type ${name}_dev=\$dev"
+}
+
+check_disks() {
+	if [ -n "$data_uuid" ] && [ "$data_uuid" = "$backup_uuid" ]; then
+		die "--data and --backup name the same disk: the backup goes on a disk of its own"
+	fi
+	if [ -z "$data_uuid" ] && is_mounted "$DATA_MOUNT"; then
+		# A disk mounted there by hand: checked like --data, then kept in fstab.
+		data_uuid=$(findmnt -n -o UUID --mountpoint "$DATA_MOUNT" 2>/dev/null) || data_uuid=
+		[ -n "$data_uuid" ] || die "$DATA_MOUNT is mounted from a file system without a UUID: give the data SSD with --data"
+		note "no --data: the data goes on the disk already mounted at $DATA_MOUNT ($data_uuid)"
+	fi
+	if [ -n "$data_uuid" ]; then
+		check_disk data "$data_uuid" "$DATA_MOUNT"
+	elif src=$(fstab_source_at "$DATA_MOUNT") && [ -n "$src" ]; then
+		die "$fstab mounts $src at $DATA_MOUNT, but nothing is mounted there: plug the disk in, or give --data"
+	else
+		case $(system_source) in
+		/dev/mmcblk*) die "the system runs from an SD card ($(system_source)): give the data SSD with --data UUID, so that nothing is written on the card (docs/install.md, step 2)" ;;
+		esac
+		note "no --data: the data stays on the system disk, in $DATA_MOUNT"
+	fi
+	if [ -n "$backup_uuid" ]; then
+		check_disk backup "$backup_uuid" "$BACKUP_MOUNT"
+		# One disk failure must not take the data and its backup together.
+		disk=$(disk_of "$backup_dev")
+		[ "$disk" != "$(disk_of "$(system_source)")" ] ||
+			die "$backup_dev is on the system's disk $disk: the backup goes on a disk of its own"
+		[ -z "$data_uuid" ] || [ "$disk" != "$(disk_of "$data_dev")" ] ||
+			die "$backup_dev and $data_dev are on the same disk $disk: the backup goes on a disk of its own"
+	fi
+}
+
+# ---------------------------------------------------------------- writes
+
+# put_file SRC DST: copy SRC to DST, mode 0644, only when it differs.
+put_file() {
+	if [ -f "$2" ] && cmp -s "$1" "$2"; then
+		return 0
+	fi
+	cp "$1" "$2.cloudos.tmp" && chmod 644 "$2.cloudos.tmp" && mv "$2.cloudos.tmp" "$2" || die "cannot write $2"
+	note "wrote ${2#"$sys"}"
+}
+
+# The primary key fingerprints in a key file, one per line.
+key_fingerprints() {
+	GNUPGHOME=$scratch/gnupg gpg --batch --quiet --with-colons --show-keys "$1" 2>/dev/null |
+		awk -F: '$1 == "pub" { want = 1; next } want && $1 == "fpr" { print $10; want = 0 }'
+}
+
+# Docker's key, downloaded then kept only if it is the key we know; before
+# anything else is written.
+check_docker_key() {
+	export DEBIAN_FRONTEND=noninteractive
+	if ! command -v curl >/dev/null 2>&1 || ! command -v gpg >/dev/null 2>&1; then
+		apt-get update || die "apt-get update failed"
+		apt-get install -y ca-certificates curl gnupg || die "cannot install curl and gnupg"
+	fi
+	mkdir -m 700 "$scratch/gnupg"
+	if [ -f "$keyring" ]; then
+		[ "$(key_fingerprints "$keyring")" = "$DOCKER_KEY_FPR" ] ||
+			die "${keyring#"$sys"} is not Docker's key ($DOCKER_KEY_FPR): remove it, then run again"
+		return 0
+	fi
+	curl -fsSL --proto '=https' --tlsv1.2 "$DOCKER_REPO/gpg" -o "$scratch/docker.asc" ||
+		die "cannot download Docker's key from $DOCKER_REPO/gpg"
+	got=$(key_fingerprints "$scratch/docker.asc")
+	[ "$got" = "$DOCKER_KEY_FPR" ] ||
+		die "the key from $DOCKER_REPO/gpg has the fingerprint $(echo ${got:-none}), not Docker's $DOCKER_KEY_FPR: nothing installed"
+}
+
+# add_fstab UUID MOUNTPOINT TYPE: one line, by UUID, never a format.
+add_fstab() {
+	uuid=$1 mnt=$2 type=$3
+	mkdir -p "$sys$mnt"
+	if [ "$(fstab_source_at "$mnt")" != "UUID=$uuid" ]; then
+		bak=$sys/etc/fstab.cloudos.bak
+		[ -f "$bak" ] || cp -p "$fstab" "$bak" || die "cannot copy $fstab"
+		pass=2
+		[ "$type" = ext4 ] || pass=0 # xfs and btrfs have no boot-time fsck
+		tmp=$fstab.cloudos.tmp
+		cp -p "$fstab" "$tmp" || die "cannot copy $fstab"
+		[ -z "$(tail -c 1 "$tmp")" ] || printf '\n' >>"$tmp"
+		printf '# Cloud OS, added by scripts/install (docs/install.md): nofail, the machine boots without it\n' >>"$tmp"
+		printf 'UUID=%s %s %s %s 0 %s\n' "$uuid" "$mnt" "$type" "$MOUNT_OPTIONS" "$pass" >>"$tmp"
+		if ! findmnt --verify --tab-file "$tmp"; then
+			rm -f "$tmp"
+			die "findmnt --verify refuses the new fstab: $fstab is unchanged"
+		fi
+		mv "$tmp" "$fstab" || die "cannot write $fstab"
+		sync
+		note "added $uuid at $mnt to ${fstab#"$sys"} (the one from before Cloud OS is ${bak#"$sys"})"
+		systemctl daemon-reload
+	fi
+	if ! is_mounted "$mnt"; then
+		mount "$mnt" || die "cannot mount $uuid at $mnt"
+	fi
+	[ "$(findmnt -n -o UUID --mountpoint "$mnt" 2>/dev/null)" = "$uuid" ] ||
+		die "$uuid is not mounted at $mnt: nothing written there"
+}
+
+# Docker waits for the data SSD, and keeps its folder on it: its volumes,
+# the database's included, never go on an SD card. Written before Docker
+# first starts; a Docker that already ran keeps its folder.
+install_units() {
+	mkdir -p "$unitdir/docker.service.d"
+	put_file "$root/box/systemd/docker.service.d/cloudos.conf" "$unitdir/docker.service.d/cloudos.conf"
+	sed -e "s|@ROOT@|$root|g" -e "s|@USER@|$owner|g" "$root/box/systemd/cloudos.service" >"$scratch/cloudos.service"
+	put_file "$scratch/cloudos.service" "$unitdir/cloudos.service"
+	if [ -n "$data_uuid" ]; then
+		if [ -e "$daemon_json" ]; then
+			grep -q "\"data-root\": *\"$DOCKER_ROOT\"" "$daemon_json" ||
+				note "warning: ${daemon_json#"$sys"} exists and does not put Docker's folder in $DOCKER_ROOT: left as it is"
+		elif [ -d "$sys/var/lib/docker" ]; then
+			note "warning: Docker already ran from /var/lib/docker: its folder (volumes, database) stays there"
+		else
+			mkdir -p "$(dirname "$daemon_json")"
+			printf '{\n  "data-root": "%s"\n}\n' "$DOCKER_ROOT" >"$scratch/daemon.json"
+			put_file "$scratch/daemon.json" "$daemon_json"
+		fi
+	fi
+	systemctl daemon-reload
+}
+
+install_docker() {
+	if [ ! -f "$keyring" ]; then
+		mkdir -p "$(dirname "$keyring")"
+		chmod 755 "$(dirname "$keyring")"
+		put_file "$scratch/docker.asc" "$keyring"
+	fi
+	printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] %s %s stable\n' "$arch" "$DOCKER_REPO" "$codename" >"$scratch/docker.list"
+	mkdir -p "$(dirname "$sources")"
+	put_file "$scratch/docker.list" "$sources"
+
+	apt-get update || die "apt-get update failed (does $DOCKER_REPO serve Debian $codename?)"
+	# shellcheck disable=SC2086 # a list of package names
+	apt-get install -y $DOCKER_PACKAGES || die "cannot install Docker"
+	systemctl enable --now docker.service || die "cannot start Docker"
+
+	v=$(docker compose version --short 2>/dev/null) || die "docker compose is not installed"
+	v=${v#v}
+	major=${v%%.*}
+	rest=${v#*.}
+	minor=${rest%%.*}
+	case $major$minor in *[!0-9]* | '') die "cannot read the Docker Compose version ($v)" ;; esac
+	if [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 24 ]; }; then
+		die "Docker Compose $v is too old, scripts/box needs 2.24 or newer"
+	fi
+	note "Docker $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo installed), Compose $v"
+}
+
+# A folder of the box, owned by the core's user (uid 65532 in its image). A
+# link on a reused disk would hand its target to the core: refused.
+box_dir() {
+	[ ! -L "$1" ] || die "$1 is a symbolic link: move it away, then run again"
+	mkdir -p "$1" && chown "$CORE_UID:$CORE_UID" "$1" || die "cannot create $1"
+}
+
+# Run a command as the owner of the clone, with the given variables.
+as_owner() {
+	if [ "$owner" = root ]; then
+		env "$@"
+	else
+		runuser -u "$owner" -- env "$@"
+	fi
+}
+
+start_box() {
+	if [ "$owner" != root ]; then
+		case " $(id -nG "$owner") " in
+		*" docker "*) ;;
+		*)
+			usermod -aG docker "$owner" || die "cannot add $owner to the docker group"
+			note "$owner is now in the docker group (it runs the box; log out and in once to use it)"
+			;;
+		esac
+	fi
+	box_dir "$sys$DATA_MOUNT/files"
+	box_dir "$sys$DATA_MOUNT/maps"
+	[ -z "$backup_uuid" ] || box_dir "$sys$BACKUP_FOLDER"
+
+	# Passed on to scripts/box: the tests' env file and project.
+	as_owner CLOUDOS_DATA_DIR="$sys$DATA_MOUNT/files" CLOUDOS_MAPS_DIR="$sys$DATA_MOUNT/maps" \
+		${CLOUDOS_BOX_ENV:+"CLOUDOS_BOX_ENV=$CLOUDOS_BOX_ENV"} ${CLOUDOS_BOX_PROJECT:+"CLOUDOS_BOX_PROJECT=$CLOUDOS_BOX_PROJECT"} \
+		"$root/scripts/box" init || die "scripts/box init failed"
+	note "building and starting the box; the first build takes a while (docs/install.md)"
+	started=$(date +%s)
+	as_owner ${CLOUDOS_BOX_ENV:+"CLOUDOS_BOX_ENV=$CLOUDOS_BOX_ENV"} ${CLOUDOS_BOX_PROJECT:+"CLOUDOS_BOX_PROJECT=$CLOUDOS_BOX_PROJECT"} \
+		"$root/scripts/box" up || die "scripts/box up failed: scripts/box logs says why"
+	took=$(($(date +%s) - started))
+	note "the box was built and started in $((took / 60)) min $((took % 60)) s"
+	systemctl enable cloudos.service || die "cannot enable cloudos.service"
+	systemctl start cloudos.service || die "cloudos.service did not start: journalctl -u cloudos.service"
+}
+
+next_steps() {
+	backup_step="plug in a USB disk of ext4, xfs or btrfs, then run sudo scripts/install --backup <UUID> again"
+	[ -z "$backup_uuid" ] && ! is_mounted "$BACKUP_MOUNT" ||
+		backup_step="scripts/box backup-init $BACKUP_FOLDER, and keep the key it shows OFF the box"
+	cat <<EOF
+
+Cloud OS runs, on http://localhost:8480 of this machine only. Next, as $owner,
+from $root (docs/install.md, from step 4):
+
+  4. Tailscale, the one way in: CLOUDOS_TAILSCALE=1 and TS_AUTHKEY=... in
+     box.env, then scripts/box up, then scripts/box tailscale
+  5. open https://cloudos.<tailnet>.ts.net and create the admin account
+  6. draw your SMB password in Réglages, if you want the network drive
+  7. the backup: $backup_step
+  8. sudo reboot, and check that the box comes back on its own
+
+EOF
+}
+
+# ---------------------------------------------------------------- main
+
+# uuid_arg OPTION VALUE: a UUID given, in lower case; an empty one is refused,
+# never read as "no disk".
+uuid_arg() {
+	[ -n "$2" ] || die "$1 needs a UUID (lsblk -f lists them)"
+	printf '%s' "$2" | tr 'A-F' 'a-f'
+}
+
+data_uuid=
+backup_uuid=
+while [ $# -gt 0 ]; do
+	case $1 in
+	--data | --backup)
+		[ $# -ge 2 ] || die "$1 needs a UUID (lsblk -f lists them)"
+		v=$(uuid_arg "$1" "$2")
+		case $1 in --data) data_uuid=$v ;; *) backup_uuid=$v ;; esac
+		shift 2
+		;;
+	--data=*)
+		data_uuid=$(uuid_arg --data "${1#--data=}")
+		shift
+		;;
+	--backup=*)
+		backup_uuid=$(uuid_arg --backup "${1#--backup=}")
+		shift
+		;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	*) die "unknown argument $1 (scripts/install --help)" ;;
+	esac
+done
+
+# Every refusal first: nothing is written until they all pass.
+check_machine
+check_clone
+check_apt
+check_disks
+scratch=$(mktemp -d)
+check_docker_key
+
+# The disks, then Docker's wait and folder, then Docker: it first starts with
+# the data SSD mounted and its folder on it.
+[ -z "$data_uuid" ] || add_fstab "$data_uuid" "$DATA_MOUNT" "$data_type"
+[ -z "$backup_uuid" ] || add_fstab "$backup_uuid" "$BACKUP_MOUNT" "$backup_type"
+mkdir -p "$sys$DATA_MOUNT"
+install_units
+install_docker
+start_box
+next_steps

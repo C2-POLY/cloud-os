@@ -1,0 +1,250 @@
+#!/bin/sh
+# Measure what a box needs, for the requirements of docs/install.md, on a
+# throwaway box beside the real one, never in it:
+#
+#   scripts/measure [--photos N] [--pdfs N] [--work DIR] FOLDER
+#
+# It copies N photos (1 000 by default) and N PDFs (100) found in FOLDER into
+# a throwaway box: Compose project cloud-os-mesure, its own box.env, its own
+# folders in DIR (/srv/cloudos/measure when /srv/cloudos exists, on the data
+# SSD; a temporary folder otherwise), port CLOUDOS_CORE_PORT (8494). Its
+# account is created by /api/setup with a password drawn here and never
+# shown. core import reads the copy through a read-only mount. Then, while the
+# workers index it:
+#   - the peak memory of each service, from docker stats every 5 s;
+#   - the time until the task queue is empty (/api/health);
+#   - p50 and p95 of GET /api/files and of the Photos timeline: the interface
+#     is smooth if the p95 stays under 500 ms.
+# It prints the table of docs/install.md, then removes the box and DIR.
+# FOLDER is only read, and nothing leaves the machine.
+
+set -eu
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+box=$root/scripts/box
+SMOOTH_MS=500
+MAX_SECONDS=$((6 * 3600))
+
+die() {
+	printf 'scripts/measure: %s\n' "$*" >&2
+	exit 1
+}
+note() { printf 'scripts/measure: %s\n' "$*" >&2; }
+
+photos=1000
+pdfs=100
+work=
+folder=
+while [ $# -gt 0 ]; do
+	case $1 in
+	--photos | --pdfs | --work)
+		[ $# -ge 2 ] || die "$1 needs a value"
+		case $1 in --photos) photos=$2 ;; --pdfs) pdfs=$2 ;; *) work=$2 ;; esac
+		shift 2
+		;;
+	-h | --help)
+		sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+		exit 0
+		;;
+	-*) die "unknown option $1 (scripts/measure --help)" ;;
+	*)
+		[ -z "$folder" ] || die "one FOLDER only"
+		folder=$1
+		shift
+		;;
+	esac
+done
+[ -n "$folder" ] || die "name the folder to take the photos and PDFs from: scripts/measure FOLDER"
+[ -d "$folder" ] || die "$folder is not a folder"
+case $photos$pdfs in *[!0-9]*) die "--photos and --pdfs take a number" ;; esac
+
+export CLOUDOS_BOX_PROJECT="${CLOUDOS_BOX_PROJECT:-cloud-os-mesure}"
+export CLOUDOS_CORE_PORT="${CLOUDOS_CORE_PORT:-8494}"
+case $CLOUDOS_BOX_PROJECT in
+cloud-os-box | cloud-os) die "$CLOUDOS_BOX_PROJECT is a real stack: the measure runs in a throwaway project" ;;
+esac
+# Its end removes the project's volumes: never one that exists already.
+if [ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$CLOUDOS_BOX_PROJECT")$(docker volume ls -q --filter "label=com.docker.compose.project=$CLOUDOS_BOX_PROJECT")" ]; then
+	die "the project $CLOUDOS_BOX_PROJECT already exists: name a new one with CLOUDOS_BOX_PROJECT"
+fi
+
+# The work folder: new, and never inside the real box's files.
+if [ -z "$work" ]; then
+	if [ -d /srv/cloudos ]; then work=/srv/cloudos/measure; else work=$(mktemp -d); fi
+fi
+case $work in /*) ;; *) die "--work must be an absolute path" ;; esac
+case $work/ in /srv/cloudos/files/* | /srv/cloudos/maps/*) die "$work is inside the box's own folders" ;; esac
+if [ -e "$work" ] && [ -n "$(ls -A "$work")" ]; then
+	die "$work is not empty: name a new folder with --work"
+fi
+if ! mkdir -p "$work" 2>/dev/null; then
+	sudo mkdir -p "$work" && sudo chown "$(id -u):$(id -g)" "$work" || die "cannot create $work"
+fi
+export CLOUDOS_BOX_ENV="$work/box.env" CLOUDOS_DATA_DIR="$work/files" CLOUDOS_MAPS_DIR="$work/maps"
+url=http://127.0.0.1:$CLOUDOS_CORE_PORT
+sampler=
+importer=
+
+cleanup() {
+	[ -z "$sampler" ] || kill "$sampler" 2>/dev/null || true
+	[ -z "$importer" ] || kill "$importer" 2>/dev/null || true
+	[ ! -f "$CLOUDOS_BOX_ENV" ] || "$box" down -v --remove-orphans >/dev/null 2>&1 || true
+	# The box's files are the core's (uid 65532) on Linux.
+	rm -rf "$work" 2>/dev/null || sudo rm -rf "$work" 2>/dev/null || note "left $work"
+}
+trap cleanup EXIT
+trap 'exit 1' INT TERM
+
+# ---------------------------------------------------------------- the corpus
+
+# copy_some N KIND EXPRESSION...: the first N files of FOLDER matching the
+# find expression, copied to corpus/KIND, read only from FOLDER.
+copy_some() {
+	n=$1 kind=$2
+	shift 2
+	mkdir -p "$work/corpus/$kind"
+	find "$folder" -type f \( "$@" \) 2>/dev/null | LC_ALL=C sort | head -n "$n" >"$work/$kind.list"
+	i=0
+	while IFS= read -r f; do
+		i=$((i + 1))
+		cp -p "$f" "$work/corpus/$kind/$(printf '%04d' "$i")-$(basename "$f")" || die "cannot copy $f"
+	done <"$work/$kind.list"
+	[ "$i" -ge "$n" ] || note "only $i $kind in $folder (wanted $n)"
+	echo "$i"
+}
+
+note "copying the corpus from $folder into $work/corpus"
+n_photos=$(copy_some "$photos" photos -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.heic' -o -iname '*.png')
+n_pdfs=$(copy_some "$pdfs" pdfs -iname '*.pdf')
+[ "$n_photos" -gt 0 ] || [ "$n_pdfs" -gt 0 ] || die "no photo and no PDF in $folder"
+corpus_mb=$(du -sk "$work/corpus" | awk '{printf "%d", $1 / 1024}')
+
+# ---------------------------------------------------------------- the box
+
+note "starting the throwaway box $CLOUDOS_BOX_PROJECT on port $CLOUDOS_CORE_PORT"
+"$box" init >/dev/null
+"$box" up >&2 || die "the box did not start"
+# The password and the session go to curl in files of the work folder (mode
+# 0600), never on a command line that another user of the machine could read.
+(
+	umask 077
+	printf '{"name":"mesure","display_name":"Mesure","password":"%s"}' "$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)" >"$work/setup.json"
+)
+token=$(curl -sf -H 'Content-Type: application/json' -d "@$work/setup.json" "$url/api/setup" |
+	sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+[ -n "$token" ] || die "no account was created"
+(umask 077 && printf 'Authorization: Bearer %s\n' "$token" >"$work/auth")
+unset token
+
+# The memory of each container of the project, every 5 s, until the end.
+sample() {
+	while :; do
+		ids=$(docker ps -q --filter "label=com.docker.compose.project=$CLOUDOS_BOX_PROJECT")
+		if [ -n "$ids" ]; then
+			# shellcheck disable=SC2086 # container ids
+			docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' $ids 2>/dev/null >>"$work/stats.txt" || true
+		fi
+		sleep 5
+	done
+}
+sample &
+sampler=$!
+
+# A request's time in milliseconds.
+ms() {
+	curl -s -o /dev/null -w '%{time_total}' -H "@$work/auth" "$url$1" |
+		awk '{printf "%d\n", $1 * 1000}'
+}
+
+queue() {
+	curl -s "$url/api/health" | tr -d ' \n' |
+		sed -n 's/.*"queued":\([0-9]*\),"running":\([0-9]*\),"failed":\([0-9]*\).*/\1 \2 \3/p'
+}
+
+note "importing $n_photos photos and $n_pdfs PDFs (core import, read-only), then waiting for an empty queue"
+start=$(date +%s)
+"$box" run --rm -v "$work/corpus:/import:ro" core import mesure /import >"$work/import.log" 2>&1 &
+importer=$!
+: >"$work/files.ms"
+: >"$work/timeline.ms"
+idle=0
+failed=0
+while :; do
+	ms "/api/files?path=photos" >>"$work/files.ms"
+	ms "/api/timeline?limit=60" >>"$work/timeline.ms"
+	q=$(queue)
+	if [ -n "$q" ]; then
+		set -- $q
+		failed=$3
+		if [ "$1" -eq 0 ] && [ "$2" -eq 0 ] && ! kill -0 "$importer" 2>/dev/null; then
+			idle=$((idle + 1))
+		else
+			idle=0
+		fi
+	fi
+	[ "$idle" -lt 3 ] || break
+	[ $(($(date +%s) - start)) -lt "$MAX_SECONDS" ] || die "the queue was not empty after $MAX_SECONDS s"
+	sleep 1
+done
+wait "$importer" || die "core import failed: $(tail -n 5 "$work/import.log")"
+importer=
+indexed=$(($(date +%s) - start - 2))
+kill "$sampler" 2>/dev/null || true
+sampler=
+
+# ---------------------------------------------------------------- the table
+
+# The peak memory in MiB of each service, from "name 123.4MiB / 7.6GiB" lines.
+peaks() {
+	awk -v p="$CLOUDOS_BOX_PROJECT-" '
+		{
+			name = $1; sub("^" p, "", name); sub(/-[0-9]+$/, "", name)
+			if (name ~ /^core-run-/) name = "import"
+			v = $2; unit = v; sub(/[0-9.]+/, "", unit); sub(/[A-Za-z]+$/, "", v)
+			mib = v + 0
+			if (unit == "GiB") mib *= 1024; else if (unit == "KiB") mib /= 1024; else if (unit == "B") mib /= 1048576
+			if (mib > peak[name]) peak[name] = mib
+		}
+		END { for (n in peak) printf "%s %d\n", n, peak[n] }' "$work/stats.txt" 2>/dev/null | LC_ALL=C sort
+}
+
+# pct P FILE: the P-th percentile of the numbers in FILE.
+pct() {
+	sort -n "$2" | awk -v p="$1" '{ v[NR] = $1 } END { if (NR == 0) { print "-"; exit } i = int((p * NR + 99) / 100); if (i < 1) i = 1; print v[i] }'
+}
+
+if [ -r /proc/cpuinfo ]; then
+	cpu=$(sed -n 's/^\(Model\|model name\)[[:space:]]*: //p' /proc/cpuinfo | head -n 1)
+	cores=$(nproc)
+	mem_mb=$(awk '/^MemTotal/ { printf "%d", $2 / 1024 }' /proc/meminfo)
+else
+	cpu=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || uname -m)
+	cores=$(sysctl -n hw.ncpu)
+	mem_mb=$(($(sysctl -n hw.memsize) / 1048576))
+fi
+files_p50=$(pct 50 "$work/files.ms")
+files_p95=$(pct 95 "$work/files.ms")
+tl_p50=$(pct 50 "$work/timeline.ms")
+tl_p95=$(pct 95 "$work/timeline.ms")
+smooth=non
+if [ "$files_p95" != - ] && [ "$files_p95" -lt "$SMOOTH_MS" ] && [ "$tl_p95" -lt "$SMOOTH_MS" ]; then smooth=oui; fi
+
+cat <<EOF
+
+| Mesure | Valeur |
+|---|---|
+| Machine | ${cpu:-$(uname -m)}, $cores cœurs, $((mem_mb / 1024)) Go de mémoire ($(uname -sm)) |
+| Cloud OS | $(cat "$root/VERSION"), le $(date +%Y-%m-%d) |
+| Corpus | $n_photos photos et $n_pdfs PDF, $corpus_mb Mo |
+EOF
+peaks | while read -r name mib; do
+	printf '| Mémoire au plus haut : `%s` | %s Mo |\n' "$name" "$mib"
+done
+cat <<EOF
+| Indexation : file vide après | $((indexed / 60)) min $((indexed % 60)) s |
+| Tâches en échec | $failed |
+| \`GET /api/files\` (dossier de $n_photos photos) pendant l'indexation, p50 / p95 | $files_p50 / $files_p95 ms |
+| Chronologie (\`GET /api/timeline\`) pendant l'indexation, p50 / p95 | $tl_p50 / $tl_p95 ms |
+| Interface fluide (p95 sous $SMOOTH_MS ms) | $smooth |
+
+EOF

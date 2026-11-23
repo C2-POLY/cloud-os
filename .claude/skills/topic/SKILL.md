@@ -27,7 +27,7 @@ Chaque sujet a un niveau, Simple, Standard ou Complexe, qui choisit le modèle e
 
 **Critères**, le premier qui convient l'emporte :
 
-- **Complexe** : touche ce qui peut perdre un fichier de l'utilisateur (stockage, suppression, corbeille, versions, déduplication, sauvegarde et restauration), une migration de base, ce qui sort de la box (fournisseurs d'IA externes, tunnel d'accès distant), les comptes, les rôles et les liens de partage, le superviseur ou les mises à jour A/B de l'OS, la file de tâches d'indexation, un bug dont on ne trouve pas la cause, ou plus de six fichiers de code.
+- **Complexe** : touche ce qui peut perdre un fichier de l'utilisateur (stockage, suppression, corbeille, versions, déduplication, sauvegarde et restauration), l'installation de la box (`scripts/install` : disques, `fstab`, unités systemd), une migration de base, ce qui sort de la box (fournisseurs d'IA externes, tunnel d'accès distant), les comptes, les rôles et les liens de partage, le superviseur ou les mises à jour A/B de l'OS, la file de tâches d'indexation, un bug dont on ne trouve pas la cause, ou plus de six fichiers de code.
 - **Standard** : une fonctionnalité ou un bug localisé, de trois à six fichiers de code, qui n'écrit rien dans les fichiers de l'utilisateur.
 - **Simple** : docs, skill, outillage, textes, une constante ou une couleur, un ou deux fichiers.
 
@@ -142,7 +142,8 @@ make up && curl -s localhost:${CLOUDOS_CORE_PORT:-8480}/api/health
 Ce que ces tests doivent couvrir pour le sujet :
 
 - **Migrations** : si le sujet en ajoute une, un test l'applique, la défait et la réapplique (voir `core/internal/migrate/migrate_test.go`), sur une base qui a déjà des données.
-- **Données** : si le sujet touche au stockage, à la corbeille, à la déduplication ou à la sauvegarde, un test vérifie que les originaux sont intacts (même hash avant et après).
+- **Données** : si le sujet touche au stockage, à la corbeille, à la déduplication ou à la sauvegarde, un test vérifie que les originaux sont intacts (même hash avant et après). S'il touche au chemin d'écriture de `storage`, lance aussi `make test-crash` (une coupure pendant un envoi, sur une box jetable : `CLOUDOS_BOX_PROJECT` et `CLOUDOS_CORE_PORT` à lui).
+- **Installation** : si le sujet touche `scripts/install` ou `box/systemd/`, `make test-install` (dans `make test`) couvre ses refus et son idempotence avec des faux ; le reste se joue sur le Raspberry Pi 5, la machine de référence, en suivant `docs/install.md`. Un sujet qui change la mémoire ou l'indexation se mesure de nouveau sur le Pi 5 avec `scripts/measure`, et met à jour la configuration requise.
 - **Tests externes** : seulement si le sujet touche un fournisseur d'IA externe ou GitHub, ceux qui les appellent pour de vrai, lancés à part.
 - **Site public** : un sujet qui ne touche que `site/` n'a ni pile ni `make test`. Il se construit avec `cd site && npm ci && npm run build` (ce que fait `.github/workflows/site.yml`). Son poids se mesure en gzip : au plus 30 Ko pour le premier chargement (la page et son CSS en ligne, plus le JavaScript chargé avant `load`) et au plus 180 Ko pour la 3D. Lighthouse sur mobile doit donner au moins 90 dans chaque catégorie, et la page ne demande rien à un autre domaine (`docs/architecture/site.md`).
 
@@ -150,7 +151,7 @@ Un test qui échoue s'explique par le sujet ou se corrige ; ne le désactive pas
 
 ## 6. Tester visuellement
 
-Vérifie ce que le sujet change à l'écran : lance la pile du worktree avec un jeu de données d'exemple (jamais de vrais fichiers personnels), ouvre l'interface web dans le navigateur intégré (`mcp__Claude_Browser__preview_start`), et regarde la page touchée par une capture. Contrôle aussi la largeur mobile (`resize_window`, préréglage `mobile`), le thème sombre, les textes coupés et les états vides ou en cours d'indexation. Pour l'app mobile, utilise le simulateur iOS. Pour le site public, ouvre `npm run preview` (dans `site/`) aux deux langues, à 1440 et 375 px, en clair et en sombre. Dis ce que tu as vu et ce que tu n'as pas pu voir (un upload en arrière-plan, un vrai disque, la box réelle).
+Vérifie ce que le sujet change à l'écran : lance la pile du worktree avec un jeu de données d'exemple (jamais de vrais fichiers personnels), ouvre l'interface web dans le navigateur intégré (`mcp__Claude_Browser__preview_start`), et regarde la page touchée par une capture. Contrôle aussi la largeur mobile (`resize_window`, préréglage `mobile`), le thème sombre, les textes coupés et les états vides ou en cours d'indexation. Pour l'app mobile, utilise le simulateur iOS. Pour le site public, ouvre `npm run preview` (dans `site/`) aux deux langues, à 1440 et 375 px, en clair et en sombre. Dis ce que tu as vu et ce que tu n'as pas pu voir (un upload en arrière-plan, un vrai disque, la box réelle : le Raspberry Pi 5).
 
 ## 7. Faire tester le dev, avec lecture du terminal
 

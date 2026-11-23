@@ -134,6 +134,14 @@ sed 's/^RESTIC_PASSWORD=.*/RESTIC_PASSWORD=cloudos-backup-dev/' "$work/box.env.g
 "$box" up >/dev/null 2>&1 && fail "up accepted the development backup key"
 cp "$work/box.env.good" "$CLOUDOS_BOX_ENV"
 
+# up --no-build (cloudos.service, at boot) starts the images already built:
+# new code only runs after update, which backs up first.
+: >"$log"
+"$box" up --no-build >/dev/null 2>&1 || fail "up --no-build failed"
+grep -q " up --no-build --detach --wait" "$log" || fail "up --no-build did not start without building: $(cat "$log")"
+grep -q -- "--build" "$log" && fail "up --no-build built the images"
+pass "up --no-build never builds"
+
 # update stops when the backup fails: no rebuild, no restart.
 : >"$log"
 if FAKE_BACKUP_FAIL=1 "$box" update >/dev/null 2>&1; then fail "update went on after a failed backup"; fi

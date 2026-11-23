@@ -10,10 +10,13 @@ OS cloud tout-en-un, installé sur une box à la maison, qui remplace Drive, Pho
 
 Cœur en Go, workers d'IA en Python (ONNX Runtime), PostgreSQL avec pgvector, front React (Vite), mobile React Native. Le pourquoi : [docs/decisions/001-stack.md](docs/decisions/001-stack.md). Le site public est dans [`site/`](site/) (Astro), à part de la box.
 
+## Matériel
+
+Une configuration requise publiée, testée sur le Raspberry Pi 5, la machine de référence ; l'installation pas à pas : [docs/install.md](docs/install.md). Le pourquoi : [docs/decisions/008-materiel.md](docs/decisions/008-materiel.md).
+
 ## À trancher
 
 - Nom du produit
-- Matériel de référence : Raspberry Pi 5 ou mini PC x86
 
 ## Licence
 

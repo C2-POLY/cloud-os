@@ -31,7 +31,7 @@ BACKUP_TEST_NET := --network host
 BACKUP_TEST_DB_URL := $(TEST_DATABASE_URL)
 endif
 
-.PHONY: up down logs prod prod-down prod-logs deps ffmpeg models test test-db test-core test-backup test-box test-worker test-web test-mobile lint fmt
+.PHONY: up down logs prod prod-down prod-logs deps ffmpeg models test test-db test-core test-backup test-box test-install test-crash test-worker test-web test-mobile lint fmt
 
 ## up: build and start the stack, wait until it is healthy
 up:
@@ -91,8 +91,9 @@ models: .tools/models/SHA256SUMS
 .tools/models/SHA256SUMS:
 	worker/models/fetch.sh .tools/models
 
-## test: every test suite (Go, the backup in its image, scripts/box, Python, web, mobile)
-test: test-core test-backup test-box test-worker test-web test-mobile
+## test: every test suite (Go, the backup in its image, scripts/box and
+## scripts/install, Python, web, mobile)
+test: test-core test-backup test-box test-install test-worker test-web test-mobile
 
 test-db:
 ifeq ($(EXTERNAL_DB),)
@@ -113,6 +114,17 @@ test-backup: test-db
 ## test-box: scripts/box's backup commands, with a fake docker and git
 test-box:
 	scripts/test-box.sh
+
+## test-install: scripts/install on a tree of its own, with fake apt-get,
+## systemctl, blkid, mount and findmnt (docs/install.md)
+test-install:
+	scripts/test-install.sh
+
+## test-crash: a power cut during an upload, on a throwaway production box
+## (docker kill -s KILL on db and core); builds the images. Not in `make test`:
+## the CI images workflow runs it on amd64 and arm64.
+test-crash:
+	scripts/test-crash.sh
 
 test-worker: test-db
 	cd worker && CLOUDOS_TEST_DATABASE_URL='$(TEST_DATABASE_URL)' CLOUDOS_FFMPEG_DIR='$(CURDIR)/.tools/ffmpeg/bin' CLOUDOS_MODELS_DIR='$(CURDIR)/.tools/models' uv run --frozen pytest
