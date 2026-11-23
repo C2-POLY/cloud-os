@@ -239,6 +239,25 @@ check_disks() {
 	fi
 }
 
+# Docker's folder goes on the data SSD (/srv/cloudos/docker), with its
+# volumes, the database's included, so that nothing is written on an SD card.
+# Only with a data SSD. The script never moves Docker's data itself.
+check_docker_root() {
+	[ -n "$data_uuid" ] || return 0
+	if [ -e "$daemon_json" ]; then
+		if grep -q "\"data-root\": *\"$DOCKER_ROOT\"" "$daemon_json"; then
+			return 0
+		fi
+		if grep -q '"data-root"' "$daemon_json"; then
+			die "${daemon_json#"$sys"} puts Docker's folder elsewhere than $DOCKER_ROOT: set \"data-root\": \"$DOCKER_ROOT\" in it (and move Docker's data there yourself), then run again"
+		fi
+		die "${daemon_json#"$sys"} exists without \"data-root\": \"$DOCKER_ROOT\": add that setting to it, then run again"
+	fi
+	if [ -d "$sys/var/lib/docker" ] && [ -n "$(ls -A "$sys/var/lib/docker")" ]; then
+		die "Docker already keeps data in /var/lib/docker, on the system disk: the script never moves it (docs/install.md, « Docker déjà installé »)"
+	fi
+}
+
 # ---------------------------------------------------------------- writes
 
 # put_file SRC DST: copy SRC to DST, mode 0644, only when it differs.
@@ -309,23 +328,17 @@ add_fstab() {
 
 # Docker waits for the data SSD, and keeps its folder on it: its volumes,
 # the database's included, never go on an SD card. Written before Docker
-# first starts; a Docker that already ran keeps its folder.
+# first starts: the package starts it as soon as it is installed.
 install_units() {
 	mkdir -p "$unitdir/docker.service.d"
 	put_file "$root/box/systemd/docker.service.d/cloudos.conf" "$unitdir/docker.service.d/cloudos.conf"
 	sed -e "s|@ROOT@|$root|g" -e "s|@USER@|$owner|g" "$root/box/systemd/cloudos.service" >"$scratch/cloudos.service"
 	put_file "$scratch/cloudos.service" "$unitdir/cloudos.service"
-	if [ -n "$data_uuid" ]; then
-		if [ -e "$daemon_json" ]; then
-			grep -q "\"data-root\": *\"$DOCKER_ROOT\"" "$daemon_json" ||
-				note "warning: ${daemon_json#"$sys"} exists and does not put Docker's folder in $DOCKER_ROOT: left as it is"
-		elif [ -d "$sys/var/lib/docker" ]; then
-			note "warning: Docker already ran from /var/lib/docker: its folder (volumes, database) stays there"
-		else
-			mkdir -p "$(dirname "$daemon_json")"
-			printf '{\n  "data-root": "%s"\n}\n' "$DOCKER_ROOT" >"$scratch/daemon.json"
-			put_file "$scratch/daemon.json" "$daemon_json"
-		fi
+	# check_docker_root let through only a daemon.json that already has it.
+	if [ -n "$data_uuid" ] && [ ! -e "$daemon_json" ]; then
+		mkdir -p "$(dirname "$daemon_json")"
+		printf '{\n  "data-root": "%s"\n}\n' "$DOCKER_ROOT" >"$scratch/daemon.json"
+		put_file "$scratch/daemon.json" "$daemon_json"
 	fi
 	systemctl daemon-reload
 }
@@ -355,6 +368,15 @@ install_docker() {
 		die "Docker Compose $v is too old, scripts/box needs 2.24 or newer"
 	fi
 	note "Docker $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo installed), Compose $v"
+	if [ -n "$data_uuid" ]; then
+		dir=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null) || dir=
+		[ "$dir" = "$DOCKER_ROOT" ] || die "Docker keeps its folder in ${dir:-an unknown place}, not $DOCKER_ROOT: check ${daemon_json#"$sys"}, then sudo systemctl restart docker"
+	fi
+	# Docker 29's containerd image store keeps images and container layers in
+	# containerd's own folder, which data-root does not move.
+	case $(docker info --format '{{.DriverStatus}}' 2>/dev/null) in
+	*io.containerd.snapshotter*) note "note: images and container layers are in containerd's folder, /var/lib/containerd, on the system disk (docs/install.md)" ;;
+	esac
 }
 
 # A folder of the box, owned by the core's user (uid 65532 in its image). A
@@ -460,6 +482,7 @@ check_machine
 check_clone
 check_apt
 check_disks
+check_docker_root
 scratch=$(mktemp -d)
 check_docker_key
 

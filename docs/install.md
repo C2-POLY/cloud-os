@@ -93,7 +93,8 @@ Sur une machine qui démarre déjà sur son SSD (NVMe sur le Pi 5, ou un mini PC
 Lancez-le avec `sudo` depuis votre utilisateur, propriétaire du clone. Le script vérifie d'abord tout, y compris la clé de Docker par son empreinte, puis :
 
 - il monte le SSD sur `/srv/cloudos` et le disque USB sur `/media/cloudos-backup`, par leur UUID, dans `/etc/fstab` (copié avant en `/etc/fstab.cloudos.bak`) ;
-- il installe les deux unités systemd : Docker attend le SSD, et `cloudos.service` relance la box à chaque démarrage. Avec un SSD de données, le dossier de Docker va sur le SSD (`/srv/cloudos/docker`) : la base de données n'est jamais sur la carte SD ;
+- il installe les deux unités systemd : Docker attend le SSD, et `cloudos.service` relance la box à chaque démarrage ;
+- avec un SSD de données, il met le dossier de Docker sur le SSD (`/srv/cloudos/docker`, dans `/etc/docker/daemon.json`), avant que Docker ne démarre pour la première fois. Les volumes y vivent, la base de données comprise : elle n'est jamais sur la carte SD. Sur une installation neuve de Docker 29, les images et les couches des conteneurs restent dans le dossier de containerd, `/var/lib/containerd`, sur le disque système. Le script l'affiche à la fin ;
 - il installe Docker depuis le dépôt apt de Docker ;
 - il ajoute votre utilisateur au groupe `docker`, puis lance `scripts/box init` et `scripts/box up` en votre nom. Le groupe `docker` donne les droits de root sur la machine, comme `sudo` : réservez ce compte à l'admin de la box.
 
@@ -152,6 +153,18 @@ scripts/box run --rm core verify   # ok …, problems 0
 - **Mettre à jour** : `scripts/box update`. La mise à jour commence par une sauvegarde, et s'arrête si elle échoue. Un redémarrage ne met jamais à jour : `cloudos.service` relance les images déjà construites (`scripts/box up --no-build`).
 - **Restaurer** sur une box neuve : [`architecture/backup.md`](architecture/backup.md), « Restaurer sur une box neuve, pas à pas ». Installez d'abord la box neuve avec ce guide, jusqu'à l'étape 3.
 - **La box ne démarre plus parce que le SSD est absent.** C'est voulu : sans le SSD, Docker ne démarre pas, et rien n'est écrit sur la carte SD à sa place. `systemctl status docker` dit alors « Dependency failed », et `findmnt /srv/cloudos` ne montre rien. Rebranchez le SSD, puis `sudo reboot`, ou `sudo mount /srv/cloudos && sudo systemctl start docker cloudos`. Ne créez jamais `/srv/cloudos/files` à la main.
+- **Docker déjà installé.** Avec un SSD de données, le script refuse un Docker qui garde déjà des données dans `/var/lib/docker`, et un `/etc/docker/daemon.json` qui ne met pas `"data-root": "/srv/cloudos/docker"`. Il ne déplace jamais rien lui-même. Pour garder ces données, déplacez-les sur le SSD vous-même, puis relancez le script :
+
+  ```bash
+  sudo systemctl stop docker.service docker.socket
+  sudo mkdir -p /srv/cloudos
+  sudo mount UUID=<UUID du SSD> /srv/cloudos
+  sudo rsync -aHAX /var/lib/docker/ /srv/cloudos/docker/
+  # Dans /etc/docker/daemon.json, ajoutez : "data-root": "/srv/cloudos/docker"
+  sudo scripts/install --data <UUID du SSD> --backup <UUID du disque USB>
+  ```
+
+  L'ancien `/var/lib/docker` reste en place, jusqu'à ce que vous l'effaciez vous-même.
 - **Le disque de sauvegarde est absent.** La box tourne ; la sauvegarde de la nuit échoue proprement et le dit dans `scripts/box backup-status`. Aucun dépôt n'est recréé ailleurs.
 - **Retirer l'installation.** Les données restent sur le SSD.
 
@@ -191,6 +204,9 @@ Chaque vérification passe avant la moindre écriture : un refus laisse la machi
 | Un autre disque déjà monté au point de montage | idem |
 | Un `fstab` que `findmnt --verify` refuse | `fstab` reste tel quel |
 | Un `box.env` qui garde les fichiers ailleurs que dans `/srv/cloudos/files` | `init` ne réécrit jamais `box.env` |
+| Avec `--data`, un `/etc/docker/daemon.json` sans `"data-root": "/srv/cloudos/docker"`, ou avec un autre dossier | le dossier de Docker, et la base avec lui, va sur le SSD |
+| Avec `--data`, des données de Docker déjà dans `/var/lib/docker` | le script ne les déplace jamais lui-même (« Ensuite », « Docker déjà installé ») |
+| Après son démarrage, un Docker dont `docker info` ne donne pas `/srv/cloudos/docker` | rien n'est construit tant que la base irait sur la carte SD |
 
 ## Ce qui sort de la machine
 

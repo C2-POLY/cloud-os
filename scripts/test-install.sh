@@ -140,10 +140,17 @@ shift
 exec "$@"
 EOF
 
+# docker info: the folder of daemon.json, unless the state says otherwise.
 fake docker <<'EOF'
 case " $* " in
 " compose version --short ") echo 2.30.0 ;;
-" version --format "*) echo 27.3.1 ;;
+" version --format "*) echo 29.0.2 ;;
+*" info --format {{.DockerRootDir}} "*)
+	if [ -s "$FAKE_STATE/docker_root" ]; then cat "$FAKE_STATE/docker_root"
+	elif [ -f "$CLOUDOS_INSTALL_SYSROOT/etc/docker/daemon.json" ]; then sed -n 's/.*"data-root": *"\([^"]*\)".*/\1/p' "$CLOUDOS_INSTALL_SYSROOT/etc/docker/daemon.json"
+	else echo /var/lib/docker; fi
+	;;
+*" info --format {{.DriverStatus}} "*) echo '[[driver-type io.containerd.snapshotter.v1]]' ;;
 esac
 EOF
 
@@ -182,6 +189,7 @@ EOF
 	: >"$state/installed"
 	echo "$GOOD_FPR" >"$state/keyfpr"
 	rm -f "$state/verify_fails"
+	: >"$state/docker_root"
 	: >"$log"
 	export CLOUDOS_INSTALL_SYSROOT="$sys" CLOUDOS_INSTALL_TEST=1 CLOUDOS_BOX_ENV="$work/box.env" SUDO_USER="$(id -un)"
 }
@@ -309,13 +317,30 @@ grep -qx "UUID=$DATA /srv/cloudos ext4 nofail,noatime,x-systemd.device-timeout=1
 grep -q "^mount " "$log" && fail "install mounted a disk already mounted"
 pass "a data SSD mounted by hand is checked, then kept in fstab"
 
-# Docker that already ran keeps its folder: no volume disappears from its sight.
+# A daemon.json that already puts Docker's folder on the SSD is kept as it is.
 new_machine
+mkdir -p "$sys/etc/docker"
+printf '{\n  "log-driver": "local",\n  "data-root": "/srv/cloudos/docker"\n}\n' >"$sys/etc/docker/daemon.json"
+cp "$sys/etc/docker/daemon.json" "$work/daemon.json.orig"
+out=$("$install" --data "$DATA" 2>&1) || fail "install with a daemon.json that has the SSD folder: $out"
+cmp -s "$sys/etc/docker/daemon.json" "$work/daemon.json.orig" || fail "install rewrote a daemon.json that was right"
+pass "a daemon.json with the SSD folder is kept"
+
+# Without a data SSD, Docker's folder stays where it is, data or not.
+new_machine
+echo /dev/nvme0n1p2 >"$state/root"
 mkdir -p "$sys/var/lib/docker/volumes"
-out=$("$install" --data "$DATA" 2>&1) || fail "install with Docker already run: $out"
-[ ! -e "$sys/etc/docker/daemon.json" ] || fail "Docker's folder was moved away from its volumes"
-case $out in *"Docker already ran"*) ;; *) fail "install did not say Docker's folder stays: $out" ;; esac
-pass "a Docker that already ran keeps its folder"
+out=$("$install" 2>&1) || fail "install on an SSD system with Docker's data in /var/lib/docker: $out"
+[ ! -e "$sys/etc/docker/daemon.json" ] || fail "Docker's folder was moved without a data SSD"
+pass "without --data, Docker's folder stays on the system SSD"
+
+# The folder Docker reports after its start is the SSD's, or the install stops.
+new_machine
+echo /var/lib/docker >"$state/docker_root"
+if out=$("$install" --data "$DATA" 2>&1); then fail "install went on with Docker's folder off the SSD"; fi
+case $out in *"not /srv/cloudos/docker"*) ;; *) fail "Docker's folder off the SSD: $out" ;; esac
+[ ! -e "$work/box.env" ] || fail "the box was started with Docker's folder off the SSD"
+pass "stops when Docker's folder is not on the SSD"
 
 # A link left on a reused disk is never handed to the core.
 new_machine
@@ -355,6 +380,22 @@ refused "a UUID with other characters" "is not a file system UUID" --data "$DATA
 
 new_machine
 refused "a FAT volume serial for a UUID" "is not a file system UUID" --data 1A2B-3C4D
+
+new_machine
+mkdir -p "$sys/etc/docker"
+echo '{ "log-driver": "local" }' >"$sys/etc/docker/daemon.json"
+refused "a daemon.json without Docker's folder on the SSD" "exists without" --data "$DATA"
+grep -q '"data-root"' "$sys/etc/docker/daemon.json" && fail "install changed a daemon.json it refused"
+
+new_machine
+mkdir -p "$sys/etc/docker"
+echo '{ "data-root": "/mnt/docker" }' >"$sys/etc/docker/daemon.json"
+refused "a daemon.json with another folder for Docker" "puts Docker's folder elsewhere" --data "$DATA"
+
+new_machine
+mkdir -p "$sys/var/lib/docker/volumes/pgdata"
+refused "Docker's data already in /var/lib/docker" "never moves it" --data "$DATA"
+[ -d "$sys/var/lib/docker/volumes/pgdata" ] || fail "install touched /var/lib/docker"
 
 new_machine
 refused "an empty --data" "needs a UUID" --data ""
