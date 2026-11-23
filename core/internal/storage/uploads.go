@@ -71,7 +71,7 @@ func (s *Store) CreateUpload(ctx context.Context, owner, p string, length int64,
 	if maxSize > 0 && length > maxSize {
 		return Upload{}, fmt.Errorf("%w: %d bytes, the limit is %d", ErrTooLarge, length, maxSize)
 	}
-	if err := os.MkdirAll(s.uploadsDir(), 0o750); err != nil {
+	if err := mkdirSynced(s.uploadsDir()); err != nil {
 		return Upload{}, err
 	}
 	if free, err := freeBytes(s.uploadsDir()); err == nil && uint64(length) > free {
@@ -112,8 +112,19 @@ func (s *Store) CreateUpload(ctx context.Context, owner, p string, length int64,
 		s.Pool.Exec(ctx, `DELETE FROM uploads WHERE id = $1`, id) //nolint:errcheck // best effort, CleanUploads also catches it
 		return Upload{}, err
 	}
-	if err := f.Close(); err != nil {
-		return Upload{}, err
+	// The partial file and its name are on the disk before the client learns
+	// the upload's address: after a power cut, the upload is still there to
+	// resume. On failure the row goes, and CleanUploads removes the orphan file.
+	err = syncFile(f)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = syncDir(s.uploadsDir())
+	}
+	if err != nil {
+		s.Pool.Exec(ctx, `DELETE FROM uploads WHERE id = $1`, id) //nolint:errcheck // best effort, as above
+		return Upload{}, fmt.Errorf("sync the upload's partial file: %w", err)
 	}
 	return u, nil
 }
@@ -212,7 +223,7 @@ func (s *Store) appendBytes(u Upload, r io.Reader) (int64, error) {
 		}
 		return 0, fmt.Errorf("%w: the chunk goes past the upload's length of %d", ErrTooLarge, u.Length)
 	}
-	if err := f.Sync(); err != nil {
+	if err := syncFile(f); err != nil {
 		return n, err
 	}
 	return n, copyErr

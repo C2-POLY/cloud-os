@@ -190,7 +190,7 @@ func (s *Store) writeTemp(r io.Reader) (tmp string, sum []byte, size int64, snif
 	if err != nil {
 		return "", nil, 0, nil, fmt.Errorf("write: %w", err)
 	}
-	if err = f.Sync(); err != nil {
+	if err = syncFile(f); err != nil {
 		return "", nil, 0, nil, fmt.Errorf("sync: %w", err)
 	}
 	if err = f.Close(); err != nil {
@@ -228,7 +228,7 @@ func (s *Store) place(ctx context.Context, f File, tmp string) (File, error) {
 	}
 
 	dst := s.diskPath(f.Owner, f.Path)
-	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+	if err := mkdirSynced(filepath.Dir(dst)); err != nil {
 		return File{}, fmt.Errorf("folder: %w", err)
 	}
 	if err := os.Link(tmp, dst); err != nil {
@@ -396,13 +396,51 @@ func hashFile(name string) (sum, head []byte, err error) {
 	return h.Sum(nil), hb.buf, nil
 }
 
-func syncDir(dir string) error {
+// syncFile and syncDir make a write durable before the core answers: the
+// file's bytes, then its name in its folder. A power cut after the answer
+// must lose nothing. They are variables so that a test can see each write
+// call them (durable_test.go).
+var (
+	syncFile = (*os.File).Sync
+	syncDir  = syncDirectory
+)
+
+func syncDirectory(dir string) error {
 	d, err := os.Open(dir)
 	if err != nil {
 		return err
 	}
 	defer d.Close()
 	return d.Sync()
+}
+
+// mkdirSynced creates dir and its missing parents, then syncs the folder
+// holding each one it created, from the top down: the name of a new folder
+// is on the disk before a file is linked into it.
+func mkdirSynced(dir string) error {
+	var created []string
+	for d := dir; ; {
+		if _, err := os.Lstat(d); err == nil {
+			break
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		created = append(created, d)
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return err
+	}
+	for i := len(created) - 1; i >= 0; i-- {
+		if err := syncDir(filepath.Dir(created[i])); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // headBuffer keeps the first max bytes written to it, for MIME sniffing.
