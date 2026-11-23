@@ -33,6 +33,8 @@ var allowedErasers = map[string]string{
 	"storage.commitStage":         "removes its own SMB working file under .cloudos/tmp/smb once linked, or when storing it failed",
 	"storage.dropWork":            "removes its own SMB working file under .cloudos/tmp/smb when an SMB write is aborted",
 	"storage.CleanStaged":         "empties .cloudos/tmp/smb when the smb service starts, before it serves",
+	"storage.removeSnapshot":      "Frozen.Release and the next Freeze: erases the backup's picture, strictly .cloudos/snapshots/current, real folders only; every file there is a hard link to a file kept elsewhere",
+	"backup.removeScratch":        "the weekly restore test's throwaway Postgres and files, strictly <backup dir>/restore-test, never under the data root",
 	"davfs.removeAppleFile":       "erases a Finder file (.DS_Store, ._*) under .cloudos/appledouble/<owner>, never a user document",
 	"smbfs.Truncate":              "a handle's SET_INFO end of file: Staged.Truncate on the SMB working file, or a Finder file under .cloudos/appledouble",
 	"smbfs.emptyStaged":           "an open that truncates a file being written over SMB: Staged.Truncate on its working file",

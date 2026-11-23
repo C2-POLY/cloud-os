@@ -5,7 +5,8 @@
 #
 # What changes from the development stack:
 # - the database password and the smb role's password come from box.env, with
-#   no default: Compose refuses to start without them;
+#   no default: Compose refuses to start without them; the backup's key and
+#   role password too, once scripts/box backup-init has drawn them;
 # - db, worker and smb publish no port, and Vite (web) never starts;
 # - the services restart after a reboot and their logs are capped;
 # - with CLOUDOS_TAILSCALE=1, the tailscale service is the only way in from
@@ -13,6 +14,8 @@
 
 x-database-url: &database-url postgres://cloudos:${CLOUDOS_DB_PASSWORD:?run scripts/box init}@db:5432/cloudos?sslmode=disable
 x-smb-db-password: &smb-db-password ${CLOUDOS_SMB_DB_PASSWORD:?run scripts/box init}
+# Empty until scripts/box backup-init: the role cannot log in, no backup runs.
+x-backup-db-password: &backup-db-password ${CLOUDOS_BACKUP_DB_PASSWORD:-}
 x-logging: &logging
   driver: local
   options:
@@ -32,6 +35,7 @@ services:
     environment:
       DATABASE_URL: *database-url
       CLOUDOS_SMB_DB_PASSWORD: *smb-db-password
+      CLOUDOS_BACKUP_DB_PASSWORD: *backup-db-password
     # The one published port stays: 127.0.0.1:${CLOUDOS_CORE_PORT:-8480}.
     restart: unless-stopped
     logging: *logging
@@ -48,6 +52,15 @@ services:
     environment:
       PGPASSWORD: *smb-db-password
     ports: !reset []
+    logging: *logging
+
+  # On once scripts/box backup-init has run (the profile backup). No
+  # development key: without the box's own, `core backup` refuses to run.
+  backup:
+    environment:
+      PGPASSWORD: *backup-db-password
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD:-}
+    restart: unless-stopped
     logging: *logging
 
   # Off unless CLOUDOS_TAILSCALE=1. It publishes no port either: it reaches
