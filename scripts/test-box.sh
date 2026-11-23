@@ -18,6 +18,7 @@ case " $* " in
 " compose version --short ") echo 2.30.0 ;;
 *" run "*" backup now "*) [ "${FAKE_BACKUP_FAIL:-}" != 1 ] ;;
 *" run "*" backup init "*) mkdir -p "$FAKE_BACKUP_DIR/restic" && : >"$FAKE_BACKUP_DIR/restic/config" ;;
+*" up "*) echo "env CLOUDOS_BACKUP=${CLOUDOS_BACKUP-unset}" >>"$FAKE_LOG" ;;
 esac
 EOF
 cat >"$work/bin/git" <<'EOF'
@@ -92,6 +93,13 @@ pass "backup-init refuses the data folder, a folder in it, and one holding it"
 if "$box" update >/dev/null 2>&1; then fail "update ran with no backup set up"; else pass "update needs a backup set up"; fi
 grep -q "pull --ff-only" "$log" && fail "update pulled with no backup set up"
 
+# With no backup set up, the core is told none runs, whatever the shell says:
+# it would show the backup's alerts for a service that is not there (#102).
+: >"$log"
+CLOUDOS_BACKUP=1 "$box" up >/dev/null 2>&1 || fail "up with no backup set up failed"
+grep -qx "env CLOUDOS_BACKUP=" "$log" || fail "up with no backup set up told the core: $(grep '^env' "$log")"
+pass "up tells the core no backup runs before backup-init"
+
 # backup-init on an empty disk (a formatted one has lost+found): the key is
 # drawn into box.env, the repository created, the key shown once, the stack started.
 disk=$work/usb
@@ -126,9 +134,10 @@ cmp -s "$CLOUDOS_BOX_ENV" "$work/box.env.after" || fail "backup-init over an unr
 chmod 700 "$disk/restic"
 pass "backup-init leaves a repository it cannot read alone"
 
-# up turns the backup service on, and refuses a development key.
+# up turns the backup service on, tells the core it runs, and refuses a development key.
 : >"$log"
-COMPOSE_PROFILES= "$box" up >/dev/null 2>&1 || fail "up failed"
+COMPOSE_PROFILES= CLOUDOS_BACKUP= "$box" up >/dev/null 2>&1 || fail "up failed"
+grep -qx "env CLOUDOS_BACKUP=1" "$log" || fail "up did not tell the core the backup runs: $(grep '^env' "$log")"
 cp "$CLOUDOS_BOX_ENV" "$work/box.env.good"
 sed 's/^RESTIC_PASSWORD=.*/RESTIC_PASSWORD=cloudos-backup-dev/' "$work/box.env.good" >"$CLOUDOS_BOX_ENV"
 "$box" up >/dev/null 2>&1 && fail "up accepted the development backup key"

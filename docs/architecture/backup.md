@@ -88,10 +88,10 @@ Migration `0028_backup.sql`. Une ligne par passage, écrite au départ (`finishe
 | `kind` | `backup`, `copy`, `check`, `restore_test` |
 | `started_at`, `finished_at` | |
 | `ok` | vide tant que le passage tourne |
-| `detail` | `backup` : `db_snapshot`, `files_snapshot`, `files`, `bytes`, `indexed_files`, `owners`, `lock_ms`, `files_new`, `files_changed`, `files_unmodified`, `data_added`, `duration_ms` ; `check` : `subset` ; `restore_test` : `run`, `indexed_files`, `sample`, `mismatches` ; `copy` : `remote` sans identifiants |
+| `detail` | `backup` : `db_snapshot`, `files_snapshot`, `files`, `bytes`, `indexed_files`, `owners`, `lock_ms`, `files_new`, `files_changed`, `files_unmodified`, `data_added`, `duration_ms` ; `check` : `subset` ; `restore_test` : `run`, `indexed_files`, `sample`, `mismatches` ; `copy` : `remote` sans identifiants. Chaque passage, quel qu'il soit : `disk_free` et `disk_total`, en octets, l'espace du disque de sauvegarde à la fin du passage (`Service.end`), seulement quand le dépôt est là : disque débranché, son point de montage serait un dossier du disque système. |
 | `error` | le message, avec la fin de la sortie d'erreur de restic ou de `pg_dump` |
 
-Le panneau d'état (#102) lit cette table. `core backup status` (ou `scripts/box backup-status`) en montre les 20 dernières lignes.
+Le panneau d'état (#102, [status.md](status.md)) lit cette table : la dernière ligne de chaque type, et la dernière mesure du disque. `core backup status` (ou `scripts/box backup-status`) en montre les 20 dernières lignes.
 
 ## Le rôle `cloudos_backup`
 

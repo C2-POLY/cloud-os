@@ -171,6 +171,9 @@ func TestBackupTwiceAddsAlmostNothing(t *testing.T) {
 	if num(first.Detail["files_new"]) != 6 { // 4 live files, a version, a trashed file
 		t.Errorf("the first run stored %v new files, want 6", first.Detail["files_new"])
 	}
+	if free, total := num(first.Detail["disk_free"]), num(first.Detail["disk_total"]); total <= 0 || free <= 0 || free > total {
+		t.Errorf("the run noted the backup disk at %d free of %d", free, total)
+	}
 
 	if _, err := s.Backup(ctx); err != nil {
 		t.Fatal(err)
@@ -387,6 +390,10 @@ func TestBackupWithoutTheDisk(t *testing.T) {
 	r := lastRun(t, s.Pool, "backup")
 	if r.OK == nil || *r.OK || r.Error == nil || !strings.Contains(*r.Error, "plugged in") {
 		t.Errorf("row of a run without the disk: %+v", r)
+	}
+	// Its mount point would be a folder of the system disk: no space noted.
+	if _, ok := r.Detail["disk_free"]; ok {
+		t.Errorf("a run without the disk noted its space: %v", r.Detail)
 	}
 	if _, err := os.Lstat(filepath.Join(s.Dir, "unplugged")); !errors.Is(err, fs.ErrNotExist) {
 		t.Error("the run created something where the disk should be")
@@ -697,5 +704,55 @@ func TestNext(t *testing.T) {
 	}
 	if h, m, err := ParseAt("03:30"); err != nil || h != 3 || m != 30 {
 		t.Errorf("ParseAt(03:30) = %d, %d, %v", h, m, err)
+	}
+}
+
+// Every run notes the backup disk's space in its detail (disk_free,
+// disk_total, read by the box's status), and only when the repository is
+// there: with the USB disk unplugged, its mount point is a folder of the
+// system disk. No restic needed: the repository is its config file.
+func TestEndNotesTheBackupDisk(t *testing.T) {
+	ctx := context.Background()
+	pool, _ := testdb.Migrated(t)
+	dir := t.TempDir()
+	s := &Service{Pool: pool, Repo: filepath.Join(dir, "restic"), Dir: dir}
+
+	detailOf := func(kind string, runErr error) map[string]any {
+		t.Helper()
+		id, err := s.begin(ctx, kind)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.end(ctx, id, map[string]any{"subset": "1/12"}, runErr)
+		return lastRun(t, pool, kind).Detail
+	}
+
+	// No repository: the disk is not plugged in.
+	if d := detailOf("check", ErrNoRepository); d["disk_free"] != nil || d["disk_total"] != nil || d["subset"] != "1/12" {
+		t.Errorf("detail without the repository: %v", d)
+	}
+
+	if err := os.MkdirAll(s.Repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.Repo, "config"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	total, free, err := storage.DiskUsage(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, runErr := range []error{nil, errors.New("restic check: exit status 1")} {
+		d := detailOf("check", runErr)
+		gotFree, gotTotal := num(d["disk_free"]), num(d["disk_total"])
+		if gotTotal != int64(total) || gotFree <= 0 || gotFree > gotTotal || d["subset"] != "1/12" {
+			t.Errorf("run ending with %v noted %v free of %v, want about %d of %d", runErr, d["disk_free"], d["disk_total"], free, total)
+		}
+	}
+
+	// A remote repository is no disk of the box.
+	s.Repo = "sftp:backup@nas.local:/cloudos"
+	if d := detailOf("copy", nil); d["disk_free"] != nil {
+		t.Errorf("a remote's run noted a disk: %v", d)
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -403,8 +404,17 @@ func (s *Service) begin(ctx context.Context, kind string) (int64, error) {
 	return id, nil
 }
 
-// end completes the row of a run with its outcome.
+// end completes the row of a run with its outcome, and the space of the
+// backup disk as the run leaves it (disk_free, disk_total), which the box's
+// status shows: the core does not mount that disk.
 func (s *Service) end(ctx context.Context, id int64, detail map[string]any, runErr error) {
+	if total, free, ok := s.diskUsage(); ok {
+		if detail == nil {
+			detail = map[string]any{}
+		}
+		detail["disk_free"] = free
+		detail["disk_total"] = total
+	}
 	var msg *string
 	if runErr != nil {
 		m := runErr.Error()
@@ -418,6 +428,23 @@ func (s *Service) end(ctx context.Context, id int64, detail map[string]any, runE
 		id, runErr == nil, detail, msg); err != nil {
 		s.log().Error("backup: complete the run in backup_runs", "id", id, "err", err)
 	}
+}
+
+// diskUsage measures the disk the repository is on, only while the
+// repository is there: with the USB disk unplugged, its mount point is an
+// empty folder of the system disk, whose space would be read as the backup's.
+func (s *Service) diskUsage() (total, free uint64, ok bool) {
+	if s.Repo == "" || !filepath.IsAbs(s.Repo) {
+		return 0, 0, false // not a folder (a remote address), or not set
+	}
+	if _, err := os.Stat(filepath.Join(s.Repo, "config")); err != nil {
+		return 0, 0, false
+	}
+	total, free, err := storage.DiskUsage(s.Repo)
+	if err != nil || total == 0 {
+		return 0, 0, false
+	}
+	return total, free, true
 }
 
 // Run is one row of backup_runs.

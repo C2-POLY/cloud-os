@@ -39,6 +39,7 @@ import (
 	"github.com/C2-POLY/cloud-os/core/internal/analysis"
 	"github.com/C2-POLY/cloud-os/core/internal/auth"
 	"github.com/C2-POLY/cloud-os/core/internal/backup"
+	"github.com/C2-POLY/cloud-os/core/internal/boxstatus"
 	"github.com/C2-POLY/cloud-os/core/internal/db"
 	"github.com/C2-POLY/cloud-os/core/internal/doccat"
 	"github.com/C2-POLY/cloud-os/core/internal/doctext"
@@ -278,7 +279,7 @@ func serve(ctx context.Context, c core) error {
 	accounts := auth.NewService(c.pool)
 	accounts.OnSMBRevoke = smbfs.NotifyRevoke(c.pool, slog.Default())
 
-	front, shareOrigin, err := frontDoor(ctx)
+	front, publicURL, shareOrigin, err := frontDoor(ctx)
 	if err != nil {
 		return err
 	}
@@ -300,6 +301,7 @@ func serve(ctx context.Context, c core) error {
 			Documents:   &textemb.Searcher{Pool: c.pool, Embed: workers},
 			Categories:  &doccat.Store{Pool: c.pool},
 			Analysis:    &analysis.Reader{Pool: c.pool},
+			Status:      statusCollector(c, publicURL),
 			Activity:    &activity.Log{Pool: c.pool},
 			MaxUpload:   maxUpload(),
 			StaticDir:   os.Getenv("STATIC_DIR"),
@@ -430,24 +432,50 @@ func settleRescuedEvery(ctx context.Context, files *storage.Store, every time.Du
 //   - CLOUDOS_PUBLIC_URL, the box's address, "https://cloudos.<tailnet>.ts.net":
 //     https makes every cookie Secure;
 //   - CLOUDOS_SHARE_ORIGIN, where guests open share links when Funnel is on.
-func frontDoor(ctx context.Context) (edge.Config, string, error) {
+func frontDoor(ctx context.Context) (front edge.Config, public, share string, err error) {
 	proxies, err := edge.ParseProxies(os.Getenv("CLOUDOS_TRUSTED_PROXIES"))
 	if err != nil {
-		return edge.Config{}, "", fmt.Errorf("CLOUDOS_TRUSTED_PROXIES: %w", err)
+		return edge.Config{}, "", "", fmt.Errorf("CLOUDOS_TRUSTED_PROXIES: %w", err)
 	}
 	proxies.Watch(ctx, edge.RefreshEvery)
-	public, err := originOf("CLOUDOS_PUBLIC_URL", os.Getenv("CLOUDOS_PUBLIC_URL"), false)
+	public, err = originOf("CLOUDOS_PUBLIC_URL", os.Getenv("CLOUDOS_PUBLIC_URL"), false)
 	if err != nil {
-		return edge.Config{}, "", err
+		return edge.Config{}, "", "", err
 	}
-	share, err := originOf("CLOUDOS_SHARE_ORIGIN", os.Getenv("CLOUDOS_SHARE_ORIGIN"), true)
+	share, err = originOf("CLOUDOS_SHARE_ORIGIN", os.Getenv("CLOUDOS_SHARE_ORIGIN"), true)
 	if err != nil {
-		return edge.Config{}, "", err
+		return edge.Config{}, "", "", err
 	}
 	if public != "" || share != "" {
 		slog.Info("front door", "public_url", public, "share_origin", share, "trusted_proxies", os.Getenv("CLOUDOS_TRUSTED_PROXIES"))
 	}
-	return edge.Config{Proxies: proxies, PublicHTTPS: strings.HasPrefix(public, "https://")}, share, nil
+	return edge.Config{Proxies: proxies, PublicHTTPS: strings.HasPrefix(public, "https://")}, public, share, nil
+}
+
+// statusCollector gathers the box's state for GET /api/box/status
+// (docs/architecture/status.md). It asks only the services that are on:
+// CLOUDOS_SMB, CLOUDOS_TAILSCALE and CLOUDOS_BACKUP come from compose.yaml
+// (scripts/box sets CLOUDOS_BACKUP once backup-init has run). An unknown
+// name is never looked up: Docker would ask the home network's DNS.
+func statusCollector(c core, publicURL string) *boxstatus.Collector {
+	sc := &boxstatus.Collector{
+		Version: version,
+		DB:      &boxstatus.PGStore{Pool: c.pool},
+		Files:   boxstatus.DataFiles{Store: c.files},
+		Backup:  os.Getenv("CLOUDOS_BACKUP") == "1",
+		Access:  boxstatus.Access{PublicURL: publicURL, Funnel: os.Getenv("CLOUDOS_FUNNEL") == "1"},
+	}
+	if u := os.Getenv("WORKER_URL"); u != "" {
+		sc.Worker = boxstatus.HTTPProbe{URL: strings.TrimRight(u, "/") + "/health"}
+	}
+	if os.Getenv("CLOUDOS_SMB") == "1" {
+		sc.SMB = boxstatus.TCPProbe{Addr: "smb:445"}
+	}
+	if os.Getenv("CLOUDOS_TAILSCALE") == "1" {
+		// TS_LOCAL_ADDR_PORT, on the Compose network only (compose.yaml)
+		sc.Tailscale = boxstatus.HTTPProbe{URL: "http://tailscale:9002/healthz"}
+	}
+	return sc
 }
 
 // originOf checks an address variable: "" or an http(s) origin, with no path,

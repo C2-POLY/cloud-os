@@ -7,6 +7,7 @@ Comment Cloud OS est construit, domaine par domaine, avec ses schémas. Le besoi
 | Vue d'ensemble : la pile, les services, la santé | [overview.md](overview.md) | `compose.yaml`, `core/cmd/core`, `worker/`, `web/` | #3 |
 | La box en production : une surcouche Compose, `scripts/box`, `box.env`, les images en arm64 et amd64 ; l'accès en HTTPS et hors de la maison par Tailscale, les liens de partage publics par Funnel | [box.md](box.md) | `compose.prod.yaml`, `scripts/box`, `Makefile`, `.github/workflows/images.yml`, `box/tailscale/`, `core/internal/edge` | #99, #100 |
 | La sauvegarde : chaque nuit, chiffrée (restic) sur un disque USB, une photo cohérente sans arrêter la box, vérifiée chaque semaine, restauration complète | [backup.md](backup.md) | `core/internal/backup`, `core/internal/storage/freeze.go`, `backup/`, `core/migrations/0028_backup.sql`, `scripts/box` | #101 |
+| L'état de la box pour l'administrateur : disques, services, sauvegarde, fichiers SMB gardés, et les alertes | [status.md](status.md) | `core/internal/boxstatus`, `core/internal/httpapi/status.go`, `web/src/status/` | #102 |
 | Comptes, sessions, accès aux routes et mot de passe SMB | [auth.md](auth.md) | `core/internal/auth`, `core/internal/httpapi`, `web/src/settings` | #6, #91 |
 | Stockage des fichiers, dossiers, déplacements, API, envoi reprenable | [storage.md](storage.md) | `core/internal/storage`, `core/internal/httpapi/files.go`, `uploads.go` | #7, #9, #18 |
 | Interface web : écrans, adresses, drive, file d'envoi | [web.md](web.md) | `web/src/` | #6, #11 |

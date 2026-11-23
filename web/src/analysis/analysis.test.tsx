@@ -60,7 +60,7 @@ describe('labels', () => {
 })
 
 describe('the menu bar', () => {
-  it('shows the analysis next to the backup, and follows it without a reload', async () => {
+  it('shows the analysis, and follows it without a reload', async () => {
     script({
       'GET /api/health': [health],
       'GET /api/analysis': [{ analysing: 3, failed: 0 }, { analysing: 1, failed: 0 }, { analysing: 0, failed: 0 }],
@@ -68,7 +68,6 @@ describe('the menu bar', () => {
     render(<Desktop me={enzo} onSignedOut={() => {}} />)
     const bar = screen.getByRole('banner')
     expect(await within(bar).findByText('Analyse de 3 fichiers…')).toBeInTheDocument()
-    expect(await within(bar).findByText('Sauvegarde à jour')).toBeInTheDocument()
 
     await tick(2_600)
     expect(await within(bar).findByText('Analyse d’un fichier…')).toBeInTheDocument()
