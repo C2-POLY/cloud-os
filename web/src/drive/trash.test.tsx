@@ -67,6 +67,17 @@ describe('TrashPage', () => {
     expect(await screen.findByText(/restauré dans Projets sous le nom « Box \(restauré\) »/)).toBeInTheDocument()
   })
 
+  it('says which items the box kept itself, from an SMB write it could not store', async () => {
+    mockApi({
+      'GET /api/trash': { status: 200, body: [{ ...item(5, 'Docs/rapport.txt'), reason: 'smb_not_saved' }, item(6, 'notes.txt')] },
+    })
+    render(<TrashPage />)
+    expect(await screen.findByText('rapport.txt')).toBeInTheDocument()
+    expect(screen.getAllByText('Gardé : l’enregistrement en SMB a échoué')).toHaveLength(1)
+    expect(screen.getByText(/gardé le/)).toBeInTheDocument()
+    expect(screen.getByText(/supprimé le/)).toBeInTheDocument()
+  })
+
   it('erases one item or the whole trash only after a confirmation', async () => {
     const calls = mockApi({
       'GET /api/trash': [

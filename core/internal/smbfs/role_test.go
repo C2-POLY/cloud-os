@@ -190,6 +190,49 @@ func TestServerUnderItsRole(t *testing.T) {
 		if queued < 2 || journaled < 5 || moves != 0 {
 			t.Errorf("%d tasks, %d activity lines, %d journal rows left", queued, journaled, moves)
 		}
+
+		// A write that is not stored is kept in the trash under the role,
+		// at once when the name is taken, and once the database answers
+		// when it was away.
+		st, err := store.Stage(ctx, "bob", "taken.txt", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.WriteAt([]byte("kept"), 0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fx.store.Mkdir(ctx, "bob", "taken.txt"); err != nil {
+			t.Fatal(err)
+		}
+		var kept *storage.KeptError
+		if _, err := st.Commit(storage.NoExpectations()); !errors.As(err, &kept) || kept.TrashID == 0 {
+			t.Errorf("a name taken under %s: %v", DBRole, err)
+		}
+		away := rolePool(t, fx)
+		cut := &storage.Store{Root: fx.store.Root, Pool: away}
+		if st, err = cut.Stage(ctx, "bob", "away.txt", nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.WriteAt([]byte("kept too"), 0); err != nil {
+			t.Fatal(err)
+		}
+		away.Close()
+		if _, err := st.Commit(storage.NoExpectations()); !errors.As(err, &kept) || kept.TrashID != 0 {
+			t.Errorf("the database away: %v", err)
+		}
+		if n, err := store.SettleRescued(ctx); n != 1 || err != nil {
+			t.Errorf("SettleRescued under %s = %d, %v", DBRole, n, err)
+		}
+		reasons := 0
+		items, _ := fx.store.ListTrash(ctx, "bob")
+		for _, it := range items {
+			if it.Reason == storage.RescueReason {
+				reasons++
+			}
+		}
+		if reasons != 2 {
+			t.Errorf("%d kept writes in bob's trash, want 2: %+v", reasons, items)
+		}
 	})
 
 	t.Run("writes refused", func(t *testing.T) {

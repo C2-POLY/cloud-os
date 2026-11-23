@@ -514,6 +514,44 @@ func TestWrite(t *testing.T) {
 			t.Error("the cut file still shows")
 		}
 	})
+
+	// A CLOSE whose storing fails (here a folder took the name meanwhile)
+	// gets an error, and the content is in the trash at its path, restorable.
+	t.Run("not stored is kept in the trash", func(t *testing.T) {
+		share := fx.mount(t, addr)
+		content := []byte("written while the name was taken\n")
+		f := writeOpen(t, share, `docs\kept.txt`, os.O_CREATE)
+		if _, err := f.Write(content); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fx.store.Mkdir(ctx, testUser, "docs/kept.txt"); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err == nil {
+			t.Fatal("the CLOSE of a write that was not stored succeeded")
+		}
+		fx.noneStaged(t)
+		items, err := fx.store.ListTrash(ctx, testUser)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var kept []storage.TrashItem
+		for _, it := range items {
+			if it.Reason == storage.RescueReason {
+				kept = append(kept, it)
+			}
+		}
+		if len(kept) != 1 || kept[0].Path != "docs/kept.txt" || kept[0].Size != int64(len(content)) {
+			t.Fatalf("kept in the trash: %+v", kept)
+		}
+		restored, err := fx.store.Restore(ctx, testUser, kept[0].ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, b := fx.stored(t, restored.Path); restored.Path != "docs/kept (restauré).txt" || sum(b) != sum(content) {
+			t.Errorf("restored at %s with other bytes", restored.Path)
+		}
+	})
 }
 
 // A write the disk has no room for is refused, and leaves nothing: neither

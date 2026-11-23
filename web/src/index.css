@@ -10,6 +10,7 @@
   --folder: #c98a17;
   --good: #1f7a3d;
   --bad: #b3261e;
+  --warn: #8a5a00;
   color-scheme: light dark;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
   line-height: 1.5;
@@ -28,6 +29,7 @@
     --folder: #e0b04a;
     --good: #5cc983;
     --bad: #f2786f;
+    --warn: #e0b04a;
   }
 }
 
@@ -578,6 +580,11 @@ button {
   width: 100%;
   padding-left: 1.65rem;
   font-size: 0.8rem;
+}
+
+/* A trash item the box kept itself (an SMB write it could not store). */
+.files .origin.kept {
+  color: var(--warn);
 }
 
 .row-actions.always {

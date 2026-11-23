@@ -18,10 +18,13 @@ type TrashEntry struct {
 	Size      int64     `json:"size"`
 	DeletedAt time.Time `json:"deleted_at"`
 	ExpiresAt time.Time `json:"expires_at"`
+	// Reason is why the box put it there itself: "smb_not_saved" for an SMB
+	// write it could not store. Absent for a deletion.
+	Reason string `json:"reason,omitempty"`
 }
 
 func trashEntryOf(t storage.TrashItem) TrashEntry {
-	return TrashEntry{ID: t.ID, Path: t.Path, Name: path.Base(t.Path), Kind: t.Kind, Size: t.Size, DeletedAt: t.DeletedAt, ExpiresAt: t.ExpiresAt}
+	return TrashEntry{ID: t.ID, Path: t.Path, Name: path.Base(t.Path), Kind: t.Kind, Size: t.Size, DeletedAt: t.DeletedAt, ExpiresAt: t.ExpiresAt, Reason: t.Reason}
 }
 
 type trashAPI struct {

@@ -1,7 +1,7 @@
 # SMB : le drive en partage réseau
 
 Le drive de chaque compte, servi en SMB pour le Finder et l'Explorateur. Le code est dans `core/internal/smbfs`, et le service démarre par `core smb` (`core/cmd/core/main.go`). Le protocole est celui de smbsrv, dont nous gardons une copie corrigée dans `core/third_party/smbsrv` (`docs/decisions/006-smb.md`).
-Issues : #90 (essai), #91 (mot de passe SMB), #95 (serveur durci et isolé), #97 (rôle en base), #92 (écriture), #15 (accès SMB).
+Issues : #90 (essai), #91 (mot de passe SMB), #95 (serveur durci et isolé), #97 (rôle en base), #92 (écriture), #111 (un enregistrement qui échoue), #15 (accès SMB).
 
 ## Ce qui est garanti
 
@@ -10,14 +10,14 @@ Issues : #90 (essai), #91 (mot de passe SMB), #95 (serveur durci et isolé), #97
   - il a sa propre limite de mémoire (`mem_limit: 512m`, `GOMEMLIMIT` à 384 Mio), un seul processeur (`cpus: 1`), une limite de processus (`pids_limit`), et redémarre seul après un plantage (`restart: unless-stopped`) ;
   - le tuer ou le saturer laisse le cœur, l'API et le web répondre ;
   - il n'applique aucune migration, et refuse de démarrer tant qu'une migration manque ;
-  - il ne fait ni `CleanTmp`, ni `RecoverMoves`, ni aucun autre nettoyage du cœur, qui peut écrire pendant ce temps.
+  - il ne fait ni `CleanTmp`, ni `RecoverMoves`, ni aucun autre nettoyage du cœur, qui peut écrire pendant ce temps. Il vide seulement ses fichiers de travail (`CleanStaged`) et met à la corbeille les écritures gardées au secours (`SettleRescued`), à son démarrage puis chaque minute.
 - **Un rôle en base à lui.** Le service se connecte en `cloudos_smb`, qui lit ce dont SMB a besoin, note `last_used_at`, et n'écrit que les colonnes dont `storage` a besoin pour les écritures SMB. Il ne lit pas les empreintes des mots de passe des comptes, et n'écrit ni les comptes, ni les sessions, ni les mots de passe SMB au-delà de `last_used_at`. Lancé avec un rôle plus large, `core smb` refuse de démarrer (voir « Rôle en base » plus bas).
 - **Le mot de passe SMB, jamais celui du compte.** Chaque compte se connecte avec le mot de passe SMB tiré dans Réglages (#91, [auth.md](auth.md)). Le mot de passe du compte n'a pas d'empreinte NT et n'ouvre pas SMB. Ni l'anonyme ni un invité n'entrent.
 - **Un compte, un drive.** Le nom SMB est le nom du compte, dans n'importe quelle casse. Il voit un seul partage, `drive`, qui est son espace. Sa clé, `cloudos:<compte>`, sépare les verrous, les modes de partage et les notifications de deux comptes.
 - **Essais limités.** 5 échecs par minute pour un compte depuis une adresse (`auth.SMBHash`, clé `smb:<compte>|<ip>`), après quoi même le bon mot de passe est refusé. Une connexion réussie efface le compte de ses échecs. smbsrv retient la réponse d'un échec 2 s.
 - **Révoquer coupe.** Un mot de passe révoqué ou régénéré, ou un compte désactivé, ferme les sessions ouvertes, et la reconnexion avec l'ancien mot de passe est refusée (voir « Révocation » plus bas).
 - **Réseau privé seulement.** `Backend.Allow` n'accepte que les adresses privées, de boucle locale ou de lien local. Compose publie `127.0.0.1:${CLOUDOS_SMB_PORT:-1445}` vers le port 445 du service : le partage de fichiers de macOS occupe déjà le 445 du Mac. Sous Docker Desktop, le client vu par le service est la passerelle Docker, une adresse privée : `Allow` ne filtre vraiment que sur la box. Sur la box, SMB n'est joint que par le service `tailscale`, qui nomme l'appareil dans un en-tête PROXY : `Allow` admet alors aussi les adresses Tailscale (100.64.0.0/10), et les limites comptent par appareil ([box.md](box.md), « Accès »).
-- **Écrire sans risque de perte (#92).** Tout passe par `storage`, comme en WebDAV : un fichier écrit est vérifié par son SHA-256 puis lié à sa place, un contenu remplacé devient une version, une suppression va à la corbeille, un renommage est journalisé dans `moves`. L'adaptateur ne touche jamais `/data` lui-même. Un fichier ouvert en écriture se remplit dans un fichier de travail, enregistré seulement au CLOSE du client : une coupure laisse l'original intact et ne crée rien (voir « Écriture » plus bas).
+- **Écrire sans risque de perte (#92).** Tout passe par `storage`, comme en WebDAV : un fichier écrit est vérifié par son SHA-256 puis lié à sa place, un contenu remplacé devient une version, une suppression va à la corbeille, un renommage est journalisé dans `moves`. L'adaptateur ne touche jamais `/data` lui-même. Un fichier ouvert en écriture se remplit dans un fichier de travail, enregistré seulement au CLOSE du client : une coupure laisse l'original intact et ne crée rien (voir « Écriture » plus bas). Un CLOSE dont l'enregistrement échoue (base coupée, nom déjà pris) garde le contenu en corbeille (#111, « Un enregistrement qui échoue » plus bas).
 - **Deux processus qui écrivent.** Le cœur et le service `smb` écrivent tous deux par `storage`, qui sérialise les écritures d'un compte par son verrou Postgres (`pg_advisory_lock`). `RecoverMoves`, au démarrage du cœur, prend ce verrou pour chaque entrée du journal : il ne reprend jamais une opération que le service `smb` est en train de faire. Les fichiers de travail de SMB (`.cloudos/tmp/smb`) n'appartiennent qu'au service `smb`, qui les vide à son démarrage ; `CleanTmp` du cœur les laisse.
 
 ```bash
@@ -105,6 +105,43 @@ sequenceDiagram
 - **Le client SMB du Mac ne demande pas d'écraser.** Un `mv -f` sur le volume supprime d'abord la cible, puis renomme : la cible part à la corbeille avec ses versions, où elle se restaure. `MoveReplace` sert les clients qui demandent au serveur d'écraser (Windows, `smbclient`). Constaté à l'essai sur le Mac (#92).
 - **Un changement fait ailleurs ne se voit pas tout de suite dans le Finder.** Le partage n'est pas un `PollableShare` : smbsrv ne signale au Finder que les changements faits par SMB. Un fichier ajouté ou restauré depuis le web n'apparaît qu'au remontage du volume. Le serveur, lui, liste juste dès la requête suivante.
 
+## Un enregistrement qui échoue
+
+Un CLOSE dont le `Commit` échoue ne perd pas ce que le client a écrit (#111). Le client reçoit toujours une erreur : `STATUS_OBJECT_NAME_COLLISION` pour un nom déjà pris, `STATUS_UNSUCCESSFUL` sinon. Le contenu, lui, est gardé :
+
+- **Au secours d'abord.** Une fois le fichier de travail fermé, `commitStage` ne le supprime plus : sur toute erreur, `keepStaged` écrit la note `.cloudos/rescue/<compte>/<id>.json` (le chemin d'origine, la taille, le SHA-256, la date, la raison), dans `<id>.json.tmp` puis renommée, et seulement ensuite renomme le contenu en `.cloudos/rescue/<compte>/<id>`. Ce dossier est hors de `.cloudos/tmp` : ni `CleanTmp` ni `CleanStaged` n'y touchent.
+- **Puis à la corbeille.** `settleRescue` le met à la corbeille, à son chemin d'origine, sous le verrou du compte et journalisé comme une mise à la corbeille : dans une transaction, `INSERT trash` (avec `reason = 'smb_not_saved'`), `INSERT files` (avec son `trash_id`) et `INSERT moves` (op `rescue`, `from_path` = `<id>`) ; puis le rename vers `.cloudos/trash/<compte>/<item>/<nom>` ; puis `DELETE moves`, et la note est supprimée (`dropRescueNote`).
+  - **Nom déjà pris** (un dossier du même nom, une variante de casse, un ancêtre qui est un fichier) : la base répond, le contenu est à la corbeille avant même la réponse au CLOSE (`KeptError.TrashID`).
+  - **Base coupée** : le contenu attend au secours (`KeptError.ID`). `SettleRescued` le met à la corbeille au démarrage du cœur (après `RecoverMoves`), au démarrage de `core smb` (après `CleanStaged`), puis chaque minute dans `core smb`.
+- **Journal.** `release` (`write.go`) écrit « smb write kept in the trash » ou « smb write kept until the database answers », avec le compte, le chemin et la raison. `SettleRescued` écrit « smb write kept in the trash, now that the database answers ». `Store.RescuedCount` donne le nombre d'écritures au secours, et `trash.reason` les éléments gardés : l'état de la box (#102) les lit.
+- **Reprise.** `recoverRescue` (par `RecoverMoves`, ou par `settleRescue` dans `core smb`, qui ne lance pas `RecoverMoves`) finit une op `rescue` dont le contenu est déjà dans la corbeille, et annule le journal, la ligne `files` et l'élément `trash` d'une op dont le contenu est encore au secours : le `SettleRescued` suivant recommence. Une note sans contenu (un arrêt entre les deux renames de `keepStaged`) est signalée puis retirée ; une note dont le contenu ne correspond pas, ou illisible, reste là et est signalée, jamais devinée.
+- **Corbeille.** L'élément se restaure depuis le web comme tout autre, en « nom (restauré) » si son chemin est pris (`freeRestorePath`), ses dossiers parents recréés (`ensureDirs`). Il expire au bout de 30 jours. La Corbeille du web affiche « Gardé : l'enregistrement en SMB a échoué ».
+- **Hors sujet.** Une coupure avant le CLOSE n'enregistre rien et ne garde rien, par conception : le client sait que la copie n'a pas abouti. Une erreur d'écriture du disque au `Sync` ou au `Close` du fichier de travail le supprime, comme avant. Si la base tombe entre le lien et le commit de l'index, le contenu est sur le disque (non indexé, signalé par `verify`) et aussi en corbeille : un doublon, rien de perdu.
+
+```mermaid
+sequenceDiagram
+  participant C as Client SMB
+  participant W as smbfs release
+  participant S as storage.commitStage
+  participant R as .cloudos/rescue
+  participant DB as Postgres
+  C->>W: CLOSE
+  W->>S: Staged.Commit
+  S->>DB: finish : place ou replace
+  DB--xS: base coupée, ou ErrExists
+  S->>R: keepStaged : note <id>.json, puis rename du fichier de travail en <id>
+  S->>DB: settleRescue (10 s au plus)
+  S-->>W: KeptError (TrashID si à la corbeille)
+  W-->>C: STATUS_UNSUCCESSFUL ou OBJECT_NAME_COLLISION
+  Note over S,R: rien n'est perdu
+  loop au démarrage de core et de core smb, puis chaque minute dans core smb
+    S->>DB: SettleRescued, sous le verrou du compte
+    S->>DB: INSERT trash (reason) + files (trash_id) + moves op rescue
+    S->>R: rename vers .cloudos/trash/<compte>/<item>/<nom>
+    S->>DB: DELETE moves, puis dropRescueNote
+  end
+```
+
 ## Révocation
 
 Le cœur change les mots de passe et désactive les comptes, mais c'est le service `smb` qui tient les sessions. Postgres fait le lien (`revoke.go`) :
@@ -140,7 +177,7 @@ sequenceDiagram
 
 ## Rôle en base
 
-Le service `smb` ne se connecte pas avec le rôle du cœur (`cloudos`), mais avec le sien, `cloudos_smb`. La migration `0026_smb_role.sql` le crée et lui donne ses droits de lecture, `0027_smb_write.sql` ceux des écritures de `storage` :
+Le service `smb` ne se connecte pas avec le rôle du cœur (`cloudos`), mais avec le sien, `cloudos_smb`. La migration `0026_smb_role.sql` le crée et lui donne ses droits de lecture, `0027_smb_write.sql` ceux des écritures de `storage`, et `0029_smb_rescue.sql` ceux d'une écriture gardée en corbeille :
 
 | Droit | Pour |
 |---|---|
@@ -154,6 +191,7 @@ Le service `smb` ne se connecte pas avec le rôle du cœur (`cloudos`), mais ave
 | `SELECT`, `INSERT (file_id, owner, size, mime, sha256, modified_at)`, `DELETE` sur `file_versions` | un contenu remplacé gardé ; la rétention du fichier remplacé, et l'annulation d'un remplacement échoué |
 | `SELECT`, `INSERT (owner, from_path, to_path, op, trash_id, version_id)`, `DELETE` sur `moves` | le journal : l'intention avant le disque, effacée une fois indexée |
 | `SELECT`, `INSERT (owner, path, kind, size, expires_at)`, `DELETE` sur `trash` | `Trash`, et son annulation si le disque refuse |
+| `INSERT (trash_id)` sur `files`, `INSERT (reason)` sur `trash` (0029) | `SettleRescued` : la ligne d'un fichier né dans la corbeille, et la raison de l'élément |
 | `SELECT (id, dedupe_key, state)`, `INSERT (kind, payload, priority, max_attempts, dedupe_key)` sur `tasks` | les tâches d'analyse d'un nouveau contenu (`ON CONFLICT` lit les colonnes de l'index de déduplication) |
 | `SELECT` de `sha256` (et `size`, `name`, `version`) sur `thumbnails`, `media_meta`, `document_text`, `embedding_models`, `photo_vectors_siglip2_b16_224` | savoir si un contenu a déjà sa miniature, ses métadonnées, son texte, son vecteur |
 | `INSERT (owner, kind, path)` sur `activity` | le journal d'activité : « ajouté », « remplacé », « mis à la corbeille » |
@@ -261,7 +299,7 @@ Une écriture en cours au moment de la coupure n'est pas enregistrée : `Abort` 
   - `TestLoginAttemptsAreLimited` : après 5 échecs, même le bon mot de passe est refusé, et un autre compte n'est pas retenu.
   - `TestRevokeByNotify` : après `RevokeSMBPassword` ou un nouveau tirage, une requête sur la session ouverte échoue et l'ancien mot de passe est refusé.
   - `TestRevokeBySweep` : sans notification, le balayage ferme les sessions d'un mot de passe révoqué ou changé, et celles d'un compte désactivé dès que le `LISTEN` reprend.
-  - `TestServerUnderItsRole` : le serveur tourne sur un pool en `SET ROLE cloudos_smb`. La connexion, la lecture, `last_used_at`, `HasPending`, la révocation et le balayage marchent, et chaque écriture SMB aussi : créer, modifier (une version), un dossier, une date, renommer, renommer par-dessus un fichier, supprimer, avec ses tâches d'analyse et son activité. 32 écritures ou lectures hors de ses droits sont refusées en `42501`, et l'index comme le disque restent inchangés. `CheckRole` accepte `cloudos_smb`, refuse le rôle du cœur, et refuse `cloudos_smb` dès qu'on lui donne une colonne ou une suppression de plus.
+  - `TestServerUnderItsRole` : le serveur tourne sur un pool en `SET ROLE cloudos_smb`. La connexion, la lecture, `last_used_at`, `HasPending`, la révocation et le balayage marchent, et chaque écriture SMB aussi : créer, modifier (une version), un dossier, une date, renommer, renommer par-dessus un fichier, supprimer, avec ses tâches d'analyse et son activité, et une écriture gardée en corbeille, tout de suite (nom pris) ou par `SettleRescued` (base coupée). 32 écritures ou lectures hors de ses droits sont refusées en `42501`, et l'index comme le disque restent inchangés. `CheckRole` accepte `cloudos_smb`, refuse le rôle du cœur, et refuse `cloudos_smb` dès qu'on lui donne une colonne ou une suppression de plus.
 - **`core/internal/smbfs/write_test.go`**, avec `go-smb2` :
   - `TestWrite` :
     - des écritures à des positions quelconques, une troncature et un CLOSE : le SHA-256 et l'index correspondent, et le texte du document est en file. Avant le CLOSE, le fichier se voit avec sa taille, depuis une autre connexion aussi, et rien n'est stocké ;
@@ -271,9 +309,11 @@ Une écriture en cours au moment de la coupure n'est pas enregistrée : `Abort` 
     - un fichier et un dossier supprimés, puis restaurés ;
     - `.DS_Store` et `._a.txt` rangés à part, hors de l'index et des listes ; un flux nommé refusé ;
     - deux poignées sur un même fichier ;
-    - une connexion coupée avant le CLOSE : l'original est intact, rien n'est créé, aucun fichier de travail ne reste.
+    - une connexion coupée avant le CLOSE : l'original est intact, rien n'est créé, aucun fichier de travail ne reste ;
+    - un CLOSE dont le nom a été pris entre-temps par un dossier : le CLOSE échoue, le contenu est dans la corbeille avec sa raison, et se restaure en « (restauré) ».
   - `TestWriteDiskFull` : au-delà de la marge, une écriture et la copie d'un fichier à modifier sont refusées, et rien ne reste ; une petite écriture passe.
 - **`core/internal/storage/stage_test.go`** : `Stage` puis `Commit` pour un fichier neuf et pour un remplacement qui garde la version, la copie paresseuse, le dernier arrivé gagne, `Abort` qui ne laisse rien, `CleanTmp` qui laisse `tmp/smb`, `MoveReplace` (et ses refus), `MoveReplace` coupé à chaque étape puis `RecoverMoves`, `RecoverMoves` qui attend le verrou du compte, et `SetModTime`.
-- **`core/internal/migrate`** : `TestSMBRoleMigration` vérifie chaque droit de `cloudos_smb`, ses attributs, puis la migration inverse (droits retirés, lignes gardées) et la réapplication. `TestSMBWriteMigration` vérifie que 0027 donne exactement la liste des écritures attendues, que sa migration inverse est refusée tant qu'un remplacement est journalisé, puis retire les droits sans toucher une ligne, et se réapplique.
+- **`core/internal/storage/rescue_test.go`** (#111) : `TestCommitKeepsWhenTheDatabaseIsDown` (le pool fermé avant le `Commit` : le contenu au secours, hors de l'arborescence et des fichiers de travail ; une nouvelle `Store` sur un pool neuf joue le redémarrage, `SettleRescued` le met à la corbeille avec sa raison, et `Restore` redonne le même SHA-256 et la date), `TestCommitKeepsWhenTheNameIsTaken` (un dossier, puis une variante de casse : à la corbeille tout de suite, restauré en « (restauré) »), `TestRecoverARescueAfterACrash` (op `rescue` avec le contenu au secours, par `RecoverMoves` puis par `SettleRescued`, et avec le contenu déjà en corbeille), `TestSettleRescuedLeavesWhatItCannotTrust` et `TestCleanTmpAndCleanStagedLeaveTheRescue`.
+- **`core/internal/migrate`** : `TestSMBRoleMigration` vérifie chaque droit de `cloudos_smb`, ses attributs, puis la migration inverse (droits retirés, lignes gardées) et la réapplication. `TestSMBWriteMigration` vérifie que 0027 donne exactement la liste des écritures attendues, que sa migration inverse est refusée tant qu'un remplacement est journalisé, puis retire les droits sans toucher une ligne, et se réapplique. `TestSMBRescueMigration` fait de même pour 0029 : la raison, l'op `rescue`, les deux colonnes de `cloudos_smb`, et une migration inverse qui garde chaque élément de la corbeille.
 - **`core/internal/db`** : `TestSCRAMVerifierMatchesPostgres` compare le vérificateur à celui que calcule Postgres pour le même sel. `TestSetLoginPassword`, sur un rôle jetable, se connecte en TCP avec le mot de passe, est refusé avec un mauvais ou l'ancien, et ne se connecte plus une fois le mot de passe vidé. `TestSetLoginPasswordRefusesNonASCII` vérifie que le mot de passe n'apparaît jamais dans l'erreur.
 - **`core/cmd/core/main_test.go`** : `core smb` refuse de démarrer sans `CLOUDOS_SMB=1`.

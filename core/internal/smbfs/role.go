@@ -10,8 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// DBRole is the database role the smb service connects as (migrations 0026
-// and 0027, docs/architecture/smb.md): it reads accounts (name, disabled_at),
+// DBRole is the database role the smb service connects as (migrations 0026,
+// 0027 and 0029, docs/architecture/smb.md): it reads accounts (name, disabled_at),
 // SMB passwords (account, nt_hash), the index and the migrations, writes
 // smb_passwords.last_used_at, and writes exactly what storage needs for the
 // SMB writes (writeGrants). The core sets its password at each start.
@@ -19,20 +19,21 @@ const DBRole = "cloudos_smb"
 
 // writeGrants is everything the smb service's role may write, by table: the
 // columns it may insert, the columns it may update, and whether it may delete
-// rows. Migration 0027 grants the storage part, migration 0026 last_used_at.
+// rows. Migrations 0027 and 0029 (the kept SMB writes) grant the storage
+// part, migration 0026 last_used_at.
 // A column that is not here, or a table, must not be writable.
 var writeGrants = map[string]struct {
 	insert, update []string
 	delete         bool
 }{
 	"files": {
-		insert: []string{"owner", "path", "kind", "size", "mime", "sha256", "modified_at"},
+		insert: []string{"owner", "path", "kind", "size", "mime", "sha256", "modified_at", "trash_id"},
 		update: []string{"path", "size", "mime", "sha256", "modified_at", "indexed_at", "trash_id"},
 		delete: true,
 	},
 	"file_versions": {insert: []string{"file_id", "owner", "size", "mime", "sha256", "modified_at"}, delete: true},
 	"moves":         {insert: []string{"owner", "from_path", "to_path", "op", "trash_id", "version_id"}, delete: true},
-	"trash":         {insert: []string{"owner", "path", "kind", "size", "expires_at"}, delete: true},
+	"trash":         {insert: []string{"owner", "path", "kind", "size", "expires_at", "reason"}, delete: true},
 	"tasks":         {insert: []string{"kind", "payload", "priority", "max_attempts", "dedupe_key"}},
 	"activity":      {insert: []string{"owner", "kind", "path"}},
 	"smb_passwords": {update: []string{"last_used_at"}},

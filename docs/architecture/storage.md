@@ -17,6 +17,7 @@ Issues : #7 (écriture et index), #9 (dossiers, déplacements, API), #18 (envoi 
 ├── .cloudos/tmp/              écritures en cours, vidées au démarrage du serveur
 ├── .cloudos/tmp/smb/          fichiers de travail SMB (Stage), vidés au démarrage du service smb seulement
 ├── .cloudos/uploads/<id>      envois reprenables en cours (tus), supprimés à la fin ou après 24 h
+├── .cloudos/rescue/<compte>/<id>       écritures SMB non enregistrées (et leur note <id>.json), en attente de la base pour aller à la corbeille
 ├── .cloudos/trash/<compte>/<id>/<nom>   éléments mis à la corbeille, effacés après 30 jours
 ├── .cloudos/versions/<compte>/<fichier>/<version>   contenus remplacés
 ├── enzo/                      un dossier par compte (nom du compte = nom du dossier)
@@ -153,7 +154,7 @@ Supprimer un fichier ou un dossier l'envoie à la corbeille ; rien n'est effacé
 
 - **Disque :** les octets de l'élément, enfants compris, vont dans `.cloudos/trash/<compte>/<id>/<nom>`.
 - **Index :** les lignes restent dans `files`, marquées `trash_id`. L'index unique ne porte que sur les lignes hors corbeille : le chemin d'origine se libère tout de suite. Toutes les requêtes sur les fichiers vivants filtrent `trash_id IS NULL`.
-- **Table `trash` :** chemin d'origine, type, taille, date de suppression, expiration (`CLOUDOS_TRASH_DAYS`, 30 jours par défaut).
+- **Table `trash` :** chemin d'origine, type, taille, date de suppression, expiration (`CLOUDOS_TRASH_DAYS`, 30 jours par défaut), et `reason` quand la box l'y a mis elle-même : `smb_not_saved` pour une écriture SMB qu'elle n'a pas pu enregistrer (op `rescue` du journal, [smb.md](smb.md), « Un enregistrement qui échoue »).
 
 Mettre à la corbeille et restaurer suivent le même chemin journalisé qu'un déplacement (`moves.op` vaut `trash` ou `restore`), sous le verrou du compte tenu de bout en bout. `RecoverMoves` les termine ou les annule au démarrage.
 
