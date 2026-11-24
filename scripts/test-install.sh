@@ -93,12 +93,14 @@ uuid=$(awk -v m="$1" '!/^#/ && $2 == m { sub(/^UUID=/, "", $1); print $1; exit }
 [ -n "$uuid" ] && echo "$1 $uuid" >>"$FAKE_STATE/mounts"
 EOF
 
-# When Docker is installed, it must find the SSD mounted, its wait and its folder.
+# When Docker is installed, it must find the SSD mounted, its wait, its folder
+# and its image store.
 fake apt-get <<'EOF'
 case "$*" in
 *docker-ce*)
 	[ -f "$CLOUDOS_INSTALL_SYSROOT/etc/systemd/system/docker.service.d/cloudos.conf" ] && echo "docker installed after its wait" >>"$FAKE_LOG"
-	[ -f "$CLOUDOS_INSTALL_SYSROOT/etc/docker/daemon.json" ] && echo "docker installed after its folder" >>"$FAKE_LOG"
+	grep -q '"data-root": "/srv/cloudos/docker"' "$CLOUDOS_INSTALL_SYSROOT/etc/docker/daemon.json" 2>/dev/null && echo "docker installed after its folder" >>"$FAKE_LOG"
+	grep -q '"containerd-snapshotter": false' "$CLOUDOS_INSTALL_SYSROOT/etc/docker/daemon.json" 2>/dev/null && echo "docker installed after its image store" >>"$FAKE_LOG"
 	;;
 esac
 exit 0
@@ -140,7 +142,9 @@ shift
 exec "$@"
 EOF
 
-# docker info: the folder of daemon.json, unless the state says otherwise.
+# docker info: the folder and the image store of daemon.json, unless the state
+# says otherwise. Docker 29 keeps its images with containerd (driver overlayfs)
+# unless "containerd-snapshotter" is false (driver overlay2).
 fake docker <<'EOF'
 case " $* " in
 " compose version --short ") echo 2.30.0 ;;
@@ -150,7 +154,11 @@ case " $* " in
 	elif [ -f "$CLOUDOS_INSTALL_SYSROOT/etc/docker/daemon.json" ]; then sed -n 's/.*"data-root": *"\([^"]*\)".*/\1/p' "$CLOUDOS_INSTALL_SYSROOT/etc/docker/daemon.json"
 	else echo /var/lib/docker; fi
 	;;
-*" info --format {{.DriverStatus}} "*) echo '[[driver-type io.containerd.snapshotter.v1]]' ;;
+*" info --format {{.Driver}} "*)
+	if [ -s "$FAKE_STATE/docker_driver" ]; then cat "$FAKE_STATE/docker_driver"
+	elif grep -q '"containerd-snapshotter": *false' "$CLOUDOS_INSTALL_SYSROOT/etc/docker/daemon.json" 2>/dev/null; then echo overlay2
+	else echo overlayfs; fi
+	;;
 esac
 EOF
 
@@ -190,6 +198,7 @@ EOF
 	echo "$GOOD_FPR" >"$state/keyfpr"
 	rm -f "$state/verify_fails"
 	: >"$state/docker_root"
+	: >"$state/docker_driver"
 	: >"$log"
 	export CLOUDOS_INSTALL_SYSROOT="$sys" CLOUDOS_INSTALL_TEST=1 CLOUDOS_BOX_ENV="$work/box.env" SUDO_USER="$(id -un)"
 }
@@ -259,10 +268,12 @@ grep -qx "CLOUDOS_MAPS_DIR=$sys/srv/cloudos/maps" "$work/box.env" || fail "box.e
 grep -q "^chown 65532:65532 $sys/srv/cloudos/files" "$log" || fail "the files folder is not the core's"
 grep -q "up --build --detach --wait" "$log" || fail "the box was not started"
 grep -q "^usermod -aG docker $(id -un)" "$log" || fail "the clone's owner was not added to the docker group"
-# Docker's folder on the SSD, written before Docker first starts.
+# Docker's folder and its images on the SSD, written before Docker first starts.
 grep -q '"data-root": "/srv/cloudos/docker"' "$sys/etc/docker/daemon.json" || fail "Docker's folder is not on the SSD"
+grep -q '"containerd-snapshotter": false' "$sys/etc/docker/daemon.json" || fail "Docker's images stay in containerd's folder"
 grep -q "^docker installed after its wait" "$log" || fail "Docker was installed before its wait for the SSD"
 grep -q "^docker installed after its folder" "$log" || fail "Docker was installed before its folder was set"
+grep -q "^docker installed after its image store" "$log" || fail "Docker was installed before its image store was set"
 # The mount comes before the box writes anything there.
 line() { grep -n -e "$1" "$log" | head -n 1 | cut -d: -f1; }
 [ "$(line "^mount /srv/cloudos")" -lt "$(line "^chown 65532:65532 $sys/srv/cloudos/files")" ] ||
@@ -317,14 +328,15 @@ grep -qx "UUID=$DATA /srv/cloudos ext4 nofail,noatime,x-systemd.device-timeout=1
 grep -q "^mount " "$log" && fail "install mounted a disk already mounted"
 pass "a data SSD mounted by hand is checked, then kept in fstab"
 
-# A daemon.json that already puts Docker's folder on the SSD is kept as it is.
+# A daemon.json that already puts Docker's folder and images on the SSD is
+# kept as it is, however it is laid out.
 new_machine
 mkdir -p "$sys/etc/docker"
-printf '{\n  "log-driver": "local",\n  "data-root": "/srv/cloudos/docker"\n}\n' >"$sys/etc/docker/daemon.json"
+printf '{"log-driver":"local","data-root":"/srv/cloudos/docker",\n\t"features":{"containerd-snapshotter":false}}\n' >"$sys/etc/docker/daemon.json"
 cp "$sys/etc/docker/daemon.json" "$work/daemon.json.orig"
 out=$("$install" --data "$DATA" 2>&1) || fail "install with a daemon.json that has the SSD folder: $out"
 cmp -s "$sys/etc/docker/daemon.json" "$work/daemon.json.orig" || fail "install rewrote a daemon.json that was right"
-pass "a daemon.json with the SSD folder is kept"
+pass "a daemon.json with the SSD folder and overlay2 is kept"
 
 # Without a data SSD, Docker's folder stays where it is, data or not.
 new_machine
@@ -341,6 +353,15 @@ if out=$("$install" --data "$DATA" 2>&1); then fail "install went on with Docker
 case $out in *"not /srv/cloudos/docker"*) ;; *) fail "Docker's folder off the SSD: $out" ;; esac
 [ ! -e "$work/box.env" ] || fail "the box was started with Docker's folder off the SSD"
 pass "stops when Docker's folder is not on the SSD"
+
+# The image store Docker reports after its start is overlay2, under the SSD
+# folder, or the install stops.
+new_machine
+echo overlayfs >"$state/docker_driver"
+if out=$("$install" --data "$DATA" 2>&1); then fail "install went on with Docker's images in containerd's folder"; fi
+case $out in *"overlayfs, not overlay2"*) ;; *) fail "Docker's images in containerd's folder: $out" ;; esac
+[ ! -e "$work/box.env" ] || fail "the box was started with Docker's images off the SSD"
+pass "stops when Docker's images are not in overlay2 on the SSD"
 
 # A link left on a reused disk is never handed to the core.
 new_machine
@@ -391,6 +412,17 @@ new_machine
 mkdir -p "$sys/etc/docker"
 echo '{ "data-root": "/mnt/docker" }' >"$sys/etc/docker/daemon.json"
 refused "a daemon.json with another folder for Docker" "puts Docker's folder elsewhere" --data "$DATA"
+
+new_machine
+mkdir -p "$sys/etc/docker"
+echo '{ "data-root": "/srv/cloudos/docker" }' >"$sys/etc/docker/daemon.json"
+refused "a daemon.json that keeps the images with containerd" "keeps Docker's images in /var/lib/containerd" --data "$DATA"
+grep -q 'containerd-snapshotter' "$sys/etc/docker/daemon.json" && fail "install changed a daemon.json it refused"
+
+new_machine
+mkdir -p "$sys/etc/docker"
+echo '{ "data-root": "/srv/cloudos/docker", "features": { "containerd-snapshotter": true } }' >"$sys/etc/docker/daemon.json"
+refused "a daemon.json that asks for containerd's image store" "keeps Docker's images in /var/lib/containerd" --data "$DATA"
 
 new_machine
 mkdir -p "$sys/var/lib/docker/volumes/pgdata"

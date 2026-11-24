@@ -240,18 +240,23 @@ check_disks() {
 }
 
 # Docker's folder goes on the data SSD (/srv/cloudos/docker), with its
-# volumes, the database's included, so that nothing is written on an SD card.
+# volumes, the database's included, and its images and container layers, so
+# that nothing is written on an SD card. Docker 29's default image store
+# (containerd) keeps images in /var/lib/containerd, which data-root does not
+# move: "containerd-snapshotter": false keeps them in overlay2 under data-root.
 # Only with a data SSD. The script never moves Docker's data itself.
 check_docker_root() {
 	[ -n "$data_uuid" ] || return 0
 	if [ -e "$daemon_json" ]; then
-		if grep -q "\"data-root\": *\"$DOCKER_ROOT\"" "$daemon_json"; then
-			return 0
+		if ! grep -q "\"data-root\"[[:space:]]*:[[:space:]]*\"$DOCKER_ROOT\"" "$daemon_json"; then
+			if grep -q '"data-root"' "$daemon_json"; then
+				die "${daemon_json#"$sys"} puts Docker's folder elsewhere than $DOCKER_ROOT: set \"data-root\": \"$DOCKER_ROOT\" in it (and move Docker's data there yourself), then run again"
+			fi
+			die "${daemon_json#"$sys"} exists without \"data-root\": \"$DOCKER_ROOT\": add that setting to it, then run again"
 		fi
-		if grep -q '"data-root"' "$daemon_json"; then
-			die "${daemon_json#"$sys"} puts Docker's folder elsewhere than $DOCKER_ROOT: set \"data-root\": \"$DOCKER_ROOT\" in it (and move Docker's data there yourself), then run again"
-		fi
-		die "${daemon_json#"$sys"} exists without \"data-root\": \"$DOCKER_ROOT\": add that setting to it, then run again"
+		grep -q '"containerd-snapshotter"[[:space:]]*:[[:space:]]*false' "$daemon_json" ||
+			die "${daemon_json#"$sys"} keeps Docker's images in /var/lib/containerd, on the system disk: add \"features\": {\"containerd-snapshotter\": false} to it, then run again"
+		return 0
 	fi
 	if [ -d "$sys/var/lib/docker" ] && [ -n "$(ls -A "$sys/var/lib/docker")" ]; then
 		die "Docker already keeps data in /var/lib/docker, on the system disk: the script never moves it (docs/install.md, « Docker déjà installé »)"
@@ -337,7 +342,7 @@ install_units() {
 	# check_docker_root let through only a daemon.json that already has it.
 	if [ -n "$data_uuid" ] && [ ! -e "$daemon_json" ]; then
 		mkdir -p "$(dirname "$daemon_json")"
-		printf '{\n  "data-root": "%s"\n}\n' "$DOCKER_ROOT" >"$scratch/daemon.json"
+		printf '{\n  "data-root": "%s",\n  "features": {\n    "containerd-snapshotter": false\n  }\n}\n' "$DOCKER_ROOT" >"$scratch/daemon.json"
 		put_file "$scratch/daemon.json" "$daemon_json"
 	fi
 	systemctl daemon-reload
@@ -368,15 +373,14 @@ install_docker() {
 		die "Docker Compose $v is too old, scripts/box needs 2.24 or newer"
 	fi
 	note "Docker $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo installed), Compose $v"
+	# What Docker really uses, before anything is built: its folder on the
+	# SSD, and its images in overlay2 under that folder, not in containerd's.
 	if [ -n "$data_uuid" ]; then
 		dir=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null) || dir=
 		[ "$dir" = "$DOCKER_ROOT" ] || die "Docker keeps its folder in ${dir:-an unknown place}, not $DOCKER_ROOT: check ${daemon_json#"$sys"}, then sudo systemctl restart docker"
+		driver=$(docker info --format '{{.Driver}}' 2>/dev/null) || driver=
+		[ "$driver" = overlay2 ] || die "Docker stores its images with ${driver:-an unknown driver}, not overlay2 under $DOCKER_ROOT: check \"containerd-snapshotter\": false in ${daemon_json#"$sys"}, then sudo systemctl restart docker"
 	fi
-	# Docker 29's containerd image store keeps images and container layers in
-	# containerd's own folder, which data-root does not move.
-	case $(docker info --format '{{.DriverStatus}}' 2>/dev/null) in
-	*io.containerd.snapshotter*) note "note: images and container layers are in containerd's folder, /var/lib/containerd, on the system disk (docs/install.md)" ;;
-	esac
 }
 
 # A folder of the box, owned by the core's user (uid 65532 in its image). A
