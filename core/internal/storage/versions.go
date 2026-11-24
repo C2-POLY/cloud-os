@@ -128,7 +128,7 @@ func (s *Store) replace(ctx context.Context, f File, tmp string) (File, error) {
 		// 2. Set the old content aside, then link the new one in its place.
 		disk := s.diskPath(f.Owner, f.Path)
 		kept := s.versionDisk(f.Owner, cur.ID, versionID)
-		if err := os.MkdirAll(filepath.Dir(kept), 0o750); err != nil {
+		if err := mkdirSynced(filepath.Dir(kept)); err != nil {
 			return undo(err)
 		}
 		if err := renameNoReplace(disk, kept); err != nil {
@@ -142,7 +142,11 @@ func (s *Store) replace(ctx context.Context, f File, tmp string) (File, error) {
 			}
 			return undo(fmt.Errorf("place the new content: %w", err))
 		}
+		// Both names on the disk: the new content's, and the old one's as a version.
 		if err := syncDir(filepath.Dir(disk)); err != nil {
+			return err
+		}
+		if err := syncDir(filepath.Dir(kept)); err != nil {
 			return err
 		}
 

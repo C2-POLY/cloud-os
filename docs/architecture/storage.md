@@ -1,7 +1,7 @@
 # Stockage des fichiers
 
 Le domaine qui écrit, range et vérifie les fichiers des utilisateurs : `core/internal/storage`, et l'API qui l'expose, `core/internal/httpapi/files.go`.
-Issues : #7 (écriture et index), #9 (dossiers, déplacements, API), #18 (envoi reprenable), #10 (corbeille), #24 (versions), #92 (écriture par morceaux, renommage qui écrase, dates : SMB).
+Issues : #7 (écriture et index), #9 (dossiers, déplacements, API), #18 (envoi reprenable), #10 (corbeille), #24 (versions), #92 (écriture par morceaux, renommage qui écrase, dates : SMB), #103 (sur le disque avant de répondre).
 
 ## Ce qui est garanti
 
@@ -9,6 +9,7 @@ Issues : #7 (écriture et index), #9 (dossiers, déplacements, API), #18 (envoi 
 - **Garde-fou dans les tests.** `core/internal/guard/erase_test.go` analyse tout le code Go du cœur et échoue si une fonction hors de la liste fermée `allowedErasers` appelle `os.Remove`, `os.RemoveAll` ou `Truncate`. Ajouter une fonction à cette liste est une décision de design, à relire comme telle.
 - **Lisible sans le produit.** Les fichiers sont en clair sous `<données>/<compte>/<chemin>`, avec leurs vrais noms.
 - **Disque et index d'accord.** Une écriture ou un déplacement interrompu ne laisse ni fichier à moitié écrit ni index faux. `core verify` le contrôle à tout moment, sans rien réparer.
+- **Sur le disque avant de répondre.** Une écriture qui a répondu survit à une coupure de courant : ses octets passent par `syncFile` (`fsync` du fichier), et son nom par `syncDir` (`fsync` de son dossier). `mkdirSynced` crée les dossiers parents qui manquent et synchronise le dossier qui contient chacun. `durable_test.go` vérifie `Put`, l'envoi reprenable et le remplacement ; `scripts/test-crash.sh` coupe un envoi ([box.md](box.md), « Une coupure pendant un envoi »).
 
 ## Disposition
 
@@ -42,7 +43,7 @@ stateDiagram-v2
     [*] --> Temporaire: Put(owner, chemin, reader)
     Temporaire --> Rejete: taille ou hash attendus différents, ou erreur d'écriture
     Rejete --> [*]: fichier temporaire supprimé, rien en base
-    Temporaire --> EnPlace: transaction, verrou du compte, contrôle des conflits, INSERT, link, fsync du dossier
+    Temporaire --> EnPlace: transaction, verrou du compte, contrôle des conflits, INSERT, mkdirSynced, link, fsync du dossier
     EnPlace --> Rejete: chemin déjà pris, ou présent sur le disque (ROLLBACK)
     EnPlace --> Indexe: COMMIT
     EnPlace --> NonIndexe: crash entre le link et le COMMIT
@@ -257,6 +258,7 @@ sequenceDiagram
     participant S as storage
     T->>C: POST /api/uploads (Upload-Length, path)
     C->>C: nom libre ? place sur le disque ?
+    C->>U: création, fsync du fichier et de .cloudos/uploads
     C-->>T: 201 Location /api/uploads/id
     loop morceaux
         T->>C: PATCH (Upload-Offset = taille reçue)
@@ -271,7 +273,7 @@ sequenceDiagram
     C-->>T: 204 (fini)
 ```
 
-- **Position de reprise :** c'est la taille du fichier partiel. Ce qui a été reçu et écrit avant une coupure reste acquis.
+- **Position de reprise :** c'est la taille du fichier partiel. Ce qui a été reçu et écrit avant une coupure reste acquis. Le fichier partiel et son nom sont synchronisés avant la réponse 201 : après une coupure de courant, l'envoi est encore là pour reprendre.
 - **Fin de l'envoi :** `PlaceFile` relit le fichier pour hacher ce qui est vraiment sur le disque, vérifie la taille et le hash attendus, puis le met en place par le même `link` sans écrasement que `Put`. Un envoi dont le hash est faux, ou dont le nom a été pris entre-temps, est terminé et supprimé : le renvoyer ne changerait rien.
 - **Envoi vide :** un envoi de 0 octet est terminé dès sa création.
 - **Expiration et ménage :** chaque morceau repousse l'expiration de 24 h. `CleanUploads` tourne au démarrage puis toutes les heures : il supprime les envois expirés et les fichiers partiels qu'aucun envoi ne possède, et seulement dans `.cloudos/uploads/`.

@@ -2,7 +2,8 @@
 # The one entry point of the production stack (docs/architecture/box.md).
 #
 #   scripts/box init                  draw the secrets into box.env (once) and create the data folders
-#   scripts/box up                    check box.env, then build and start the stack
+#   scripts/box up [--no-build]       check box.env, then build and start the stack
+#                                     (--no-build: the images already built, as at boot)
 #   scripts/box tailscale             once the box is in the tailnet, write its https address
 #                                     (and the share links' with Funnel) into box.env, then apply them
 #   scripts/box backup-init DIR       create the encrypted backup on the disk at DIR, show its key once
@@ -250,7 +251,14 @@ cmd_up() {
 		dc rm --stop --force tailscale >/dev/null 2>&1 || true
 		only_profiles=
 	fi
-	dc up --build --detach --wait "$@" || exit $?
+	# --no-build starts the images already built (cloudos.service, at boot):
+	# new code only runs after scripts/box update, which backs up first.
+	build=--build
+	if [ "${1:-}" = --no-build ]; then
+		build=--no-build
+		shift
+	fi
+	dc up "$build" --detach --wait "$@" || exit $?
 	if [ "$(setting CLOUDOS_TAILSCALE)" = 1 ] && [ -z "$(env_value CLOUDOS_PUBLIC_URL)" ]; then
 		note "once the box shows in your tailnet, run: scripts/box tailscale"
 	fi
@@ -405,7 +413,7 @@ cmd_restore() {
 }
 
 if [ $# -eq 0 ]; then
-	sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
 	exit 0
 fi
 

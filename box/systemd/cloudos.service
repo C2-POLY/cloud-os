@@ -1,0 +1,27 @@
+# Installed by scripts/install as /etc/systemd/system/cloudos.service, with
+# @ROOT@ the clone of the repository and @USER@ its owner
+# (docs/architecture/box.md, « Installation et démarrage »).
+#
+# At each boot, once Docker runs (and so once the data SSD is mounted), it
+# starts the box with scripts/box up --no-build, as the owner of the clone,
+# like a command typed by the admin. The containers also restart on their own
+# (restart: unless-stopped); this brings back a box stopped by scripts/box
+# down before the reboot, and checks box.env on the way. It never builds: new
+# code only runs after scripts/box update, which backs up first.
+[Unit]
+Description=Cloud OS box (scripts/box up)
+Documentation=file://@ROOT@/docs/install.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=@USER@
+WorkingDirectory=@ROOT@
+ExecStart=@ROOT@/scripts/box up --no-build
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target
